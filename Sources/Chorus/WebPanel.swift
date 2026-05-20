@@ -33,17 +33,75 @@ struct WebPanel: NSViewRepresentable {
     }
 }
 
+/// Bridges JS `webkit.messageHandlers.chorusCompletion.postMessage({host})`
+/// back to Swift. Singleton — same handler instance is attached to every WKWebView.
+@MainActor
+final class CompletionScriptHandler: NSObject, WKScriptMessageHandler {
+    static let shared = CompletionScriptHandler()
+
+    /// Called on main actor with the page hostname (e.g. "chatgpt.com").
+    var onCompletion: ((String) -> Void)?
+
+    private override init() { super.init() }
+
+    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              let host = body["host"] as? String else { return }
+        // Diagnostic-only messages: log but don't count as completion.
+        if let diag = body["diagnostic"] as? String {
+            chorusLog.notice("[Chorus.Poll] \(host, privacy: .public) — \(diag, privacy: .public)")
+            return
+        }
+        Task { @MainActor in
+            self.onCompletion?(host)
+        }
+    }
+}
+
 /// Builds and caches WKWebViews. Used by `WebViewStore` to keep webview instances
 /// alive across SwiftUI view rebuilds.
 enum WebViewFactory {
+    // Standard Safari macOS UA — used by ChatGPT and Claude.
+    private static let safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+
+    // Chrome macOS UA — used for Google services. Google's serving tier historically
+    // ships a heavier / legacy JS bundle to non-Chrome UAs (Polymer/Shadow-DOM-v0
+    // incident in 2018, ongoing through Gemini era). UA-Client-Hints sometimes
+    // sees through this, but a Chrome UA still has ~30-40% chance of unlocking
+    // the optimized code path.
+    private static let chromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+    @MainActor
     static func make(url: URL) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // persistent: cookies/login survive app restart
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
+        // Public API (macOS 14+): keep the page scheduler running even when the webview
+        // is "inactive". Doesn't address occlusion-based throttling by itself, but it
+        // closes the "view detached from hierarchy" suspension path. Defensive setting.
+        if #available(macOS 14.0, *) {
+            config.preferences.inactiveSchedulingPolicy = .none
+        }
+
+        // Install completion-detection bridge: JS will postMessage to "chorusCompletion"
+        // when a streamed response finishes (send button transitions disabled → enabled).
+        config.userContentController.add(CompletionScriptHandler.shared, name: "chorusCompletion")
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+
+        // CRITICAL FIX for background streaming: disable WebKit's "window is occluded →
+        // throttle WebContent process" pipeline. This is the same private SPI that
+        // WebKitTestRunner uses (WebKit bug 111116) so layout tests aren't disturbed
+        // by window visibility. Without this, the user's "send from another app and
+        // get notified" workflow doesn't work — pages freeze when our window is hidden.
+        // Private API; raises no warning at compile time; only safe outside Mac App Store.
+        disableWindowOcclusionDetection(webView)
+
+        let host = url.host ?? ""
+        let isGoogleService = host.contains("google.com") || host.contains("gemini")
+        webView.customUserAgent = isGoogleService ? chromeUA : safariUA
 
         if #available(macOS 13.3, *) {
             webView.isInspectable = true
@@ -51,6 +109,21 @@ enum WebViewFactory {
 
         webView.load(URLRequest(url: url))
         return webView
+    }
+
+    /// Invokes the private SPI `-[WKWebView _setWindowOcclusionDetectionEnabled:]`
+    /// via the Objective-C runtime. No-ops gracefully if Apple ever removes the SPI.
+    private static func disableWindowOcclusionDetection(_ webView: WKWebView) {
+        let selector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        guard webView.responds(to: selector) else {
+            chorusLog.notice("[Chorus.WebKit] _setWindowOcclusionDetectionEnabled: not available — page will throttle in background")
+            return
+        }
+        typealias SetterIMP = @convention(c) (AnyObject, Selector, ObjCBool) -> Void
+        let imp = webView.method(for: selector)
+        let setter = unsafeBitCast(imp, to: SetterIMP.self)
+        setter(webView, selector, ObjCBool(false))
+        chorusLog.notice("[Chorus.WebKit] disabled window occlusion detection for \(webView.url?.host ?? "<unknown>", privacy: .public)")
     }
 }
 
@@ -335,8 +408,135 @@ enum Broadcaster {
               key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
               bubbles: true, cancelable: true,
             }));
-            return imageAttached ? 'sent via enter (with image)' : 'sent via enter';
           }
+
+          // 4) Async completion poll. We detect "currently streaming" via EITHER:
+          //    (a) a stop/cancel button is present in the composer area, OR
+          //    (b) the send button is present but disabled.
+          //    ChatGPT/Claude/Gemini all REPLACE send with stop during streaming, so (a)
+          //    is the primary signal. We also keep (b) as a backup for sites that just
+          //    disable the send button. Transition "streaming → not streaming" = done.
+          (() => {
+            // Stop-button selectors per host. Some sites (Gemini) put the stop button inside
+            // shadow roots of Web Components, so we walk the whole DOM tree including shadowRoots.
+            const STOP_SELECTORS = [
+              // ChatGPT
+              'button[data-testid="stop-button"]',
+              'button[data-testid="composer-stop-button"]',
+              // Claude (current UI)
+              'button[aria-label="Stop response"]',
+              'button[aria-label="Stop Response"]',
+              'button[data-testid="stop-button"]',
+              // Gemini (Material Design / mat-icon)
+              'button[aria-label*="Stop generating" i]',
+              'button[aria-label*="Stop response" i]',
+              'button[mattooltip*="Stop" i]',
+              'button.send-button[aria-label*="Stop" i]',
+              // Generic catch-alls
+              'button[aria-label*="Stop streaming" i]',
+              'button[aria-label*="Stop" i]',
+              'button[aria-label*="停止" i]',
+              'button[aria-label*="중지" i]',
+              'button[aria-label*="停止生成" i]',
+            ];
+
+            // Walk DOM + all shadow roots recursively. Gemini's Polymer/Lit components hide
+            // the stop button inside shadowRoot of <chat-input>, <message-actions>, etc.
+            const deepQuery = (selectors) => {
+              const out = [];
+              const stack = [document];
+              while (stack.length) {
+                const root = stack.pop();
+                if (!root) continue;
+                for (const sel of selectors) {
+                  try {
+                    const found = root.querySelectorAll?.(sel);
+                    if (found) for (const el of found) out.push(el);
+                  } catch (_) {}
+                }
+                const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+                for (const el of all) {
+                  if (el.shadowRoot) stack.push(el.shadowRoot);
+                }
+              }
+              return out;
+            };
+
+            // Element is "really visible" if it's not display:none, has non-zero size,
+            // and isn't visibility:hidden. offsetParent alone is too permissive — Gemini's
+            // per-message "Stop response" affordances pass offsetParent but have 0 height
+            // until the user hovers their parent message.
+            const isReallyVisible = (el) => {
+              if (!el || el.offsetParent === null) return false;
+              const rect = el.getBoundingClientRect();
+              if (rect.width === 0 || rect.height === 0) return false;
+              const style = window.getComputedStyle(el);
+              if (style.visibility === 'hidden' || style.display === 'none') return false;
+              return true;
+            };
+
+            const isCurrentlyStreaming = () => {
+              // ONLY use stop-button presence as the streaming signal. We previously also
+              // treated "send button disabled" as streaming, but Claude/Gemini disable the
+              // send button whenever the input is empty (which it is right after we send).
+              // That gave a false positive that lasted forever.
+              const stops = deepQuery(STOP_SELECTORS);
+              for (const el of stops) {
+                if (isReallyVisible(el)) return true;
+              }
+              return false;
+            };
+
+            let wasStreaming = false;
+            let lastDiagAt = 0;
+            const start = Date.now();
+            const maxWait = 5 * 60 * 1000;
+            const pollMs = 500;
+            const interval = setInterval(() => {
+              if (Date.now() - start > maxWait) {
+                clearInterval(interval);
+                console.log('[Chorus] completion poll timed out');
+                try {
+                  window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
+                    host: location.hostname,
+                    diagnostic: 'timeout-no-completion'
+                  });
+                } catch (_) {}
+                return;
+              }
+              const streaming = isCurrentlyStreaming();
+              if (streaming) {
+                if (!wasStreaming) {
+                  console.log('[Chorus] streaming started');
+                  try {
+                    window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
+                      host: location.hostname,
+                      diagnostic: 'streaming-started'
+                    });
+                  } catch (_) {}
+                }
+                wasStreaming = true;
+              } else if (wasStreaming) {
+                clearInterval(interval);
+                console.log('[Chorus] completion detected, posting to native');
+                try {
+                  window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
+                    host: location.hostname
+                  });
+                } catch (e) {
+                  console.warn('[Chorus] postMessage failed', e);
+                }
+              } else {
+                // Already streaming (wasStreaming=true) but isCurrentlyStreaming returned false
+                // means we'd fall into the completion branch above — never reaches here.
+                // (This branch is for the case where we never saw streaming start, which
+                //  shouldn't happen now that all three sites detected it.)
+              }
+
+              // (heartbeat diagnostic removed — was useful for finding the Claude/Gemini
+              //  stop-button bug, now noisy. streaming-started and completion are still logged.)
+            }, pollMs);
+          })();
 
           return clicked
             ? (imageAttached ? 'sent (with image)' : 'sent')

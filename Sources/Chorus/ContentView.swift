@@ -5,7 +5,28 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class WebViewStore: ObservableObject {
+    /// Shared singleton so both ContentView and QuickInputWindow can broadcast
+    /// to the same set of WKWebViews.
+    static let shared = WebViewStore()
+
     private var cache: [String: WKWebView] = [:]
+
+    /// Pending completion batches — one per broadcast. Each tracks which provider keys
+    /// have not yet posted their completion message. When a batch's set empties → notify.
+    private var pendingBatches: [UUID: PendingBatch] = [:]
+
+    private struct PendingBatch {
+        var pendingKeys: Set<String>
+        let source: BroadcastSource
+        let startedAt: Date
+    }
+
+    init() {
+        // Wire JS → Swift completion bridge to this store.
+        CompletionScriptHandler.shared.onCompletion = { [weak self] host in
+            self?.handleHostCompletion(host: host)
+        }
+    }
 
     /// Returns an existing WKWebView for `key`, or creates one and caches it.
     /// Calling this multiple times for the same key always returns the same instance.
@@ -23,13 +44,42 @@ final class WebViewStore: ObservableObject {
         cache[key]?.reload()
     }
 
-    func broadcast(text: String, image: NSImage? = nil) {
+    /// Broadcast a prompt to all webviews. `source` is used by the completion notifier
+    /// to decide whether to alert (e.g. only for quick-input broadcasts in default config).
+    func broadcast(text: String, image: NSImage? = nil, source: BroadcastSource = .mainWindow) {
         var imageBase64: String? = nil
         if let image = image,
            let tiff = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
            let pngData = bitmap.representation(using: .png, properties: [:]) {
             imageBase64 = pngData.base64EncodedString()
+        }
+
+        // Build the "wait for" set for the completion notification:
+        // (visible) ∩ (user-marked-required). Hidden providers and "best effort"
+        // providers (e.g. Gemini if user unchecked it) still receive the broadcast
+        // but their completion doesn't block the notification.
+        let hiddenRaw = UserDefaults.standard.string(forKey: "hiddenProviders") ?? ""
+        let hiddenKeys = Set(hiddenRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+        let visibleKeys = Set(cache.keys).subtracting(hiddenKeys)
+
+        let requiredRaw = UserDefaults.standard.string(forKey: "notifyRequiredProviders") ?? "chatgpt,claude,gemini"
+        let requiredKeys = Set(requiredRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+        let trackKeys = visibleKeys.intersection(requiredKeys)
+
+        if !trackKeys.isEmpty {
+            let batchID = UUID()
+            pendingBatches[batchID] = PendingBatch(
+                pendingKeys: trackKeys,
+                source: source,
+                startedAt: Date()
+            )
+            clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (visible=\(visibleKeys), required=\(requiredKeys))")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+                self?.pendingBatches.removeValue(forKey: batchID)
+            }
+        } else {
+            clog("broadcast skipped completion tracking — no providers to wait for (visible=\(visibleKeys), required=\(requiredKeys))")
         }
 
         let js = Broadcaster.injectionScript(text: text, imageBase64: imageBase64)
@@ -43,6 +93,42 @@ final class WebViewStore: ObservableObject {
             }
         }
     }
+
+    /// Called when a single host finishes streaming (via WKScriptMessageHandler bridge).
+    /// Removes the host from every pending batch; when a batch's set becomes empty,
+    /// triggers the completion notification.
+    private func handleHostCompletion(host: String) {
+        clog("host completion arrived from JS — host=\(host)")
+        guard let key = providerKey(forHost: host) else {
+            clog("no provider key matched host \(host)")
+            return
+        }
+
+        var completedBatches: [PendingBatch] = []
+        for (id, var batch) in pendingBatches {
+            if batch.pendingKeys.contains(key) {
+                batch.pendingKeys.remove(key)
+                clog("batch \(id.uuidString.prefix(8)) — removed \(key), remaining: \(batch.pendingKeys)")
+                if batch.pendingKeys.isEmpty {
+                    completedBatches.append(batch)
+                    pendingBatches.removeValue(forKey: id)
+                } else {
+                    pendingBatches[id] = batch
+                }
+            }
+        }
+
+        for batch in completedBatches {
+            CompletionNotifier.shared.handleBatchComplete(source: batch.source)
+        }
+    }
+
+    private func providerKey(forHost host: String) -> String? {
+        if host.contains("chatgpt") || host.contains("openai") { return "chatgpt" }
+        if host.contains("claude") { return "claude" }
+        if host.contains("gemini") || host.contains("google") { return "gemini" }
+        return nil
+    }
 }
 
 struct Provider: Identifiable {
@@ -52,7 +138,7 @@ struct Provider: Identifiable {
     var id: String { key }
 }
 
-private let allProviders: [Provider] = [
+let allProviders: [Provider] = [
     Provider(key: "chatgpt", name: "ChatGPT", url: URL(string: "https://chatgpt.com/")!),
     Provider(key: "claude",  name: "Claude",  url: URL(string: "https://claude.ai/")!),
     Provider(key: "gemini",  name: "Gemini",  url: URL(string: "https://gemini.google.com/")!),
@@ -422,7 +508,7 @@ struct ContentView: View {
     private func send() {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
-        store.broadcast(text: text, image: attachedImage)
+        store.broadcast(text: text, image: attachedImage, source: .mainWindow)
         prompt = ""
         attachedImage = nil
     }
