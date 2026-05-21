@@ -250,7 +250,12 @@ struct QuickInputView: View {
         }
 
         // Combined Enter / Esc handler with IME awareness.
+        // CRITICAL: gate everything on `focused` so the monitor doesn't hijack
+        // Enter/Esc when the user is typing in the main window (which has its
+        // own Cmd+Enter keyboardShortcut for Send to all).
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard focused else { return event }
+
             // Esc → dismiss
             if event.keyCode == UInt16(kVK_Escape) {
                 onDismiss()
@@ -259,15 +264,13 @@ struct QuickInputView: View {
             // Enter → submit (or newline with Shift)
             if event.keyCode == UInt16(kVK_Return) {
                 let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                // Let IME commit candidate when composing
                 if let ic = NSApp.keyWindow?.firstResponder as? NSTextInputClient,
                    ic.hasMarkedText() {
-                    return event
+                    return event   // let IME commit candidate
                 }
                 if mods.contains(.shift) {
-                    return event   // shift+Enter = newline (TextField handles it)
+                    return event   // shift+Enter = newline
                 }
-                // Plain Enter or Cmd+Enter → submit
                 Task { @MainActor in submit() }
                 return nil
             }
