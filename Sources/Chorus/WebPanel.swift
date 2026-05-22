@@ -417,6 +417,28 @@ enum Broadcaster {
           //    is the primary signal. We also keep (b) as a backup for sites that just
           //    disable the send button. Transition "streaming → not streaming" = done.
           (() => {
+            // Force-paint nudge for occluded windows. Some sites (Gemini in particular) use
+            // IntersectionObserver / Polymer lazy rendering — when our window is occluded,
+            // the page reports the message container as "not visible" and skips rendering
+            // new content. A tiny scroll nudge causes the observer to re-evaluate visibility
+            // and the layer to repaint. Net-zero scroll position, harmless side effect.
+            const paintNudge = () => {
+              try {
+                void document.body.offsetHeight;  // sync layout
+                const sx = window.scrollX, sy = window.scrollY;
+                window.scrollTo(sx, sy + 0.1);
+                window.scrollTo(sx, sy);
+                // Also nudge any inner scroll containers (Gemini's chat area is a custom element)
+                document.querySelectorAll('[class*="scroll" i]').forEach(el => {
+                  if (el.scrollHeight > el.clientHeight) {
+                    const t = el.scrollTop;
+                    el.scrollTop = t + 0.1;
+                    el.scrollTop = t;
+                  }
+                });
+              } catch (_) {}
+            };
+
             // Stop-button selectors per host. Some sites (Gemini) put the stop button inside
             // shadow roots of Web Components, so we walk the whole DOM tree including shadowRoots.
             const STOP_SELECTORS = [
@@ -493,6 +515,9 @@ enum Broadcaster {
             const maxWait = 5 * 60 * 1000;
             const pollMs = 500;
             const interval = setInterval(() => {
+              // Every tick: nudge a paint. Cheap; only matters when window is occluded.
+              paintNudge();
+
               if (Date.now() - start > maxWait) {
                 clearInterval(interval);
                 console.log('[Chorus] completion poll timed out');
