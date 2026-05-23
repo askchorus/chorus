@@ -39,12 +39,34 @@ final class QuickInputWindowController {
     func handlePostSubmit() {
         hide()
         let foregroundMain = UserDefaults.standard.object(forKey: "foregroundMainOnSend") as? Bool ?? true
-        if foregroundMain {
+        clog("[QuickInput] handlePostSubmit — foregroundMain=\(foregroundMain)")
+        guard foregroundMain else { return }
+
+        // Defer to next runloop so panel.orderOut + resignKey side-effects settle first.
+        DispatchQueue.main.async { [weak self] in
             NSApp.activate(ignoringOtherApps: true)
-            for w in NSApp.windows where w !== panel && w.canBecomeMain {
-                w.makeKeyAndOrderFront(nil)
-                break
+
+            // Pick exactly ONE target window — the SwiftUI WindowGroup main window.
+            // SwiftUI's AppKitWindow reports canBecomeMain=false even though it IS the
+            // main window, so we can't rely on that. Instead, prefer a non-panel window
+            // titled "Chorus"; fall back to the first non-panel non-Settings window.
+            let candidates = NSApp.windows.filter { w in
+                w !== self?.panel && !(w is NSPanel)
             }
+            let target = candidates.first(where: { $0.title == "Chorus" })
+                      ?? candidates.first(where: { $0.title != "Chorus Settings" && !$0.title.isEmpty })
+                      ?? candidates.first
+
+            guard let target = target else {
+                clog("[QuickInput] no candidate non-panel window to surface")
+                return
+            }
+
+            if target.isMiniaturized {
+                target.deminiaturize(nil)
+            }
+            target.makeKeyAndOrderFront(nil)
+            clog("[QuickInput] surfaced '\(target.title)' \(type(of: target)) isMin-was=\(target.isMiniaturized)")
         }
     }
 
@@ -234,9 +256,17 @@ struct QuickInputView: View {
     private func installMonitors() {
         guard pasteMonitor == nil else { return }
 
+        // CRITICAL gate for both monitors: only act when our quick-input panel is the
+        // current key window. `@FocusState focused` is unreliable here because panel
+        // orderOut doesn't always trigger SwiftUI's lifecycle updates — `focused` can
+        // stay true even after the panel is hidden, causing us to hijack Enter/Cmd+V
+        // inside the WKWebView pages (e.g. swallowing Enter when committing a Chinese
+        // IME candidate on chatgpt.com).
+        func panelIsKey() -> Bool { NSApp.keyWindow is KeyablePanel }
+
         // Cmd+V → capture clipboard image (text paste continues normally).
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard focused,
+            guard panelIsKey(),
                   event.modifierFlags.contains(.command),
                   event.charactersIgnoringModifiers?.lowercased() == "v"
             else { return event }
@@ -250,18 +280,13 @@ struct QuickInputView: View {
         }
 
         // Combined Enter / Esc handler with IME awareness.
-        // CRITICAL: gate everything on `focused` so the monitor doesn't hijack
-        // Enter/Esc when the user is typing in the main window (which has its
-        // own Cmd+Enter keyboardShortcut for Send to all).
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard focused else { return event }
+            guard panelIsKey() else { return event }
 
-            // Esc → dismiss
             if event.keyCode == UInt16(kVK_Escape) {
                 onDismiss()
                 return nil
             }
-            // Enter → submit (or newline with Shift)
             if event.keyCode == UInt16(kVK_Return) {
                 let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 if let ic = NSApp.keyWindow?.firstResponder as? NSTextInputClient,

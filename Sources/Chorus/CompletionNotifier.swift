@@ -84,10 +84,9 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
         clog("batch complete — source=\(source), mode=\(mode), shouldNotify=\(shouldNotify)")
         guard shouldNotify else { return }
 
-        if isChorusMainWindowKey() {
-            clog("skipping — main window already key")
-            return
-        }
+        // (Removed isChorusMainWindowKey() check — it created intermittent behavior
+        //  when combined with foregroundMainOnSend. User wants consistent banners;
+        //  if they don't want them while looking at Chorus, they can switch notifyMode.)
 
         let content = UNMutableNotificationContent()
         content.title = "Chorus"
