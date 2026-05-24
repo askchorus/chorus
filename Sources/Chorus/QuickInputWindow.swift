@@ -173,6 +173,7 @@ struct QuickInputView: View {
     @State private var keyMonitor: Any? = nil
     @State private var commandResult: String? = nil      // inline preview (definition / help)
     @State private var isAutoDictionary: Bool = false    // true when current prompt produced a dict hit
+    @State private var lookupTask: Task<Void, Never>? = nil   // cancels stale online lookups when prompt changes
     @FocusState private var focused: Bool
 
     private let store = WebViewStore.shared
@@ -226,14 +227,35 @@ struct QuickInputView: View {
             // Result area — only shown when a command produced output.
             if let result = commandResult, !result.isEmpty {
                 Divider()
-                Text(result)
-                    .font(.system(size: 14))
-                    .lineSpacing(4)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
-                    .fixedSize(horizontal: false, vertical: true)
+                ZStack(alignment: .topTrailing) {
+                    Text(result)
+                        .font(.system(size: 14))
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    // Speaker button — only for dictionary hits, plays the looked-up word via TTS
+                    if isAutoDictionary {
+                        Button {
+                            speakCurrentWord()
+                        } label: {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .padding(8)
+                                .background(
+                                    Circle().fill(Color.primary.opacity(0.06))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Pronounce  (⌘L)")
+                        .padding(.trailing, 12)
+                        .padding(.top, 10)
+                    }
+                }
             }
         }
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
@@ -320,10 +342,14 @@ struct QuickInputView: View {
     }
 
     /// Update the inline result preview based on what's currently in the prompt.
-    /// Live (every keystroke) — DCS is local + fast.
-    /// Single-word input auto-triggers a dictionary lookup; a hit shows inline.
-    /// A miss shows nothing (Enter then broadcasts normally so AIs can explain).
+    /// 1. macOS Dictionary (DCS) — instant, local, covers user's installed dicts (Chinese/English/etc.)
+    /// 2. Free Dictionary API — async fallback for English misses (covers slang, technical words)
+    /// 3. Nothing — let Enter broadcast to AIs
     private func updateCommandResult() {
+        // Always cancel any pending online lookup when prompt changes
+        lookupTask?.cancel()
+        lookupTask = nil
+
         switch CommandRouter.route(prompt) {
         case .help:
             commandResult = kHelpText
@@ -331,15 +357,76 @@ struct QuickInputView: View {
 
         case .broadcast:
             let candidate = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            if isLikelyDictionaryQuery(candidate),
-               let def = dictionaryDefinition(of: candidate) {
-                commandResult = def
-                isAutoDictionary = true
-            } else {
+            guard isLikelyDictionaryQuery(candidate) else {
                 commandResult = nil
                 isAutoDictionary = false
+                return
             }
+
+            // 1. Local macOS Dictionary first — instant
+            if let def = dictionaryDefinition(of: candidate) {
+                commandResult = def
+                isAutoDictionary = true
+                Task { await WordSpeaker.shared.prefetchAudio(for: candidate) }
+                return
+            }
+
+            // 2. English word + local miss → try Free Dictionary API and Wikipedia
+            //    in PARALLEL. Whichever returns first wins. If both miss, show hint.
+            if isLikelyEnglishWord(candidate) {
+                commandResult = nil
+                isAutoDictionary = false
+                let target = candidate
+                lookupTask = Task {
+                    async let api = OnlineDictionary.shared.lookup(target)
+                    async let wiki = WikipediaSummary.shared.lookup(target)
+                    let (apiResult, wikiResult) = await (api, wiki)
+                    if Task.isCancelled { return }
+                    let current = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard current.caseInsensitiveCompare(target) == .orderedSame else { return }
+
+                    if let apiResult = apiResult {
+                        commandResult = apiResult.formatted
+                        isAutoDictionary = true
+                    } else if let wikiResult = wikiResult {
+                        commandResult = wikiResult
+                        isAutoDictionary = true   // Enter dismisses; Wikipedia is "content to read"
+                    } else {
+                        commandResult = aiFallbackHint(for: target)
+                        isAutoDictionary = false
+                    }
+                }
+                return
+            }
+
+            // 3. Non-English (Chinese / Japanese / etc.) miss: hint immediately.
+            commandResult = aiFallbackHint(for: candidate)
+            isAutoDictionary = false
         }
+    }
+
+    /// One-line hint shown when neither local nor online dictionary has the word.
+    private func aiFallbackHint(for word: String) -> String {
+        """
+        “\(word)” isn't in your dictionaries.
+
+        ↩    Enter to ask all AIs
+        ⌘B  Open Google search in your browser
+        """
+    }
+
+    /// Speak the currently looked-up word via macOS TTS.
+    private func speakCurrentWord() {
+        let word = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return }
+        WordSpeaker.shared.speak(word)
+    }
+
+    /// Open a Google search for `term` in the user's default browser.
+    private func openGoogleSearch(_ term: String) {
+        let encoded = term.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? term
+        guard let url = URL(string: "https://www.google.com/search?q=\(encoded)") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Pick an icon hint based on what kind of command the user is typing.
@@ -376,9 +463,30 @@ struct QuickInputView: View {
             return event
         }
 
-        // Combined Enter / Esc handler with IME awareness.
+        // Combined Enter / Esc / Cmd+L handler with IME awareness.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard panelIsKey() else { return event }
+
+            // Cmd+L → speak the current word (only when a dictionary hit is showing)
+            if event.modifierFlags.contains(.command),
+               event.charactersIgnoringModifiers?.lowercased() == "l",
+               isAutoDictionary {
+                Task { @MainActor in speakCurrentWord() }
+                return nil
+            }
+
+            // Cmd+B → Google search the current input in the default browser
+            if event.modifierFlags.contains(.command),
+               event.charactersIgnoringModifiers?.lowercased() == "b" {
+                let term = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !term.isEmpty {
+                    Task { @MainActor in
+                        openGoogleSearch(term)
+                        onDismiss()
+                    }
+                    return nil
+                }
+            }
 
             if event.keyCode == UInt16(kVK_Escape) {
                 onDismiss()

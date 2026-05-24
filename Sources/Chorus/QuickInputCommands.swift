@@ -50,6 +50,14 @@ func isLikelyDictionaryQuery(_ s: String) -> Bool {
     return true
 }
 
+/// Heuristic: is this word made of only ASCII letters / hyphen / apostrophe?
+/// Used to decide whether to try the online English dictionary on a local-DCS miss.
+func isLikelyEnglishWord(_ s: String) -> Bool {
+    let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    return trimmed.allSatisfy { $0.isASCII && ($0.isLetter || $0 == "-" || $0 == "'") }
+}
+
 /// Look up a word using macOS Dictionary Services — pulls from whichever
 /// dictionaries the user has enabled in Dictionary.app (e.g. Oxford English,
 /// 牛津 / 朗文, 现代汉语 / 朗文当代, 简明英汉 etc.). Local, no network.
