@@ -77,12 +77,14 @@ final class QuickInputWindowController {
         guard let panel = panel else { return }
         let newHeight = max(size.height, 50)
         let old = panel.frame
+        clog("[Resize] content reported=\(Int(size.width))x\(Int(size.height)) panel current=\(Int(old.size.width))x\(Int(old.size.height))")
         guard abs(old.size.height - newHeight) > 0.5 else { return }
         let centerY = old.midY
         var f = old
         f.size.height = newHeight
         f.origin.y = centerY - newHeight / 2
         panel.setFrame(f, display: true, animate: false)
+        clog("[Resize] panel grew to \(Int(f.size.width))x\(Int(f.size.height))")
     }
 
     private func createPanel() {
@@ -169,6 +171,8 @@ struct QuickInputView: View {
     @State private var attachedImage: NSImage? = nil
     @State private var pasteMonitor: Any? = nil
     @State private var keyMonitor: Any? = nil
+    @State private var commandResult: String? = nil      // inline preview (definition / help)
+    @State private var isAutoDictionary: Bool = false    // true when current prompt produced a dict hit
     @FocusState private var focused: Bool
 
     private let store = WebViewStore.shared
@@ -201,13 +205,13 @@ struct QuickInputView: View {
             }
 
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "sparkles")
+                Image(systemName: iconForCurrentInput())
                     .font(.system(size: 18))
                     .foregroundColor(.secondary)
                     .padding(.top, 2)
 
                 TextField(
-                    "Ask all AIs at once...   ↩ send · ⇧↩ newline · ⌘V image · esc cancel",
+                    "Ask all AIs at once...   (single word auto-looks up · /? for help)",
                     text: $prompt,
                     axis: .vertical
                 )
@@ -218,6 +222,19 @@ struct QuickInputView: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
+
+            // Result area — only shown when a command produced output.
+            if let result = commandResult, !result.isEmpty {
+                Divider()
+                Text(result)
+                    .font(.system(size: 14))
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -235,22 +252,102 @@ struct QuickInputView: View {
         .onPreferenceChange(ContentSizeKey.self) { size in
             onSizeChange(size)
         }
+        .onChange(of: prompt) { _ in
+            updateCommandResult()
+        }
         .onAppear {
-            prompt = ""
-            attachedImage = nil
             focused = true
             installMonitors()
+            loadClipboardIfEnabled()
+            updateCommandResult()
         }
         .onDisappear { removeMonitors() }
+        // Re-load clipboard on every show (panel.orderIn doesn't fire onAppear after first time)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
+            if let w = notif.object as? NSWindow, w is KeyablePanel {
+                loadClipboardIfEnabled()
+                updateCommandResult()
+            }
+        }
+    }
+
+    /// Auto-populate the input from the clipboard. Image takes priority over text.
+    /// If user disabled the toggle, we just clear instead.
+    private func loadClipboardIfEnabled() {
+        let enabled = UserDefaults.standard.object(forKey: "autoPasteOnSummon") as? Bool ?? true
+        guard enabled else {
+            prompt = ""
+            attachedImage = nil
+            return
+        }
+        let pb = NSPasteboard.general
+        if let img = NSImage(pasteboard: pb), img.size.width > 0, img.size.height > 0 {
+            attachedImage = img
+            prompt = ""
+        } else if let str = pb.string(forType: .string), !str.isEmpty {
+            prompt = str
+            attachedImage = nil
+        } else {
+            prompt = ""
+            attachedImage = nil
+        }
     }
 
     private func submit() {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || attachedImage != nil else { return }
-        store.broadcast(text: text, image: attachedImage, source: .quickInput)
-        prompt = ""
-        attachedImage = nil
-        onSubmitCompleted()
+        switch CommandRouter.route(prompt) {
+        case .help:
+            commandResult = nil
+            onDismiss()
+
+        case .broadcast:
+            // If the prompt is currently showing an auto-dictionary hit, treat Enter
+            // as "I'm done reading the definition" — close without broadcasting.
+            // For misses or non-word input, broadcast as usual.
+            if isAutoDictionary {
+                commandResult = nil
+                isAutoDictionary = false
+                onDismiss()
+                return
+            }
+            let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty || attachedImage != nil else { return }
+            store.broadcast(text: text, image: attachedImage, source: .quickInput)
+            prompt = ""
+            attachedImage = nil
+            commandResult = nil
+            onSubmitCompleted()
+        }
+    }
+
+    /// Update the inline result preview based on what's currently in the prompt.
+    /// Live (every keystroke) — DCS is local + fast.
+    /// Single-word input auto-triggers a dictionary lookup; a hit shows inline.
+    /// A miss shows nothing (Enter then broadcasts normally so AIs can explain).
+    private func updateCommandResult() {
+        switch CommandRouter.route(prompt) {
+        case .help:
+            commandResult = kHelpText
+            isAutoDictionary = false
+
+        case .broadcast:
+            let candidate = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isLikelyDictionaryQuery(candidate),
+               let def = dictionaryDefinition(of: candidate) {
+                commandResult = def
+                isAutoDictionary = true
+            } else {
+                commandResult = nil
+                isAutoDictionary = false
+            }
+        }
+    }
+
+    /// Pick an icon hint based on what kind of command the user is typing.
+    private func iconForCurrentInput() -> String {
+        switch CommandRouter.route(prompt) {
+        case .help:       return "questionmark.circle"
+        case .broadcast:  return isAutoDictionary ? "book.closed" : "sparkles"
+        }
     }
 
     private func installMonitors() {

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("hotkeyKeyCode") private var hotkeyKeyCode: Int = Int(kVK_ANSI_C)
     @AppStorage("hotkeyModifiers") private var hotkeyModifiers: Int = Int(cmdKey | shiftKey)
     @AppStorage("foregroundMainOnSend") private var foregroundMainOnSend: Bool = true
+    @AppStorage("autoPasteOnSummon") private var autoPasteOnSummon: Bool = true
     @AppStorage("notifyMode") private var notifyMode: String = "quickOnly"
     @AppStorage("notifyRequiredProviders") private var notifyRequiredProvidersRaw: String = "chatgpt,claude,gemini"
 
@@ -36,6 +37,9 @@ struct SettingsView: View {
                 }
 
                 Toggle("Bring Chorus to front after sending", isOn: $foregroundMainOnSend)
+                    .padding(.vertical, 2)
+
+                Toggle("Auto-paste clipboard when summoning", isOn: $autoPasteOnSummon)
                     .padding(.vertical, 2)
 
                 Text("Press the shortcut anywhere to summon a floating input. Type, hit Return to broadcast to all visible AIs. Cmd+V pastes an image.")
