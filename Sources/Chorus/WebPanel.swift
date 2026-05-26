@@ -33,6 +33,74 @@ struct WebPanel: NSViewRepresentable {
     }
 }
 
+/// Intercepts link clicks in the embedded AI panels and routes external links
+/// to Chrome (or the user's default browser if Chrome isn't installed). Keeps
+/// same-host navigation in the webview so internal flows like "switch conversation"
+/// or "click on a prior message" stay where you'd expect.
+@MainActor
+final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
+    static let shared = LinkRoutingDelegate()
+    private override init() { super.init() }
+
+    // Plain link clicks (anchor tags, no target=_blank).
+    nonisolated func webView(_ webView: WKWebView,
+                             decidePolicyFor navigationAction: WKNavigationAction,
+                             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard navigationAction.navigationType == .linkActivated,
+              let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+
+        let linkHost = url.host ?? ""
+        let currentHost = webView.url?.host ?? ""
+
+        // Same-host clicks (e.g. switching ChatGPT conversations, Claude sidebar
+        // entries) — keep them inside the panel.
+        if isSameSite(linkHost, currentHost) {
+            decisionHandler(.allow)
+            return
+        }
+
+        // External link → punt to Chrome
+        Task { @MainActor in Self.openExternally(url) }
+        decisionHandler(.cancel)
+    }
+
+    // target=_blank and window.open() — never open these inside the panel.
+    nonisolated func webView(_ webView: WKWebView,
+                             createWebViewWith configuration: WKWebViewConfiguration,
+                             for navigationAction: WKNavigationAction,
+                             windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            Task { @MainActor in Self.openExternally(url) }
+        }
+        return nil
+    }
+
+    /// Hand the URL to the system's default browser (which the user sets in
+    /// System Settings → Desktop & Dock → Default web browser). Same fallback
+    /// handles mailto:, tel:, etc. — macOS routes to the right app.
+    static func openExternally(_ url: URL) {
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Treat related hosts as the same site so internal nav (`accounts.google.com` ↔
+    /// `gemini.google.com`) doesn't bounce out. Strict eTLD+1 would need a public-suffix
+    /// list; for our three AIs the "same registered domain" heuristic is enough.
+    nonisolated private func isSameSite(_ a: String, _ b: String) -> Bool {
+        func base(_ h: String) -> String {
+            var h = h
+            if h.hasPrefix("www.") { h.removeFirst(4) }
+            let parts = h.split(separator: ".")
+            // last two labels: e.g. "google.com", "openai.com"
+            return parts.count >= 2 ? parts.suffix(2).joined(separator: ".") : h
+        }
+        if a.isEmpty || b.isEmpty { return false }
+        return base(a) == base(b)
+    }
+}
+
 /// Bridges JS `webkit.messageHandlers.chorusCompletion.postMessage({host})`
 /// back to Swift. Singleton — same handler instance is attached to every WKWebView.
 @MainActor
@@ -90,6 +158,10 @@ enum WebViewFactory {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
+
+        // Route link clicks: same-site stays in panel, external links → Chrome.
+        webView.navigationDelegate = LinkRoutingDelegate.shared
+        webView.uiDelegate = LinkRoutingDelegate.shared
 
         // CRITICAL FIX for background streaming: disable WebKit's "window is occluded →
         // throttle WebContent process" pipeline. This is the same private SPI that

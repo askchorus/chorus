@@ -18,6 +18,12 @@ final class QuickInputWindowController {
     // Frame width is fixed; height tracks SwiftUI content.
     private let panelWidth: CGFloat = 640
 
+    /// Timestamp of the last explicit `show()` call. Used by the SwiftUI view to
+    /// distinguish "panel just got summoned" (load clipboard) from "panel got
+    /// focus back after the user clicked an internal button" (do NOT reload — it
+    /// would clobber the prompt with stale clipboard content).
+    var lastShowAt: Date = .distantPast
+
     private init() {}
 
     func toggle() {
@@ -27,6 +33,7 @@ final class QuickInputWindowController {
     func show() {
         if panel == nil { createPanel() }
         recenter()
+        lastShowAt = Date()    // mark a fresh summon so the SwiftUI view knows it's OK to reload clipboard
         // Do NOT NSApp.activate(...) — would surface the main Chorus window.
         panel?.makeKeyAndOrderFront(nil)
         DispatchQueue.main.async { [weak self] in self?.focusTextField() }
@@ -224,6 +231,40 @@ struct QuickInputView: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
 
+            // Chip row — quick-prefix buttons. Shown when the user has either typed
+            // something OR attached an image, and we're not in dictionary-lookup mode.
+            // The chip set switches when an image is attached so the suggestions match
+            // what makes sense for vision input.
+            if (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil),
+               !isAutoDictionary {
+                let chips = attachedImage != nil ? kImageChipPrompts : kDefaultChipPrompts
+                HStack(spacing: 8) {
+                    ForEach(chips, id: \.self) { chip in
+                        Button {
+                            // Prepend chip prefix and broadcast immediately — one-tap action.
+                            prompt = applyChipPrefix(chip, to: prompt)
+                            submit()
+                        } label: {
+                            Text(chip)
+                                .font(.system(size: 12))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule().fill(Color.primary.opacity(0.08))
+                                )
+                                .overlay(
+                                    Capsule().strokeBorder(Color.primary.opacity(0.05))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Send to all AIs with “\(chip)：” prepended")
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 10)
+            }
+
             // Result area — only shown when a command produced output.
             if let result = commandResult, !result.isEmpty {
                 Divider()
@@ -284,11 +325,16 @@ struct QuickInputView: View {
             updateCommandResult()
         }
         .onDisappear { removeMonitors() }
-        // Re-load clipboard on every show (panel.orderIn doesn't fire onAppear after first time)
+        // Re-load clipboard only when this notification follows a fresh show() call —
+        // otherwise internal focus shuffles (clicking a chip / speaker button) would
+        // clobber the prompt with stale clipboard content.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notif in
             if let w = notif.object as? NSWindow, w is KeyablePanel {
-                loadClipboardIfEnabled()
-                updateCommandResult()
+                let elapsed = Date().timeIntervalSince(QuickInputWindowController.shared.lastShowAt)
+                if elapsed < 0.5 {
+                    loadClipboardIfEnabled()
+                    updateCommandResult()
+                }
             }
         }
     }

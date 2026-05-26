@@ -58,6 +58,31 @@ func isLikelyEnglishWord(_ s: String) -> Bool {
     return trimmed.allSatisfy { $0.isASCII && ($0.isLetter || $0 == "-" || $0 == "'") }
 }
 
+/// Quick-action prefixes used when the input contains text only.
+let kDefaultChipPrompts: [String] = [
+    "事实核查",
+    "解释一下",
+    "说的对吗",
+    "翻译",
+]
+
+/// Quick-action prefixes shown when an image is attached. Tailored for vision tasks.
+let kImageChipPrompts: [String] = [
+    "解释这张图",
+    "识别文字",
+    "翻译图中文字",
+    "描述一下",
+]
+
+/// Compose the new prompt body after a chip is tapped.
+func applyChipPrefix(_ chip: String, to current: String) -> String {
+    let content = current.trimmingCharacters(in: .whitespacesAndNewlines)
+    if content.isEmpty {
+        return "\(chip)："
+    }
+    return "\(chip)：\n\n\(content)"
+}
+
 /// Look up a word using macOS Dictionary Services — pulls from whichever
 /// dictionaries the user has enabled in Dictionary.app (e.g. Oxford English,
 /// 牛津 / 朗文, 现代汉语 / 朗文当代, 简明英汉 etc.). Local, no network.
