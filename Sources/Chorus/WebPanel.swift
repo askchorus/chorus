@@ -42,6 +42,14 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     static let shared = LinkRoutingDelegate()
     private override init() { super.init() }
 
+    /// When set, the next file-open panel (triggered by a web page's <input type=file>)
+    /// is auto-answered with this URL instead of showing a dialog. This is how we feed
+    /// an image into Gemini, which renders no static file input and ignores synthetic
+    /// paste/drop. The broadcaster writes the image to a temp file, sets this, then drives
+    /// Gemini's "Upload files" menu — WebKit calls runOpenPanel, we supply the file silently.
+    /// Single-shot: cleared as soon as it's consumed.
+    var pendingUpload: URL?
+
     // Plain link clicks (anchor tags, no target=_blank).
     nonisolated func webView(_ webView: WKWebView,
                              decidePolicyFor navigationAction: WKNavigationAction,
@@ -78,6 +86,37 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
         return nil
     }
 
+    // File upload panel. Web page triggered an <input type=file>. If we have a pending
+    // programmatic upload (Gemini image), answer with it silently — no dialog. Otherwise
+    // show the real NSOpenPanel so manual uploads inside the panels still work normally.
+    nonisolated func webView(_ webView: WKWebView,
+                             runOpenPanelWith parameters: WKOpenPanelParameters,
+                             initiatedByFrame frame: WKFrameInfo,
+                             completionHandler: @escaping ([URL]?) -> Void) {
+        Task { @MainActor in
+            // Only auto-answer for Gemini. Host-scoping prevents a manual file pick in another
+            // panel (or a stray panel) from consuming the armed image during its brief window.
+            let host = webView.url?.host ?? ""
+            let isGemini = host.contains("gemini.google.com") || host.contains("gemini")
+            if let pending = self.pendingUpload, isGemini {
+                self.pendingUpload = nil  // single-shot
+                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — auto-supplying \(pending.lastPathComponent, privacy: .public) (no dialog)")
+                completionHandler([pending])
+            } else {
+                // Either no pending upload, or a non-Gemini panel — show the real dialog and
+                // leave any armed Gemini upload intact for when Gemini's own panel fires.
+                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — showing NSOpenPanel (pending=\(self.pendingUpload != nil))")
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = true
+                panel.canChooseDirectories = false
+                panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+                panel.begin { resp in
+                    completionHandler(resp == .OK ? panel.urls : nil)
+                }
+            }
+        }
+    }
+
     /// Hand the URL to the system's default browser (which the user sets in
     /// System Settings → Desktop & Dock → Default web browser). Same fallback
     /// handles mailto:, tel:, etc. — macOS routes to the right app.
@@ -98,6 +137,21 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
         if a.isEmpty || b.isEmpty { return false }
         return base(a) == base(b)
+    }
+}
+
+/// Receives diagnostic logs from the broadcast JS and forwards them to macOS
+/// unified logging. Lets us debug per-site upload issues without making the
+/// user open Web Inspector. Read back with:
+///   log show --subsystem com.smiletalker.chorus --info --debug --last 5m
+@MainActor
+final class JSLogHandler: NSObject, WKScriptMessageHandler {
+    static let shared = JSLogHandler()
+    private override init() { super.init() }
+
+    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let s = message.body as? String else { return }
+        chorusLog.notice("[Chorus.JS] \(s, privacy: .public)")
     }
 }
 
@@ -155,6 +209,8 @@ enum WebViewFactory {
         // Install completion-detection bridge: JS will postMessage to "chorusCompletion"
         // when a streamed response finishes (send button transitions disabled → enabled).
         config.userContentController.add(CompletionScriptHandler.shared, name: "chorusCompletion")
+        // Install diagnostic log bridge so JS `[Chorus]` logs reach unified logging.
+        config.userContentController.add(JSLogHandler.shared, name: "chorusJSLog")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
@@ -206,7 +262,10 @@ enum Broadcaster {
     ///   - text: prompt text (may be empty if image-only)
     ///   - imageBase64: base64-encoded PNG bytes, or nil
     ///   - imageMime: MIME type of the image, defaults to "image/png"
-    static func injectionScript(text: String, imageBase64: String? = nil, imageMime: String = "image/png") -> String {
+    ///   - waitForGeminiUpload: when true, the script attaches NO image itself but first waits
+    ///     for an externally-supplied image (Gemini's runOpenPanel upload) to finish appearing
+    ///     in the composer before typing + sending. Avoids firing send on a half-uploaded image.
+    static func injectionScript(text: String, imageBase64: String? = nil, imageMime: String = "image/png", waitForGeminiUpload: Bool = false) -> String {
         let escapedText = text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -216,12 +275,24 @@ enum Broadcaster {
 
         let imageJS = imageBase64.map { "\"\($0)\"" } ?? "null"
         let mimeJS = "\"\(imageMime)\""
+        let waitUploadJS = waitForGeminiUpload ? "true" : "false"
 
         return """
         (async () => {
           const TEXT = "\(escapedText)";
           const IMAGE_B64 = \(imageJS);
           const IMAGE_MIME = \(mimeJS);
+          const WAIT_UPLOAD = \(waitUploadJS);
+
+          // Diagnostic log → Swift (visible in `log show --subsystem com.smiletalker.chorus`).
+          const clog = (msg) => {
+            try {
+              window.webkit?.messageHandlers?.chorusJSLog?.postMessage(
+                location.hostname + ': ' + msg
+              );
+            } catch (_) {}
+            try { console.log('[Chorus]', msg); } catch (_) {}
+          };
 
           const HOSTS = [
             {
@@ -270,8 +341,15 @@ enum Broadcaster {
                 'button.send-button',
                 'button[aria-label*="Send" i]'
               ],
-              // Gemini rejects synthesized paste/drop events — use the hidden file input.
-              uploadMethod: 'fileInput',
+              // Gemini doesn't render a static file input — it lazily creates one
+              // after clicking "Upload & tools". Use clickUpload strategy.
+              uploadMethod: 'clickUpload',
+              uploadButtonSelectors: [
+                'button[aria-label="Upload & tools"]',
+                'button[aria-label*="Upload" i]',
+                'button[aria-label*="Add files" i]',
+                'button[mattooltip*="Upload" i]',
+              ],
               dropTargetSelectors: [
                 'rich-textarea',
                 'div.ql-editor[contenteditable="true"]',
@@ -310,6 +388,29 @@ enum Broadcaster {
             return [...new Set(results)];
           };
 
+          // Like pickAll but walks every shadow root too — required for Polymer/Lit
+          // sites like Gemini where the composer's file input lives inside a Web
+          // Component's shadowRoot that a flat document.querySelectorAll can't reach.
+          const deepQueryAll = (selectors) => {
+            const results = [];
+            const stack = [document];
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root) continue;
+              for (const sel of selectors) {
+                try {
+                  const found = root.querySelectorAll?.(sel);
+                  if (found) for (const el of found) results.push(el);
+                } catch (_) {}
+              }
+              const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+              for (const el of all) {
+                if (el.shadowRoot) stack.push(el.shadowRoot);
+              }
+            }
+            return [...new Set(results)];
+          };
+
           const input = pickFirst(cfg.inputSelectors);
           if (!input && (TEXT || IMAGE_B64)) return 'input not found';
 
@@ -327,6 +428,29 @@ enum Broadcaster {
             const file = new File([new Blob([bytes], { type: IMAGE_MIME })], `pasted.${ext}`, { type: IMAGE_MIME });
 
             const method = cfg.uploadMethod || 'paste';
+
+            // Diagnostic DOM scan — runs BEFORE any strategy. Helps debug "why doesn't
+            // Gemini upload" by showing what file inputs / upload buttons actually exist.
+            const scanForUploadTargets = () => {
+              const fileInputs = deepQueryAll(['input[type="file"]']);
+              const uploadButtons = deepQueryAll([
+                'button[aria-label*="upload" i]',
+                'button[aria-label*="attach" i]',
+                'button[aria-label*="add" i]',
+                'button[mattooltip*="upload" i]',
+                'button[mattooltip*="attach" i]',
+              ]);
+              clog('image-upload scan: method=' + method + ' fileInputs=' + fileInputs.length + ' uploadButtons=' + uploadButtons.length);
+              fileInputs.slice(0, 3).forEach((fi, i) => {
+                clog('  fileInput[' + i + ']: accept=' + (fi.accept || '?') + ' multiple=' + (fi.multiple || false) + ' name=' + (fi.name || '?'));
+              });
+              uploadButtons.slice(0, 3).forEach((b, i) => {
+                clog('  uploadBtn[' + i + ']: label=' + (b.getAttribute('aria-label') || b.getAttribute('mattooltip') || '?'));
+              });
+            };
+
+            // Define deepQueryAll early since scanForUploadTargets uses it
+            // (the existing const declaration further down still works because of hoisting in arrow-fn context, but we just call it after the const below)
 
             const tryPaste = () => {
               if (!input) return false;
@@ -370,34 +494,189 @@ enum Broadcaster {
             };
 
             const tryFileInput = () => {
-              const fileInputs = pickAll(cfg.fileInputSelectors || []);
+              const fileInputs = deepQueryAll(cfg.fileInputSelectors || ['input[type="file"]']);
+              clog('tryFileInput: deep-found ' + fileInputs.length + ' file inputs');
+              if (fileInputs.length === 0) return false;
               for (const fi of fileInputs) {
                 try {
                   const dt = new DataTransfer();
                   dt.items.add(file);
                   fi.files = dt.files;
                   fi.dispatchEvent(new Event('change', { bubbles: true }));
+                  clog('tryFileInput: set files on ' + (fi.outerHTML || '?').slice(0, 120));
                   return true;
-                } catch (e) { /* try next */ }
+                } catch (e) {
+                  clog('tryFileInput: setting files threw — ' + e);
+                }
               }
               return false;
             };
 
+            // Gemini-style "lazy" upload: site doesn't render a file input until
+            // you click its "Upload & tools" button. Click it, wait for the DOM
+            // to spin up an <input type="file">, and (if a menu pops instead)
+            // click the matching menu item, then set files on the input.
+            const tryClickThenFileInput = async () => {
+              const buttons = deepQueryAll(cfg.uploadButtonSelectors || []);
+              clog('clickThenFileInput: found ' + buttons.length + ' upload buttons');
+              if (buttons.length === 0) return false;
+
+              const btn = buttons[0];
+              const btnLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
+              clog('clickThenFileInput: clicking "' + btnLabel + '"');
+
+              // Material Design buttons frequently listen to pointer events but
+              // ignore raw .click() — dispatch the full pointer/mouse sequence.
+              const fireFullClick = (el) => {
+                const rect = el.getBoundingClientRect();
+                const opts = {
+                  bubbles: true, cancelable: true,
+                  clientX: rect.left + rect.width / 2,
+                  clientY: rect.top + rect.height / 2,
+                  button: 0, view: window,
+                };
+                try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (_) {}
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (_) {}
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                try { el.click(); } catch (_) {}
+              };
+              clog('clickThenFileInput: btn=' + (btn.outerHTML || '').slice(0, 140));
+              fireFullClick(btn);
+              await new Promise(r => setTimeout(r, 700));
+
+              let inputs = deepQueryAll(['input[type="file"]']);
+              clog('clickThenFileInput: after click, ' + inputs.length + ' file inputs');
+
+              // If the click didn't directly reveal an input, the trigger probably
+              // opened a menu/popup. Dump EVERYTHING the click revealed so we can see
+              // Gemini's real markup (it changes often). Then click the best match.
+              if (inputs.length === 0) {
+                // Did anything menu-like appear at all? (distinguishes "click did
+                // nothing" from "menu opened but no matching item").
+                const roleEls = deepQueryAll([
+                  '[role="menuitem"]', '[role="option"]', '[role="menu"]',
+                  '[role="dialog"]', '[role="listbox"]',
+                ]);
+                const overlayEls = deepQueryAll([
+                  '.cdk-overlay-container', '.cdk-overlay-pane', '.mat-mdc-menu-panel',
+                ]);
+                clog('clickThenFileInput: post-click roleEls=' + roleEls.length +
+                     ' overlayEls=' + overlayEls.length);
+
+                // All upload-hinting clickables (light DOM + shadow + CDK overlay).
+                const hints = deepQueryAll([
+                  'button', 'a', '[role="button"]', '[role="menuitem"]',
+                  '[role="option"]', '[mat-menu-item]', 'div[tabindex]',
+                ]).filter(el => {
+                  if (el === btn) return false;
+                  const t = ((el.textContent || '') + ' ' +
+                             (el.getAttribute('aria-label') || '')).toLowerCase().trim();
+                  if (!t || t === btnLabel || t.includes('upload & tools')) return false;
+                  return /upload|from computer|add file|files from|photo|gallery|相册|拍照|从电脑|上传文件|本地文件|图片|文件/.test(t);
+                });
+                clog('clickThenFileInput: ' + hints.length + ' upload-hint clickables');
+                hints.slice(0, 12).forEach((el, i) => {
+                  const t = ((el.textContent || '') + ' | ' +
+                             (el.getAttribute('aria-label') || '')).trim();
+                  clog('  hint[' + i + ']: <' + el.tagName.toLowerCase() + '> "' +
+                       t.slice(0, 70) + '"');
+                });
+
+                if (hints.length > 0) {
+                  clog('clickThenFileInput: clicking hint[0]');
+                  fireFullClick(hints[0]);
+                  await new Promise(r => setTimeout(r, 700));
+                }
+
+                inputs = deepQueryAll(['input[type="file"]']);
+                clog('clickThenFileInput: after hint click, ' + inputs.length + ' file inputs');
+              }
+
+              for (const fi of inputs) {
+                try {
+                  const dt = new DataTransfer();
+                  dt.items.add(file);
+                  fi.files = dt.files;
+                  fi.dispatchEvent(new Event('change', { bubbles: true }));
+                  clog('clickThenFileInput: set files on ' + (fi.outerHTML || '?').slice(0, 120));
+                  return true;
+                } catch (e) {
+                  clog('clickThenFileInput: setting files threw — ' + e);
+                }
+              }
+              return false;
+            };
+
+            // Diagnostic scan before running strategies
+            scanForUploadTargets();
+
             // Run primary strategy; on failure walk through remaining methods.
             const order = method === 'drop'
-              ? [tryDrop, tryFileInput, tryPaste]
+              ? [['drop', tryDrop], ['fileInput', tryFileInput], ['paste', tryPaste]]
               : method === 'fileInput'
-                ? [tryFileInput, tryPaste, tryDrop]
-                : [tryPaste, tryFileInput, tryDrop];
+                ? [['fileInput', tryFileInput], ['paste', tryPaste], ['drop', tryDrop]]
+                : method === 'clickUpload'
+                  ? [['clickUpload', tryClickThenFileInput], ['fileInput', tryFileInput], ['paste', tryPaste], ['drop', tryDrop]]
+                  : [['paste', tryPaste], ['fileInput', tryFileInput], ['drop', tryDrop]];
 
-            for (const fn of order) {
-              if (fn()) { imageAttached = true; break; }
+            // `await` is safe on sync returns (just resolves immediately) — keeps
+            // the loop compatible with both sync and async strategy functions.
+            for (const [name, fn] of order) {
+              let ok = false;
+              try { ok = await fn(); } catch (e) { clog(name + ' threw: ' + e); }
+              clog('strategy ' + name + ' returned ' + ok);
+              if (ok) { imageAttached = true; break; }
             }
 
             // Wait for the upload to register in the UI (composer shows attached file).
             // Bumped from 800ms to 1500ms because Claude's React state sometimes hadn't
             // committed the attachment yet at 800ms, causing send-before-image races.
             await new Promise(r => setTimeout(r, 1500));
+          }
+
+          // 1b) Gemini panel-upload path: the image is uploaded out-of-band (native
+          //     runOpenPanel), so this script attaches nothing — but it MUST wait for the
+          //     image to finish appearing in the composer before typing/sending, or Gemini
+          //     sends a text-only message ("you forgot the image"). Poll for the uploaded
+          //     thumbnail (blob:/data: img) or a remove-attachment affordance.
+          if (WAIT_UPLOAD) {
+            // Phase 1 — wait for the local preview thumbnail to appear (upload accepted).
+            // NOTE: this shows INSTANTLY (a blob: preview) and does NOT mean the server-side
+            // upload is done. It's only "the file was accepted into the composer".
+            const thumb = () => deepQueryAll(['img[src^="blob:"]', 'img[src^="data:image"]'])
+              .concat(deepQueryAll(['button[aria-label*="remove" i]', 'button[aria-label*="delete" i]',
+                                    'button[aria-label*="移除" i]', 'button[aria-label*="删除" i]']));
+            const t0 = Date.now();
+            while (Date.now() - t0 < 20000) {
+              if (thumb().length) break;
+              await new Promise(r => setTimeout(r, 250));
+            }
+            clog('WAIT_UPLOAD: preview appeared=' + (thumb().length > 0) + ' after ' + (Date.now() - t0) + 'ms');
+
+            // Visible upload spinner/progress indicator. Gemini is Angular Material, so the
+            // in-progress affordance is likely a mat spinner / progressbar. Diagnostic dump too.
+            const spinners = () => deepQueryAll([
+              'mat-progress-spinner', 'mat-spinner', '.mat-mdc-progress-spinner', '.mdc-circular-progress',
+              '[role="progressbar"]', 'circular-progress',
+              '[class*="spinner" i]', '[class*="uploading" i]', '[class*="progress" i]',
+            ]).filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+            const s0 = spinners();
+            clog('WAIT_UPLOAD: visible spinners=' + s0.length);
+            s0.slice(0, 5).forEach((s, i) =>
+              clog('  spinner[' + i + ']: <' + s.tagName.toLowerCase() + '> cls="' + (s.className || '').toString().slice(0, 60) + '"'));
+
+            // Phase 2 — wait for the server upload to FINISH. Heuristic: at least a 4s floor
+            // (covers normal uploads even if our spinner selectors miss), then break early once
+            // no spinner is visible; hard cap 22s for big images / slow networks.
+            const minWait = 4000, maxWait = 22000;
+            const t1 = Date.now();
+            while (Date.now() - t1 < maxWait) {
+              const elapsed = Date.now() - t1;
+              if (elapsed >= minWait && spinners().length === 0) break;
+              await new Promise(r => setTimeout(r, 300));
+            }
+            clog('WAIT_UPLOAD: finished waiting (spinners=' + spinners().length + ', waited=' + (Date.now() - t1) + 'ms)');
           }
 
           // 2) Set text AFTER image is attached.
@@ -430,7 +709,7 @@ enum Broadcaster {
           //    then trigger send. Try a real click first; if button stays disabled past the
           //    deadline, click it anyway as a last-ditch attempt; finally fall back to a
           //    synthesized Enter on the input (some sites send via key event not button).
-          const sendDeadline = Date.now() + (IMAGE_B64 ? 25000 : 3000);
+          const sendDeadline = Date.now() + ((IMAGE_B64 || WAIT_UPLOAD) ? 25000 : 3000);
           let lastBtn = null;
           let clicked = false;
 
@@ -638,6 +917,115 @@ enum Broadcaster {
           return clicked
             ? (imageAttached ? 'sent (with image)' : 'sent')
             : 'send button not found';
+        })();
+        """
+    }
+
+    /// Drives Gemini's "Upload & tools" → "Upload files" menu so it triggers its lazy
+    /// <input type=file>. WebKit then calls our runOpenPanel delegate, which feeds the
+    /// image silently. This script does NOT touch the file input itself — it just navigates
+    /// the menu. It also dumps the menu contents (so we can see the real item labels) and
+    /// logs each element's rect (so we can fall back to real CGEvent coordinate clicks if
+    /// synthetic clicks don't carry enough user-activation to open the picker).
+    static func geminiUploadTriggerScript() -> String {
+        return """
+        (async () => {
+          const clog = (msg) => {
+            try { window.webkit?.messageHandlers?.chorusJSLog?.postMessage(location.hostname + ': ' + msg); } catch (_) {}
+          };
+          const deepQueryAll = (selectors) => {
+            const results = [];
+            const stack = [document];
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root) continue;
+              for (const sel of selectors) {
+                try { const f = root.querySelectorAll?.(sel); if (f) for (const el of f) results.push(el); } catch (_) {}
+              }
+              const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+              for (const el of all) { if (el.shadowRoot) stack.push(el.shadowRoot); }
+            }
+            return [...new Set(results)];
+          };
+          const fullClick = (el) => {
+            const r = el.getBoundingClientRect();
+            const o = { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, button: 0, view: window };
+            try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (_) {}
+            el.dispatchEvent(new MouseEvent('mousedown', o));
+            try { el.dispatchEvent(new PointerEvent('pointerup', o)); } catch (_) {}
+            el.dispatchEvent(new MouseEvent('mouseup', o));
+            try { el.click(); } catch (_) {}
+          };
+          const rectOf = (el) => { const r = el.getBoundingClientRect(); return Math.round(r.x)+','+Math.round(r.y)+' '+Math.round(r.width)+'x'+Math.round(r.height); };
+
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+          const findButton = () => {
+            const b = deepQueryAll([
+              'button[aria-label="Upload & tools"]',
+              'button[aria-label*="Upload" i]',
+              'button[aria-label*="Add files" i]',
+              'button[aria-label*="上传" i]',
+            ]);
+            return b.length ? b[0] : null;
+          };
+          const findMenuItems = () => deepQueryAll([
+            '[role="menuitem"]', 'button[mat-menu-item]', '[mat-menu-item]',
+            '.mat-mdc-menu-panel button', '[role="menu"] button', '.cdk-overlay-pane button',
+            '.cdk-overlay-pane [role="menuitem"]',
+          ]);
+          // Files = upload-from-computer. EXCLUDE cloud/other sources — Gemini's menu is a
+          // grid (Files | Avatar | Drive | Photos | Notebooks); matching 'photo' once grabbed
+          // "Google Photos" (an in-page picker) instead of the local-file upload.
+          const isUploadItem = (raw) => {
+            const t = raw.toLowerCase();
+            if (t.includes('drive') || t.includes('photos') || t.includes('notebook') ||
+                t.includes('avatar') || t.includes('personal intelligence')) return false;
+            return /\\bfiles?\\b/.test(t) || t.includes('upload') ||
+                   t.includes('from computer') || t.includes('上传') ||
+                   t.includes('本地') || t.includes('文件');
+          };
+          const findUploadTile = () => {
+            for (const it of findMenuItems()) {
+              const t = ((it.textContent || '') + ' ' + (it.getAttribute('aria-label') || '')).trim();
+              if (t && isUploadItem(t)) return it;
+            }
+            return null;
+          };
+
+          // 1. Poll for the "Upload & tools" button — the composer may still be rendering
+          //    (cold start / slow machine), so don't assume it's there immediately.
+          let btn = null;
+          for (let i = 0; i < 20 && !btn; i++) { btn = findButton(); if (!btn) await sleep(150); }
+          if (!btn) { clog('geminiUpload: NO upload button after ~3s'); return 'no-btn'; }
+
+          // 2. Up to 2 attempts: click the button, then POLL (not a fixed sleep) for the
+          //    upload tile to appear, then click it. Polling absorbs menu-open latency;
+          //    the retry absorbs a missed first click / menu that opened then closed.
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            clog('geminiUpload: attempt ' + attempt + ' — clicking upload btn (rect=' + rectOf(btn) + ')');
+            fullClick(btn);
+
+            let tile = null;
+            for (let i = 0; i < 27 && !tile; i++) { tile = findUploadTile(); if (!tile) await sleep(150); }
+
+            if (tile) {
+              clog('geminiUpload: clicking "' + (tile.textContent || '').trim().slice(0, 40) + '" (rect=' + rectOf(tile) + ')');
+              fullClick(tile);
+              return 'clicked-item';
+            }
+
+            // Miss — dump what's actually in the menu so a future UI change is debuggable.
+            const items = findMenuItems();
+            clog('geminiUpload: attempt ' + attempt + ' found no upload tile among ' + items.length + ' items');
+            items.slice(0, 12).forEach((it, i) => {
+              const t = ((it.textContent || '') + ' | ' + (it.getAttribute('aria-label') || '')).trim();
+              clog('  item[' + i + ']: "' + t.slice(0, 50) + '"');
+            });
+            await sleep(400);  // let any half-open menu settle before retrying
+          }
+          clog('geminiUpload: NO matching upload tile after 2 attempts');
+          return 'no-item';
         })();
         """
     }

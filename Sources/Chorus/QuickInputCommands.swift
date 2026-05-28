@@ -72,15 +72,29 @@ let kImageChipPrompts: [String] = [
     "识别文字",
     "翻译图中文字",
     "描述一下",
+    "图片出处",
 ]
 
 /// Compose the new prompt body after a chip is tapped.
+/// No trailing colon: for image-only it reads as a clean imperative ("解释这张图"),
+/// and when there's text the blank line already separates instruction from content.
 func applyChipPrefix(_ chip: String, to current: String) -> String {
     let content = current.trimmingCharacters(in: .whitespacesAndNewlines)
     if content.isEmpty {
-        return "\(chip)："
+        return chip
     }
-    return "\(chip)：\n\n\(content)"
+    return "\(chip)\n\n\(content)"
+}
+
+/// Parse a user-edited chip list (newline-separated, from Settings) into trimmed,
+/// non-empty entries. Falls back to `fallback` when the field is empty/all-blank so a
+/// cleared box doesn't hide every chip.
+func parseChipList(_ raw: String, fallback: [String]) -> [String] {
+    let items = raw
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    return items.isEmpty ? fallback : items
 }
 
 /// Look up a word using macOS Dictionary Services — pulls from whichever

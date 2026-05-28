@@ -9,6 +9,8 @@ struct SettingsView: View {
     @AppStorage("autoPasteOnSummon") private var autoPasteOnSummon: Bool = true
     @AppStorage("notifyMode") private var notifyMode: String = "quickOnly"
     @AppStorage("notifyRequiredProviders") private var notifyRequiredProvidersRaw: String = "chatgpt,claude,gemini"
+    @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
+    @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
 
     private func requiredBinding(for key: String) -> Binding<Bool> {
         Binding(
@@ -87,9 +89,193 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
             }
+
+            Section("Quick Prompts") {
+                Text("Tapping a chip in the quick input instantly broadcasts with that text as a prefix. One chip per line.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 2)
+
+                ChipListEditor(title: "Text-mode chips",
+                               raw: $textChipsRaw,
+                               defaults: kDefaultChipPrompts)
+
+                ChipListEditor(title: "Image-mode chips (shown when an image is attached)",
+                               raw: $imageChipsRaw,
+                               defaults: kImageChipPrompts)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 400)
+        .frame(width: 520, height: 540)
+    }
+
+}
+
+// MARK: - Quick-prompt chip editor (pill UI)
+
+/// Editable list of quick-prompt chips, shown as removable capsule pills (matching how they
+/// look in the quick input) plus an inline add field. Backed by a newline-joined @AppStorage
+/// string so it stays in sync with what the quick input reads.
+struct ChipListEditor: View {
+    let title: String
+    @Binding var raw: String
+    let defaults: [String]
+
+    @State private var newChip: String = ""
+    @FocusState private var addFocused: Bool
+
+    private var chips: [String] {
+        raw.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func commit(_ list: [String]) { raw = list.joined(separator: "\n") }
+
+    private func addChip() {
+        let t = newChip.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        var list = chips
+        if !list.contains(t) { list.append(t) }
+        commit(list)
+        newChip = ""
+        addFocused = true
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Button {
+                    commit(defaults)
+                } label: {
+                    Label("Restore defaults", systemImage: "arrow.uturn.backward")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.accentColor)
+            }
+
+            if !chips.isEmpty {
+                FlowLayout(spacing: 8) {
+                    ForEach(Array(chips.enumerated()), id: \.offset) { idx, chip in
+                        ChipPill(text: chip) {
+                            var list = chips
+                            if idx < list.count { list.remove(at: idx) }
+                            commit(list)
+                        }
+                    }
+                }
+            }
+
+            // Native rounded-border field: correct caret position + reliable click-to-focus
+            // (a plain TextField stretched inside a custom HStack mis-placed the caret and
+            // swallowed taps, so focus wouldn't move between the two editors).
+            HStack(spacing: 8) {
+                // On macOS the first TextField arg is a LEFT-SIDE LABEL (not an in-field
+                // placeholder as on iOS) — that's what pushed "Add a prompt…" to the left and
+                // the caret to the right. Use an empty label + `prompt:` for a real in-field
+                // placeholder, and labelsHidden() so the field spans full width.
+                TextField(text: $newChip, prompt: Text("Add a prompt…")) {
+                    EmptyView()
+                }
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .focused($addFocused)
+                .onSubmit(addChip)
+                Button(action: addChip) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(
+                            newChip.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? Color.secondary.opacity(0.4)
+                                : Color.accentColor
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(newChip.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("Add prompt")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// A single chip rendered as a capsule with a delete (×) button — visually matches the
+/// chips shown in the quick input.
+struct ChipPill: View {
+    let text: String
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(text)
+                .font(.system(size: 12))
+                .lineLimit(1)
+            Button(action: onDelete) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary.opacity(0.55))
+            }
+            .buttonStyle(.plain)
+            .help("Remove")
+        }
+        .padding(.leading, 11)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+    }
+}
+
+/// Minimal flow layout: lays subviews left-to-right, wrapping to a new line when the next
+/// one would exceed the available width. (macOS 13+ Layout protocol.)
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > maxWidth {
+                widest = max(widest, x - spacing)
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        widest = max(widest, x - spacing)
+        let totalWidth = (maxWidth == .infinity) ? widest : maxWidth
+        return CGSize(width: max(0, totalWidth), height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let maxWidth = bounds.width
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            sub.place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + y),
+                      anchor: .topLeading,
+                      proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 

@@ -183,6 +183,10 @@ struct QuickInputView: View {
     @State private var lookupTask: Task<Void, Never>? = nil   // cancels stale online lookups when prompt changes
     @FocusState private var focused: Bool
 
+    // User-customizable quick-prompt chips (edited in Settings → Quick Prompts).
+    @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
+    @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
+
     private let store = WebViewStore.shared
 
     var body: some View {
@@ -237,7 +241,9 @@ struct QuickInputView: View {
             // what makes sense for vision input.
             if (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil),
                !isAutoDictionary {
-                let chips = attachedImage != nil ? kImageChipPrompts : kDefaultChipPrompts
+                let chips = attachedImage != nil
+                    ? parseChipList(imageChipsRaw, fallback: kImageChipPrompts)
+                    : parseChipList(textChipsRaw, fallback: kDefaultChipPrompts)
                 HStack(spacing: 8) {
                     ForEach(chips, id: \.self) { chip in
                         Button {
@@ -532,6 +538,17 @@ struct QuickInputView: View {
                     }
                     return nil
                 }
+            }
+
+            // Backspace with an image attached and no text → remove the image.
+            // Matches chat-app UX: once there's nothing left to delete in the text box,
+            // the next backspace clears the attachment. If there IS text, fall through so
+            // backspace edits text normally.
+            if event.keyCode == UInt16(kVK_Delete),
+               attachedImage != nil,
+               prompt.isEmpty {
+                Task { @MainActor in attachedImage = nil }
+                return nil
             }
 
             if event.keyCode == UInt16(kVK_Escape) {

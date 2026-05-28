@@ -1,6 +1,8 @@
 import SwiftUI
 import WebKit
 import AppKit
+import CoreGraphics
+import ApplicationServices
 import UniformTypeIdentifiers
 
 @MainActor
@@ -48,11 +50,13 @@ final class WebViewStore: ObservableObject {
     /// to decide whether to alert (e.g. only for quick-input broadcasts in default config).
     func broadcast(text: String, image: NSImage? = nil, source: BroadcastSource = .mainWindow) {
         var imageBase64: String? = nil
+        var pngData: Data? = nil
         if let image = image,
            let tiff = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
-           let pngData = bitmap.representation(using: .png, properties: [:]) {
-            imageBase64 = pngData.base64EncodedString()
+           let png = bitmap.representation(using: .png, properties: [:]) {
+            pngData = png
+            imageBase64 = png.base64EncodedString()
         }
 
         // Build the "wait for" set for the completion notification:
@@ -82,14 +86,70 @@ final class WebViewStore: ObservableObject {
             clog("broadcast skipped completion tracking — no providers to wait for (visible=\(visibleKeys), required=\(requiredKeys))")
         }
 
-        let js = Broadcaster.injectionScript(text: text, imageBase64: imageBase64)
+        let jsWithImage = Broadcaster.injectionScript(text: text, imageBase64: imageBase64)
+        // Gemini send script: attaches no image itself, but waits for the panel-uploaded
+        // image to finish appearing before typing + sending.
+        let jsGeminiSend = Broadcaster.injectionScript(text: text, imageBase64: nil, waitForGeminiUpload: true)
         for (key, webView) in cache {
-            webView.evaluateJavaScript(js) { result, error in
+            // Gemini blocks synthetic JS image attachment: it renders no static <input type=file>
+            // and ignores synthetic paste/drop (isTrusted=false). Instead we intercept its
+            // file-open panel: arm runOpenPanel with a temp image file, then drive Gemini's
+            // "Upload files" menu so WebKit calls the panel — which we answer silently.
+            if key == "gemini", let png = pngData {
+                geminiUploadViaPanel(into: webView, pngData: png, thenRun: jsGeminiSend)
+                continue
+            }
+            webView.evaluateJavaScript(jsWithImage) { result, error in
                 if let error = error {
                     print("[\(key)] error: \(error.localizedDescription)")
                 } else if let result = result {
                     print("[\(key)] \(result)")
                 }
+            }
+        }
+    }
+
+    /// Feed an image into Gemini via file-open-panel interception (the native equivalent of
+    /// Playwright's fileChooser handling). Steps: write the image to a temp file, arm the
+    /// runOpenPanel auto-answer, then drive Gemini's "Upload files" menu. When Gemini fires
+    /// its lazy <input type=file>, WebKit calls our delegate, which returns the file silently
+    /// (no dialog). Finally set the text and send.
+    private func geminiUploadViaPanel(into webView: WKWebView, pngData: Data, thenRun js: String) {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-upload-\(UUID().uuidString).png")
+        do {
+            try pngData.write(to: tmp)
+        } catch {
+            chorusLog.notice("[Chorus.Gemini] temp file write failed: \(error.localizedDescription, privacy: .public)")
+            webView.evaluateJavaScript(js) { _, _ in }  // still send the text
+            return
+        }
+
+        // Arm the open-panel auto-answer (single-shot, consumed by runOpenPanel).
+        LinkRoutingDelegate.shared.pendingUpload = tmp
+        chorusLog.notice("[Chorus.Gemini] armed pendingUpload=\(tmp.lastPathComponent, privacy: .public)")
+
+        // Bring Chorus forward — some user-activation-gated paths only fire for the active app.
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Delay so ChatGPT/Claude finish their synthetic paste before we churn Gemini's UI.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            webView.evaluateJavaScript(Broadcaster.geminiUploadTriggerScript()) { result, _ in
+                chorusLog.notice("[Chorus.Gemini] upload trigger result=\(String(describing: result), privacy: .public)")
+                // The send script polls for the uploaded thumbnail itself (WAIT_UPLOAD), so we
+                // only need a short gap before kicking it off — it does the waiting internally.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    webView.evaluateJavaScript(js) { _, _ in }
+                }
+            }
+        }
+
+        // Safety: if the menu nav never triggers the panel, don't leave a stale armed upload
+        // that would hijack the user's next manual file pick. Clear it after 10s.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            if LinkRoutingDelegate.shared.pendingUpload == tmp {
+                LinkRoutingDelegate.shared.pendingUpload = nil
+                chorusLog.notice("[Chorus.Gemini] cleared stale pendingUpload (panel never fired)")
             }
         }
     }
