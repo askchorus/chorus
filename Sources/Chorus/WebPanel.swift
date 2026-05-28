@@ -163,6 +163,9 @@ final class CompletionScriptHandler: NSObject, WKScriptMessageHandler {
 
     /// Called on main actor with the page hostname (e.g. "chatgpt.com").
     var onCompletion: ((String) -> Void)?
+    /// Called on main actor when a host's streaming state changes (true = started,
+    /// false = timed out). Used to drive the per-panel "thinking" status dot.
+    var onStreamingState: ((String, Bool) -> Void)?
 
     private override init() { super.init() }
 
@@ -172,6 +175,11 @@ final class CompletionScriptHandler: NSObject, WKScriptMessageHandler {
         // Diagnostic-only messages: log but don't count as completion.
         if let diag = body["diagnostic"] as? String {
             chorusLog.notice("[Chorus.Poll] \(host, privacy: .public) — \(diag, privacy: .public)")
+            if diag == "streaming-started" {
+                Task { @MainActor in self.onStreamingState?(host, true) }
+            } else if diag == "timeout-no-completion" {
+                Task { @MainActor in self.onStreamingState?(host, false) }
+            }
             return
         }
         Task { @MainActor in

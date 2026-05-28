@@ -13,6 +13,9 @@ final class WebViewStore: ObservableObject {
 
     private var cache: [String: WKWebView] = [:]
 
+    /// Provider keys currently streaming a response — drives the per-panel "thinking" dot.
+    @Published private(set) var streamingKeys: Set<String> = []
+
     /// Pending completion batches — one per broadcast. Each tracks which provider keys
     /// have not yet posted their completion message. When a batch's set empties → notify.
     private var pendingBatches: [UUID: PendingBatch] = [:]
@@ -27,6 +30,11 @@ final class WebViewStore: ObservableObject {
         // Wire JS → Swift completion bridge to this store.
         CompletionScriptHandler.shared.onCompletion = { [weak self] host in
             self?.handleHostCompletion(host: host)
+        }
+        // Track streaming state per host for the status dots.
+        CompletionScriptHandler.shared.onStreamingState = { [weak self] host, streaming in
+            guard let self, let key = self.providerKey(forHost: host) else { return }
+            if streaming { self.streamingKeys.insert(key) } else { self.streamingKeys.remove(key) }
         }
     }
 
@@ -44,6 +52,19 @@ final class WebViewStore: ObservableObject {
     /// Reloads the WKWebView for a given provider key (preserves cookies / login).
     func reload(key: String) {
         cache[key]?.reload()
+    }
+
+    /// Navigate a panel to its "new conversation" page (login/cookies preserved).
+    func newChat(key: String) {
+        let newChatURLs: [String: String] = [
+            "chatgpt": "https://chatgpt.com/",
+            "claude":  "https://claude.ai/new",
+            "gemini":  "https://gemini.google.com/app",
+        ]
+        guard let webView = cache[key],
+              let str = newChatURLs[key],
+              let url = URL(string: str) else { return }
+        webView.load(URLRequest(url: url))
     }
 
     /// Broadcast a prompt to all webviews. `source` is used by the completion notifier
@@ -163,6 +184,7 @@ final class WebViewStore: ObservableObject {
             clog("no provider key matched host \(host)")
             return
         }
+        streamingKeys.remove(key)  // clear the "thinking" dot
 
         var completedBatches: [PendingBatch] = []
         for (id, var batch) in pendingBatches {
@@ -204,6 +226,40 @@ let allProviders: [Provider] = [
     Provider(key: "gemini",  name: "Gemini",  url: URL(string: "https://gemini.google.com/")!),
 ]
 
+/// Shared visual tokens for the Arc-style main window: floating webview "cards" on a soft
+/// neutral canvas, generous rounding, consistent spacing.
+enum ChorusTheme {
+    static let cardRadius: CGFloat = 12
+    static let gap: CGFloat = 12
+    static let margin: CGFloat = 14
+    static let cardBorder = Color.white.opacity(0.09)
+
+    static var canvas: LinearGradient {
+        LinearGradient(
+            colors: [Color(red: 0.13, green: 0.13, blue: 0.145),
+                     Color(red: 0.08, green: 0.08, blue: 0.09)],
+            startPoint: .top, endPoint: .bottom
+        )
+    }
+}
+
+/// Makes the host NSWindow draggable from any background area and keeps the title bar
+/// transparent — needed for the immersive, hidden-title-bar look.
+struct WindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async {
+            guard let w = v.window else { return }
+            w.isMovableByWindowBackground = true
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+        }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: WebViewStore
     @State private var prompt: String = ""
@@ -216,7 +272,6 @@ struct ContentView: View {
     @State private var dropTargetKey: String? = nil
     @State private var hoveredHeaderKey: String? = nil
     @State private var pasteMonitor: Any? = nil
-    @State private var showPanelMenu: Bool = false
 
     private var orderedProviders: [Provider] {
         let storedKeys = providerOrderRaw.split(separator: ",").map(String.init)
@@ -256,20 +311,28 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // HStack with equal-flex children: panels always evenly distributed across width.
-            // Reordering just shuffles the ForEach output; WKWebViews stay alive in the store
-            // and get reparented into the new positions. No divider state to drift.
-            HStack(spacing: 1) {
+            topBar
+
+            // Floating webview "cards" on the canvas. Reordering just shuffles the ForEach;
+            // WKWebViews stay alive in the store and get reparented into the new positions.
+            HStack(spacing: ChorusTheme.gap) {
                 ForEach(visibleProviders) { p in
-                    panel(for: p)
-                        .frame(minWidth: 320, maxWidth: .infinity)
+                    card(for: p)
+                        .frame(minWidth: 300, maxWidth: .infinity)
                 }
             }
-            .background(Color.secondary.opacity(0.25))  // 1px gap shows as a thin separator
+            .padding(.horizontal, ChorusTheme.margin)
+            .padding(.top, 6)
+            .frame(maxHeight: .infinity)
 
-            Divider()
-            inputBar
+            composer
+                .padding(.horizontal, ChorusTheme.margin)
+                .padding(.top, ChorusTheme.gap)
+                .padding(.bottom, ChorusTheme.margin)
         }
+        .ignoresSafeArea(.container, edges: .top)   // pull content up under the hidden titlebar
+        .background(ChorusTheme.canvas.ignoresSafeArea())
+        .background(WindowConfigurator())
         .onAppear {
             // Pre-create all webviews up-front so their lifecycle is independent of view rebuilds.
             for p in allProviders {
@@ -278,45 +341,63 @@ struct ContentView: View {
         }
     }
 
-    private func panel(for p: Provider) -> some View {
-        VStack(spacing: 0) {
-            header(for: p)
-            WebPanel(webView: store.getOrCreate(key: p.key, url: p.url))
+    /// Minimal immersive top strip — just reserves the traffic-light row so the cards don't
+    /// slide under the window controls. All global actions now live in the composer's menu.
+    private var topBar: some View {
+        Color.clear.frame(height: 28)
+    }
+
+    private func openSettings() {
+        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
     }
 
-    private func header(for p: Provider) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "line.3.horizontal")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Text(p.name).font(.headline)
+    private func card(for p: Provider) -> some View {
+        VStack(spacing: 0) {
+            slimHeader(for: p)
+            WebPanel(webView: store.getOrCreate(key: p.key, url: p.url))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
+                .strokeBorder(
+                    dropTargetKey == p.key ? Color.accentColor.opacity(0.8) : ChorusTheme.cardBorder,
+                    lineWidth: dropTargetKey == p.key ? 2 : 1
+                )
+        )
+        .shadow(color: .black.opacity(0.30), radius: 9, x: 0, y: 3)
+    }
+
+    /// Thin neutral status strip: a "thinking" dot, the provider name, and hover actions.
+    /// Kept minimal so it doesn't compete with each site's own header below it.
+    private func slimHeader(for p: Provider) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(store.streamingKeys.contains(p.key) ? Color.accentColor : Color.secondary.opacity(0.35))
+                .frame(width: 7, height: 7)
+            Text(p.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary.opacity(0.9))
             Spacer()
             if hoveredHeaderKey == p.key {
-                Text("拖动重排")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .transition(.opacity)
-
-                // Reload button: always available on hover (works even on the last visible panel)
                 Button {
                     store.reload(key: p.key)
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
                 .help("Reload \(p.name)")
                 .transition(.opacity)
 
-                // Close button: only on hover, only if there'd still be panels left after closing
                 if visibleProviders.count > 1 {
                     Button {
                         toggleHidden(p.key)
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 14))
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -325,14 +406,14 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 11)
+        .frame(height: 30)
         .frame(maxWidth: .infinity)
         .background(
             ZStack {
                 Rectangle().fill(.ultraThinMaterial)
                 if dropTargetKey == p.key {
-                    Rectangle().fill(Color.accentColor.opacity(0.30))
+                    Rectangle().fill(Color.accentColor.opacity(0.25))
                 } else if hoveredHeaderKey == p.key {
                     Rectangle().fill(Color.primary.opacity(0.05))
                 }
@@ -343,16 +424,12 @@ struct ContentView: View {
             withAnimation(.easeOut(duration: 0.1)) {
                 hoveredHeaderKey = hovering ? p.key : (hoveredHeaderKey == p.key ? nil : hoveredHeaderKey)
             }
-            if hovering {
-                NSCursor.openHand.set()
-            } else {
-                NSCursor.arrow.set()
-            }
+            if hovering { NSCursor.openHand.set() } else { NSCursor.arrow.set() }
         }
         .draggable(p.key) {
             HStack(spacing: 4) {
                 Image(systemName: "line.3.horizontal").font(.caption)
-                Text(p.name).font(.headline)
+                Text(p.name).font(.subheadline)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -383,66 +460,50 @@ struct ContentView: View {
         providerOrderRaw = keys.joined(separator: ",")
     }
 
-    private var inputBar: some View {
-        VStack(spacing: 0) {
-            // Image preview row: shown only when an image is attached
+    private var composer: some View {
+        VStack(spacing: 8) {
             if let image = attachedImage {
-                HStack(spacing: 8) {
-                    ZStack(alignment: .topTrailing) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 56, height: 56)
-                            .clipped()
-                            .cornerRadius(6)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color.secondary.opacity(0.3))
-                            )
-                        Button {
-                            attachedImage = nil
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 16))
-                                .foregroundColor(.secondary)
-                                .background(Circle().fill(.background))
-                        }
-                        .buttonStyle(.plain)
-                        .offset(x: 6, y: -6)
-                        .help("Remove attached image")
-                    }
-                    Text("Image attached")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 8)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
+                imagePreviewRow(image)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
-                panelVisibilityButton
+            HStack(alignment: .center, spacing: 10) {
+                composerMenu
 
-                TextField("Ask all three AIs...   ⌘+Enter to send · ⌘+V to paste image",
+                TextField("Ask all AIs…    ⌘↩ to send · ⌘V to paste image",
                           text: $prompt, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .font(.system(size: 13))
                     .focused($promptFocused)
                     .lineLimit(1...8)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.secondary.opacity(0.3))
-                    )
 
-                Button("Send to all") { send() }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!canSend)
+                Button {
+                    send()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            Circle().fill(canSend ? Color.accentColor : Color.secondary.opacity(0.3))
+                        )
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!canSend)
+                .help("Send to all (⌘↩)")
             }
-            .padding(8)
         }
-        .background(.bar)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
+                .strokeBorder(ChorusTheme.cardBorder, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 2)
         .onAppear {
             promptFocused = true
             installPasteMonitor()
@@ -452,62 +513,95 @@ struct ContentView: View {
         }
     }
 
-    private var canSend: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil
-    }
+    /// Global actions tucked into the composer's left edge (ChatGPT-style). Keeps the title
+    /// bar clean: new chat / reload all, per-panel show-hide, settings — all one click away.
+    private var composerMenu: some View {
+        Menu {
+            Button {
+                for p in visibleProviders { store.newChat(key: p.key) }
+            } label: { Label("New chat", systemImage: "square.and.pencil") }
 
-    /// Small button in the input bar that opens a popover for toggling panel visibility.
-    private var panelVisibilityButton: some View {
-        Button {
-            showPanelMenu.toggle()
-        } label: {
-            Image(systemName: "rectangle.split.3x1")
-                .font(.system(size: 16))
-                .foregroundColor(.secondary)
-                .padding(6)
-        }
-        .buttonStyle(.plain)
-        .help("Show/hide AI panels")
-        .popover(isPresented: $showPanelMenu, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("AI Panels")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+            Button {
+                for p in visibleProviders { store.reload(key: p.key) }
+            } label: { Label("Reload all", systemImage: "arrow.clockwise") }
 
+            Divider()
+
+            Section("Panels") {
                 ForEach(allProviders) { p in
                     let isVisible = !hiddenKeys.contains(p.key)
                     let isLastVisible = isVisible && visibleProviders.count == 1
                     Button {
                         toggleHidden(p.key)
                     } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: isVisible ? "checkmark.square.fill" : "square")
-                                .foregroundColor(isVisible ? .accentColor : .secondary)
-                                .font(.system(size: 14))
+                        if isVisible {
+                            Label(p.name, systemImage: "checkmark")
+                        } else {
                             Text(p.name)
-                                .foregroundColor(.primary)
-                            Spacer()
-                            if isLastVisible {
-                                Text("(必须保留 1 个)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                     .disabled(isLastVisible)
                 }
             }
-            .frame(width: 220)
-            .padding(.vertical, 4)
+
+            Divider()
+
+            if #available(macOS 14.0, *) {
+                SettingsLink {
+                    Label("Settings…", systemImage: "gearshape")
+                }
+            } else {
+                Button {
+                    openSettings()
+                } label: { Label("Settings…", systemImage: "gearshape") }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Actions")
+    }
+
+    private func imagePreviewRow(_ image: NSImage) -> some View {
+        HStack(spacing: 8) {
+            ZStack(alignment: .topTrailing) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 52, height: 52)
+                    .clipped()
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.white.opacity(0.12))
+                    )
+                Button {
+                    attachedImage = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                        .background(Circle().fill(.background))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 6, y: -6)
+                .help("Remove attached image")
+            }
+            Text("Image attached")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+
+    private var canSend: Bool {
+        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil
     }
 
     /// Local NSEvent monitor that handles two things when our prompt field has focus:

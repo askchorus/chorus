@@ -55,6 +55,7 @@ struct ChorusApp: App {
                 .environmentObject(store)
                 .frame(minWidth: 1200, minHeight: 700)
         }
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
 
         Settings {
