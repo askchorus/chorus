@@ -16,6 +16,31 @@ final class WebViewStore: ObservableObject {
     /// Provider keys currently streaming a response — drives the per-panel "thinking" dot.
     @Published private(set) var streamingKeys: Set<String> = []
 
+    /// Provider keys whose last broadcast didn't land (e.g. logged out / composer not found),
+    /// mapped to a short reason — drives the per-panel warning indicator.
+    @Published private(set) var sendIssues: [String: String] = [:]
+
+    /// Interpret an injection result + the panel's URL, and record/clear a send issue.
+    /// The URL check is a backstop: a logged-out panel often sits on an auth/login page even
+    /// when the injection result is ambiguous.
+    private func recordSendResult(key: String, result: Any?, url: URL?) {
+        let s = (result as? String) ?? ""
+        let host = url?.host?.lowercased() ?? ""
+        let path = url?.path.lowercased() ?? ""
+        let looksLoggedOut = host.hasPrefix("accounts.") || host.hasPrefix("auth.")
+            || host.hasPrefix("login.") || path.contains("login")
+            || path.contains("signin") || path.contains("sign-in") || path.contains("/auth")
+
+        if s == "input not found" || looksLoggedOut {
+            sendIssues[key] = "可能未登录或输入框未找到 — 点击刷新"
+        } else if s.hasPrefix("host not supported") {
+            sendIssues[key] = "暂不支持该站点"
+        } else {
+            sendIssues.removeValue(forKey: key)
+        }
+        chorusLog.notice("[Chorus.Send] \(key, privacy: .public) result=\"\(s, privacy: .public)\" host=\(host, privacy: .public) → issue=\(self.sendIssues[key] ?? "none", privacy: .public)")
+    }
+
     /// Pending completion batches — one per broadcast. Each tracks which provider keys
     /// have not yet posted their completion message. When a batch's set empties → notify.
     private var pendingBatches: [UUID: PendingBatch] = [:]
@@ -34,19 +59,68 @@ final class WebViewStore: ObservableObject {
         // Track streaming state per host for the status dots.
         CompletionScriptHandler.shared.onStreamingState = { [weak self] host, streaming in
             guard let self, let key = self.providerKey(forHost: host) else { return }
-            if streaming { self.streamingKeys.insert(key) } else { self.streamingKeys.remove(key) }
+            if streaming {
+                self.streamingKeys.insert(key)
+                self.sendIssues.removeValue(forKey: key)  // it's clearly working
+            } else {
+                self.streamingKeys.remove(key)
+            }
         }
     }
 
     /// Returns an existing WKWebView for `key`, or creates one and caches it.
     /// Calling this multiple times for the same key always returns the same instance.
+    /// On first creation, if "restore session" is on, opens the last conversation URL
+    /// instead of the provider's base URL.
     func getOrCreate(key: String, url: URL) -> WKWebView {
         if let existing = cache[key] {
             return existing
         }
-        let webView = WebViewFactory.make(url: url)
+        let restore = UserDefaults.standard.object(forKey: "restoreSession") as? Bool ?? true
+        let initialURL = restore ? (savedSessionURL(for: key) ?? url) : url
+        let webView = WebViewFactory.make(url: initialURL)
         cache[key] = webView
         return webView
+    }
+
+    // MARK: Session restore — remember & reopen each panel's last conversation
+
+    private func sessionURLMap() -> [String: String] {
+        guard let s = UserDefaults.standard.string(forKey: "sessionURLs"),
+              let data = s.data(using: .utf8),
+              let map = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return map
+    }
+    private func saveSessionMap(_ map: [String: String]) {
+        guard let data = try? JSONEncoder().encode(map),
+              let s = String(data: data, encoding: .utf8) else { return }
+        UserDefaults.standard.set(s, forKey: "sessionURLs")
+    }
+    private func savedSessionURL(for key: String) -> URL? {
+        guard let s = sessionURLMap()[key], let url = URL(string: s) else { return nil }
+        return url
+    }
+
+    /// Persist a panel's current conversation URL. Skips auth/login/blank pages so we never
+    /// "restore" to a sign-in screen.
+    func recordSessionURL(for webView: WKWebView) {
+        guard let key = cache.first(where: { $0.value === webView })?.key,
+              let url = webView.url else { return }
+        if url.scheme == "about" { return }
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        if host.hasPrefix("accounts.") || host.hasPrefix("auth.") || host.hasPrefix("login.")
+            || path.contains("login") || path.contains("signin") || path.contains("sign-in") || path.contains("/auth") {
+            return
+        }
+        var map = sessionURLMap()
+        map[key] = url.absoluteString
+        saveSessionMap(map)
+    }
+
+    /// Save every live panel's current URL — call on quit as a backstop.
+    func saveAllSessionURLs() {
+        for (_, webView) in cache { recordSessionURL(for: webView) }
     }
 
     /// Reloads the WKWebView for a given provider key (preserves cookies / login).
@@ -123,12 +197,11 @@ final class WebViewStore: ObservableObject {
                 geminiUploadViaPanel(into: webView, pngData: png, thenRun: jsGeminiSend)
                 continue
             }
-            webView.evaluateJavaScript(jsWithImage) { result, error in
+            webView.evaluateJavaScript(jsWithImage) { [weak self] result, error in
                 if let error = error {
                     print("[\(key)] error: \(error.localizedDescription)")
-                } else if let result = result {
-                    print("[\(key)] \(result)")
                 }
+                self?.recordSendResult(key: key, result: result, url: webView.url)
             }
         }
     }
@@ -163,7 +236,9 @@ final class WebViewStore: ObservableObject {
                 // The send script polls for the uploaded thumbnail itself (WAIT_UPLOAD), so we
                 // only need a short gap before kicking it off — it does the waiting internally.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    webView.evaluateJavaScript(js) { _, _ in }
+                    webView.evaluateJavaScript(js) { [weak self] result, _ in
+                        self?.recordSendResult(key: "gemini", result: result, url: webView.url)
+                    }
                 }
             }
         }
@@ -264,7 +339,7 @@ enum ProviderRegistry {
         ("Kimi",        "https://www.kimi.com/"),
         ("Grok",        "https://grok.com/"),
         ("Perplexity",  "https://www.perplexity.ai/"),
-        ("通义千问",     "https://www.tongyi.com/"),
+        ("千问",         "https://www.tongyi.com/"),
         ("豆包",         "https://www.doubao.com/chat/"),
         ("腾讯元宝",     "https://yuanbao.tencent.com/"),
         ("Le Chat",     "https://chat.mistral.ai/"),
@@ -475,9 +550,21 @@ struct ContentView: View {
     /// Kept minimal so it doesn't compete with each site's own header below it.
     private func slimHeader(for p: Provider) -> some View {
         HStack(spacing: 7) {
-            Circle()
-                .fill(store.streamingKeys.contains(p.key) ? Color.accentColor : Color.secondary.opacity(0.35))
-                .frame(width: 7, height: 7)
+            if let issue = store.sendIssues[p.key] {
+                Button {
+                    store.reload(key: p.key)
+                } label: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
+                }
+                .buttonStyle(.plain)
+                .help(issue)
+            } else {
+                Circle()
+                    .fill(store.streamingKeys.contains(p.key) ? Color.accentColor : Color.secondary.opacity(0.35))
+                    .frame(width: 7, height: 7)
+            }
             Text(p.name)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary.opacity(0.9))

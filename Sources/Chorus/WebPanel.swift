@@ -50,6 +50,9 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Single-shot: cleared as soon as it's consumed.
     var pendingUpload: URL?
 
+    /// Last auto-reload time per webview — guards against reloading in a tight crash loop.
+    private var lastReloadAt: [ObjectIdentifier: Date] = [:]
+
     // Plain link clicks (anchor tags, no target=_blank).
     nonisolated func webView(_ webView: WKWebView,
                              decidePolicyFor navigationAction: WKNavigationAction,
@@ -84,6 +87,28 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
             Task { @MainActor in Self.openExternally(url) }
         }
         return nil
+    }
+
+    // Each finished navigation: remember this panel's current URL so we can reopen the
+    // last conversation on next launch (gated by the "restore session" setting at read time).
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in WebViewStore.shared.recordSessionURL(for: webView) }
+    }
+
+    // WebContent process crashed (panel goes blank). Auto-reload so it self-heals, but skip
+    // if we just reloaded (<10s) to avoid a tight crash loop.
+    nonisolated func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        Task { @MainActor in
+            let id = ObjectIdentifier(webView)
+            let now = Date()
+            if let last = self.lastReloadAt[id], now.timeIntervalSince(last) < 10 {
+                chorusLog.notice("[Chorus.WebKit] content process terminated again <10s — skipping reload (crash-loop guard)")
+                return
+            }
+            self.lastReloadAt[id] = now
+            chorusLog.notice("[Chorus.WebKit] content process terminated for \(webView.url?.host ?? "?", privacy: .public) — reloading")
+            webView.reload()
+        }
     }
 
     // File upload panel. Web page triggered an <input type=file>. If we have a pending
@@ -380,7 +405,9 @@ enum Broadcaster {
             // Image upload isn't guaranteed for these (best-effort paste only).
             cfg = {
               host: location.hostname,
-              inputSelectors: ['div[contenteditable="true"]', 'textarea', 'input[type="text"]'],
+              // contenteditable / textarea only — NOT input[type=text], which would match a
+              // logged-out page's email/search field and hide the "not logged in" signal.
+              inputSelectors: ['div[contenteditable="true"]', 'textarea'],
               sendSelectors: [
                 'button[aria-label*="Send" i]',
                 'button[data-testid*="send" i]',
@@ -779,11 +806,13 @@ enum Broadcaster {
 
           if (!clicked && input) {
             // Final fallback: simulate Enter on the input (some composers send on Enter).
+            // Count it as a send attempt so Enter-based sites don't report a false failure.
             input.focus();
             input.dispatchEvent(new KeyboardEvent('keydown', {
               key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
               bubbles: true, cancelable: true,
             }));
+            clicked = true;
           }
 
           // 4) Async completion poll. We detect "currently streaming" via EITHER:

@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
+    @AppStorage("restoreSession") private var restoreSession: Bool = true
 
     @State private var newProviderName: String = ""
     @State private var newProviderURL: String = ""
@@ -67,6 +68,13 @@ struct SettingsView: View {
             }
 
             Section("AI Providers") {
+                Toggle("Reopen last conversation on launch", isOn: $restoreSession)
+                    .padding(.vertical, 2)
+                Text("When on, each panel reopens the conversation you left it on instead of starting a new chat.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 4)
+
                 Text("Add any AI by its web URL. The three built-ins are tuned for image upload; added ones broadcast text via a generic method (most chat sites work).")
                     .font(.caption)
                     .foregroundColor(.secondary)
