@@ -371,10 +371,27 @@ enum Broadcaster {
             },
           ];
 
-          const cfg = HOSTS.find(c =>
+          let cfg = HOSTS.find(c =>
             location.hostname === c.host || location.hostname.endsWith('.' + c.host)
           );
-          if (!cfg) return 'host not supported: ' + location.hostname;
+          if (!cfg) {
+            // User-added provider — no tuned selectors. Most chat AIs use a contenteditable
+            // or textarea plus a Send button (or Enter), so a broad set usually works for text.
+            // Image upload isn't guaranteed for these (best-effort paste only).
+            cfg = {
+              host: location.hostname,
+              inputSelectors: ['div[contenteditable="true"]', 'textarea', 'input[type="text"]'],
+              sendSelectors: [
+                'button[aria-label*="Send" i]',
+                'button[data-testid*="send" i]',
+                'button[class*="send" i]',
+                'button[type="submit"]',
+              ],
+              uploadMethod: 'paste',
+              fileInputSelectors: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
+            };
+            clog('using generic config for ' + location.hostname);
+          }
 
           const pickFirst = (selectors) => {
             for (const sel of selectors) {

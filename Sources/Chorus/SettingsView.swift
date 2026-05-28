@@ -11,6 +11,22 @@ struct SettingsView: View {
     @AppStorage("notifyRequiredProviders") private var notifyRequiredProvidersRaw: String = "chatgpt,claude,gemini"
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
+    @AppStorage("customProviders") private var customProvidersRaw: String = ""
+
+    @State private var newProviderName: String = ""
+    @State private var newProviderURL: String = ""
+
+    /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
+    private var allProviders: [Provider] {
+        ProviderRegistry.builtIn + ProviderRegistry.decode(customProvidersRaw)
+    }
+
+    private func addProvider() {
+        if ProviderRegistry.addCustom(name: newProviderName, urlString: newProviderURL) {
+            newProviderName = ""
+            newProviderURL = ""
+        }
+    }
 
     private func requiredBinding(for key: String) -> Binding<Bool> {
         Binding(
@@ -48,6 +64,86 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
+            }
+
+            Section("AI Providers") {
+                Text("Add any AI by its web URL. The three built-ins are tuned for image upload; added ones broadcast text via a generic method (most chat sites work).")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 2)
+
+                ForEach(allProviders) { p in
+                    HStack(spacing: 8) {
+                        Text(p.name)
+                            .font(.system(size: 13, weight: .medium))
+                        Text(p.url.host ?? "")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if p.isBuiltIn {
+                            Text("Built-in")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Button {
+                                WebViewStore.shared.removeWebView(key: p.key)
+                                ProviderRegistry.removeCustom(key: p.key)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove \(p.name)")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                // One-click presets for popular real AIs not already added.
+                let addedHosts = Set(allProviders.compactMap { $0.url.host })
+                let availablePresets = ProviderRegistry.presets.filter { preset in
+                    guard let h = URL(string: preset.url)?.host else { return false }
+                    return !addedHosts.contains { $0.contains(h) || h.contains($0) }
+                }
+                if !availablePresets.isEmpty {
+                    Text("Quick add")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    FlowLayout(spacing: 8) {
+                        ForEach(availablePresets, id: \.url) { preset in
+                            Button {
+                                ProviderRegistry.addCustom(name: preset.name, urlString: preset.url)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                                    Text(preset.name).font(.system(size: 12))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                            .help(preset.url)
+                        }
+                    }
+                }
+
+                // Or add any other AI by name + URL.
+                HStack(spacing: 8) {
+                    TextField(text: $newProviderName, prompt: Text("Name")) { EmptyView() }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 110)
+                    TextField(text: $newProviderURL, prompt: Text("https://chat.deepseek.com")) { EmptyView() }
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(addProvider)
+                    Button("Add", action: addProvider)
+                        .disabled(newProviderURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                .padding(.top, 4)
             }
 
             Section("Notifications") {
