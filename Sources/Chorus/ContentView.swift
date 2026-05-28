@@ -450,6 +450,10 @@ struct ContentView: View {
     @State private var hoveredHeaderKey: String? = nil
     @State private var pasteMonitor: Any? = nil
 
+    // Prompt history (↑/↓ recall) browsing state.
+    @State private var historyIndex: Int? = nil
+    @State private var historyDraft: String = ""
+
     private var orderedProviders: [Provider] {
         let storedKeys = providerOrderRaw.split(separator: ",").map(String.init)
         var result: [Provider] = []
@@ -804,6 +808,30 @@ struct ContentView: View {
             // Only act when our prompt field has focus
             guard promptFocused else { return event }
 
+            // Prompt history recall: ↑ at text start, ↓ at text end (otherwise move the caret).
+            if event.keyCode == 126 {  // up arrow → older
+                guard caretAtTextStart(),
+                      let r = promptHistoryStep(direction: -1, current: prompt, index: historyIndex, draft: historyDraft)
+                else { return event }
+                Task { @MainActor in
+                    self.prompt = r.prompt; self.historyIndex = r.index; self.historyDraft = r.draft
+                    moveCaretToTextEnd()
+                }
+                return nil
+            }
+            if event.keyCode == 125 {  // down arrow → newer
+                guard historyIndex != nil, caretAtTextEnd(),
+                      let r = promptHistoryStep(direction: 1, current: prompt, index: historyIndex, draft: historyDraft)
+                else { return event }
+                Task { @MainActor in
+                    self.prompt = r.prompt; self.historyIndex = r.index; self.historyDraft = r.draft
+                    moveCaretToTextEnd()
+                }
+                return nil
+            }
+            // Any other key exits history browsing.
+            if historyIndex != nil { Task { @MainActor in self.historyIndex = nil } }
+
             let mods = event.modifierFlags.intersection([.command, .option, .shift, .control])
 
             // Plain Enter (keyCode 36 = Return). No modifiers → insert newline.
@@ -852,6 +880,8 @@ struct ContentView: View {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         store.broadcast(text: text, image: attachedImage, source: .mainWindow)
+        PromptHistory.add(text)
+        historyIndex = nil
         prompt = ""
         attachedImage = nil
     }

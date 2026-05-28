@@ -1,5 +1,89 @@
 import Foundation
 import CoreServices
+import AppKit
+
+// MARK: - Prompt history (shared by the quick input and the main composer)
+
+/// Persisted list of recently-broadcast prompts. ↑/↓ in either input recalls them.
+enum PromptHistory {
+    private static let key = "promptHistory"
+    private static let maxCount = 50
+
+    static func all() -> [String] {
+        guard let s = UserDefaults.standard.string(forKey: key),
+              let data = s.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return arr
+    }
+
+    /// Append a sent prompt (oldest→newest), de-duping consecutive repeats, capped at maxCount.
+    static func add(_ prompt: String) {
+        let t = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        var arr = all()
+        if arr.last == t { return }
+        arr.append(t)
+        if arr.count > maxCount { arr.removeFirst(arr.count - maxCount) }
+        if let data = try? JSONEncoder().encode(arr), let s = String(data: data, encoding: .utf8) {
+            UserDefaults.standard.set(s, forKey: key)
+        }
+    }
+}
+
+/// One step of history navigation. `index` is the current position (nil = not browsing yet),
+/// `draft` is the user's in-progress text saved when they first entered history.
+struct PromptHistoryResult {
+    let prompt: String
+    let index: Int?
+    let draft: String
+}
+
+/// Compute the next history state. direction: -1 = older (↑), +1 = newer (↓).
+/// Returns nil if the keypress should pass through (no history, or ↓ while not browsing).
+func promptHistoryStep(direction: Int, current: String, index: Int?, draft: String) -> PromptHistoryResult? {
+    let hist = PromptHistory.all()
+    guard !hist.isEmpty else { return nil }
+    if direction < 0 {  // older
+        if index == nil {
+            // Enter history: remember the current text as the draft to return to.
+            return PromptHistoryResult(prompt: hist[hist.count - 1], index: hist.count - 1, draft: current)
+        } else if let i = index, i > 0 {
+            return PromptHistoryResult(prompt: hist[i - 1], index: i - 1, draft: draft)
+        } else {
+            return PromptHistoryResult(prompt: current, index: index, draft: draft)  // already oldest
+        }
+    } else {  // newer
+        guard let i = index else { return nil }
+        if i < hist.count - 1 {
+            return PromptHistoryResult(prompt: hist[i + 1], index: i + 1, draft: draft)
+        } else {
+            return PromptHistoryResult(prompt: draft, index: nil, draft: draft)  // back to the draft
+        }
+    }
+}
+
+/// True if the focused text field editor's caret is at the very start (or no field editor).
+func caretAtTextStart() -> Bool {
+    guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView else { return true }
+    let r = tv.selectedRange()
+    return r.location == 0 && r.length == 0
+}
+
+/// True if the focused text field editor's caret is at the very end (or no field editor).
+func caretAtTextEnd() -> Bool {
+    guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView else { return true }
+    let r = tv.selectedRange()
+    return r.location + r.length >= (tv.string as NSString).length
+}
+
+/// Move the focused field editor's caret to the end (after a programmatic text change).
+func moveCaretToTextEnd() {
+    DispatchQueue.main.async {
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+        let len = (tv.string as NSString).length
+        tv.setSelectedRange(NSRange(location: len, length: 0))
+    }
+}
 
 /// Top-level commands a user can issue from the quick input. Anything that doesn't
 /// match a `/`-prefixed command falls through to the default `.broadcast` behavior.

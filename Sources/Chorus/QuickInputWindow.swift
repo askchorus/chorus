@@ -187,6 +187,10 @@ struct QuickInputView: View {
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
 
+    // Prompt history (↑/↓ recall) browsing state.
+    @State private var historyIndex: Int? = nil
+    @State private var historyDraft: String = ""
+
     private let store = WebViewStore.shared
 
     var body: some View {
@@ -386,6 +390,8 @@ struct QuickInputView: View {
             let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty || attachedImage != nil else { return }
             store.broadcast(text: text, image: attachedImage, source: .quickInput)
+            PromptHistory.add(text)
+            historyIndex = nil
             prompt = ""
             attachedImage = nil
             commandResult = nil
@@ -518,6 +524,30 @@ struct QuickInputView: View {
         // Combined Enter / Esc / Cmd+L handler with IME awareness.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard panelIsKey() else { return event }
+
+            // Prompt history recall: ↑ at text start, ↓ at text end (otherwise move the caret).
+            if event.keyCode == 126 {  // up arrow → older
+                guard caretAtTextStart(),
+                      let r = promptHistoryStep(direction: -1, current: prompt, index: historyIndex, draft: historyDraft)
+                else { return event }
+                Task { @MainActor in
+                    prompt = r.prompt; historyIndex = r.index; historyDraft = r.draft
+                    moveCaretToTextEnd()
+                }
+                return nil
+            }
+            if event.keyCode == 125 {  // down arrow → newer
+                guard historyIndex != nil, caretAtTextEnd(),
+                      let r = promptHistoryStep(direction: 1, current: prompt, index: historyIndex, draft: historyDraft)
+                else { return event }
+                Task { @MainActor in
+                    prompt = r.prompt; historyIndex = r.index; historyDraft = r.draft
+                    moveCaretToTextEnd()
+                }
+                return nil
+            }
+            // Any other key exits history browsing.
+            if historyIndex != nil { Task { @MainActor in historyIndex = nil } }
 
             // Cmd+L → speak the current word (only when a dictionary hit is showing)
             if event.modifierFlags.contains(.command),
