@@ -103,20 +103,39 @@ enum CommandRouter {
     }
 }
 
-/// Stable help text shown when user types `/?`.
-let kHelpText = """
+/// Help text shown when the user types `/?` — localized to the current language.
+func helpText() -> String {
+    currentLang() == "zh" ? helpTextZH : helpTextEN
+}
+
+private let helpTextEN = """
 Tips
 
 • Type a single word  → automatic Dictionary lookup (uses Dictionary.app)
   ↩ press Enter to dismiss after reading the definition
   ⎋ Esc also dismisses
 
-• Words not in your dictionaries (e.g. slang, 网络流行语):
+• Words not in your dictionaries (e.g. slang, internet memes):
   no preview shows. Press ↩ Enter to broadcast and let the AIs explain.
 
 • Any sentence / question → broadcast to all visible AIs
 
 • /?  show this help
+"""
+
+private let helpTextZH = """
+使用提示
+
+• 输入单个词 → 自动查词典（使用 Dictionary.app）
+  ↩ 看完释义后按回车关闭
+  ⎋ Esc 也可关闭
+
+• 词典里没有的词（如俚语、网络流行语）：
+  不显示预览。按 ↩ 回车广播，让 AI 来解释。
+
+• 任意句子 / 问题 → 广播给所有可见 AI
+
+• /?  显示此帮助
 """
 
 /// Heuristic: does this input look like a single-word lookup attempt

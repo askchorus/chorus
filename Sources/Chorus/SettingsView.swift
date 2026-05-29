@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
     @AppStorage("restoreSession") private var restoreSession: Bool = true
+    @AppStorage("appLanguage") private var appLanguage: String = "system"
 
     @State private var newProviderName: String = ""
     @State private var newProviderURL: String = ""
@@ -44,7 +45,16 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Quick Input") {
+            Section(L("settings.section.language")) {
+                Picker(L("settings.language.label"), selection: $appLanguage) {
+                    Text(L("settings.language.system")).tag("system")
+                    Text("中文").tag("zh")
+                    Text("English").tag("en")
+                }
+                .pickerStyle(.menu)
+            }
+
+            Section(L("settings.section.quickInput")) {
                 HotkeyRecorder(
                     keyCode: $hotkeyKeyCode,
                     modifiers: $hotkeyModifiers
@@ -55,27 +65,27 @@ struct SettingsView: View {
                     )
                 }
 
-                Toggle("Bring Chorus to front after sending", isOn: $foregroundMainOnSend)
+                Toggle(L("settings.foregroundOnSend"), isOn: $foregroundMainOnSend)
                     .padding(.vertical, 2)
 
-                Toggle("Auto-paste clipboard when summoning", isOn: $autoPasteOnSummon)
+                Toggle(L("settings.autoPaste"), isOn: $autoPasteOnSummon)
                     .padding(.vertical, 2)
 
-                Text("Press the shortcut anywhere to summon a floating input. Type, hit Return to broadcast to all visible AIs. Cmd+V pastes an image.")
+                Text(L("settings.quickInput.desc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
             }
 
-            Section("AI Providers") {
-                Toggle("Reopen last conversation on launch", isOn: $restoreSession)
+            Section(L("settings.section.providers")) {
+                Toggle(L("settings.restoreSession"), isOn: $restoreSession)
                     .padding(.vertical, 2)
-                Text("When on, each panel reopens the conversation you left it on instead of starting a new chat.")
+                Text(L("settings.restoreSession.desc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.bottom, 4)
 
-                Text("Add any AI by its web URL. The three built-ins are tuned for image upload; added ones broadcast text via a generic method (most chat sites work).")
+                Text(L("settings.providers.desc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 2)
@@ -89,7 +99,7 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                         Spacer()
                         if p.isBuiltIn {
-                            Text("Built-in")
+                            Text(L("settings.providers.builtin"))
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         } else {
@@ -101,7 +111,7 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("Remove \(p.name)")
+                            .help(Lf("settings.providers.remove", p.name))
                         }
                     }
                     .padding(.vertical, 2)
@@ -114,7 +124,7 @@ struct SettingsView: View {
                     return !addedHosts.contains { $0.contains(h) || h.contains($0) }
                 }
                 if !availablePresets.isEmpty {
-                    Text("Quick add")
+                    Text(L("settings.providers.quickAdd"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
@@ -140,7 +150,7 @@ struct SettingsView: View {
 
                 // Or add any other AI by name + URL.
                 HStack(spacing: 8) {
-                    TextField(text: $newProviderName, prompt: Text("Name")) { EmptyView() }
+                    TextField(text: $newProviderName, prompt: Text(L("settings.providers.name"))) { EmptyView() }
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
@@ -148,30 +158,30 @@ struct SettingsView: View {
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(addProvider)
-                    Button("Add", action: addProvider)
+                    Button(L("settings.providers.add"), action: addProvider)
                         .disabled(newProviderURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .padding(.top, 4)
             }
 
-            Section("Notifications") {
-                Picker("Alert when all AIs finish", selection: $notifyMode) {
-                    Text("Off").tag("off")
-                    Text("Only from quick input").tag("quickOnly")
-                    Text("Always").tag("always")
+            Section(L("settings.section.notifications")) {
+                Picker(L("settings.notify.picker"), selection: $notifyMode) {
+                    Text(L("settings.notify.off")).tag("off")
+                    Text(L("settings.notify.quickOnly")).tag("quickOnly")
+                    Text(L("settings.notify.always")).tag("always")
                 }
                 .pickerStyle(.menu)
 
-                Text("Plays the system notification sound and shows a banner when all visible AIs have finished streaming. Skipped if the Chorus window is already in front.")
+                Text(L("settings.notify.desc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
 
                 HStack {
-                    Button("Send test notification") {
+                    Button(L("settings.notify.test")) {
                         CompletionNotifier.shared.sendTestNotification()
                     }
-                    Text("Click to verify permission/delivery is working.")
+                    Text(L("settings.notify.testDesc"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -179,7 +189,7 @@ struct SettingsView: View {
 
                 Divider().padding(.vertical, 4)
 
-                Text("Wait for these AIs before notifying")
+                Text(L("settings.notify.waitFor"))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
@@ -188,23 +198,23 @@ struct SettingsView: View {
                         .padding(.leading, 4)
                 }
 
-                Text("Uncheck slow/flaky AIs (e.g. Gemini) so they don't block the alert. The broadcast still goes to them; their reply just arrives whenever it finishes.")
+                Text(L("settings.notify.waitDesc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 4)
             }
 
-            Section("Quick Prompts") {
-                Text("Tapping a chip in the quick input instantly broadcasts with that text as a prefix. One chip per line.")
+            Section(L("settings.section.quickPrompts")) {
+                Text(L("settings.prompts.desc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 2)
 
-                ChipListEditor(title: "Text-mode chips",
+                ChipListEditor(title: L("settings.prompts.textChips"),
                                raw: $textChipsRaw,
                                defaults: kDefaultChipPrompts)
 
-                ChipListEditor(title: "Image-mode chips (shown when an image is attached)",
+                ChipListEditor(title: L("settings.prompts.imageChips"),
                                raw: $imageChipsRaw,
                                defaults: kImageChipPrompts)
             }
@@ -255,7 +265,7 @@ struct ChipListEditor: View {
                 Button {
                     commit(defaults)
                 } label: {
-                    Label("Restore defaults", systemImage: "arrow.uturn.backward")
+                    Label(L("settings.prompts.restore"), systemImage: "arrow.uturn.backward")
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
@@ -282,7 +292,7 @@ struct ChipListEditor: View {
                 // placeholder as on iOS) — that's what pushed "Add a prompt…" to the left and
                 // the caret to the right. Use an empty label + `prompt:` for a real in-field
                 // placeholder, and labelsHidden() so the field spans full width.
-                TextField(text: $newChip, prompt: Text("Add a prompt…")) {
+                TextField(text: $newChip, prompt: Text(L("settings.prompts.addPlaceholder"))) {
                     EmptyView()
                 }
                 .labelsHidden()
@@ -395,13 +405,13 @@ struct HotkeyRecorder: View {
 
     var body: some View {
         HStack {
-            Text("Quick input shortcut")
+            Text(L("settings.hotkey.label"))
             Spacer()
 
             Button {
                 toggleRecording()
             } label: {
-                Text(isRecording ? "Press combo..." : formatHotkey(keyCode: keyCode, modifiers: modifiers))
+                Text(isRecording ? L("settings.hotkey.recording") : formatHotkey(keyCode: keyCode, modifiers: modifiers))
                     .font(.system(.body, design: .monospaced))
                     .frame(width: 160, height: 26)
                     .background(
@@ -418,7 +428,7 @@ struct HotkeyRecorder: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Reset to ⌘⇧C")
+            .help(L("settings.hotkey.reset"))
             .disabled(isRecording)
         }
         .padding(.vertical, 2)

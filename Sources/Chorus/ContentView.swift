@@ -440,6 +440,7 @@ struct ContentView: View {
     @AppStorage("providerOrder") private var providerOrderRaw: String = "chatgpt,claude,gemini"
     @AppStorage("hiddenProviders") private var hiddenProvidersRaw: String = ""
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
+    @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
     private var allProviders: [Provider] {
@@ -582,7 +583,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Reload \(p.name)")
+                .help(Lf("panel.reload", p.name))
                 .transition(.opacity)
 
                 if visibleProviders.count > 1 {
@@ -594,7 +595,7 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Hide \(p.name)")
+                    .help(Lf("panel.hide", p.name))
                     .transition(.opacity)
                 }
             }
@@ -662,8 +663,7 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 10) {
                 composerMenu
 
-                TextField("Ask all AIs…    ⌘↩ to send · ⌘V to paste image",
-                          text: $prompt, axis: .vertical)
+                TextField(L("composer.placeholder"), text: $prompt, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .focused($promptFocused)
@@ -683,7 +683,7 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(!canSend)
-                .help("Send to all (⌘↩)")
+                .help(L("composer.sendHelp"))
             }
         }
         .padding(.horizontal, 14)
@@ -712,15 +712,15 @@ struct ContentView: View {
         Menu {
             Button {
                 for p in visibleProviders { store.newChat(key: p.key) }
-            } label: { Label("New chat", systemImage: "square.and.pencil") }
+            } label: { Label(L("menu.newChat"), systemImage: "square.and.pencil") }
 
             Button {
                 for p in visibleProviders { store.reload(key: p.key) }
-            } label: { Label("Reload all", systemImage: "arrow.clockwise") }
+            } label: { Label(L("menu.reloadAll"), systemImage: "arrow.clockwise") }
 
             Divider()
 
-            Section("Panels") {
+            Section(L("menu.panels")) {
                 ForEach(allProviders) { p in
                     let isVisible = !hiddenKeys.contains(p.key)
                     let isLastVisible = isVisible && visibleProviders.count == 1
@@ -741,12 +741,12 @@ struct ContentView: View {
 
             if #available(macOS 14.0, *) {
                 SettingsLink {
-                    Label("Settings…", systemImage: "gearshape")
+                    Label(L("menu.settings"), systemImage: "gearshape")
                 }
             } else {
                 Button {
                     openSettings()
-                } label: { Label("Settings…", systemImage: "gearshape") }
+                } label: { Label(L("menu.settings"), systemImage: "gearshape") }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -758,7 +758,7 @@ struct ContentView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Actions")
+        .help(L("menu.actions"))
     }
 
     private func imagePreviewRow(_ image: NSImage) -> some View {
@@ -784,9 +784,9 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .offset(x: 6, y: -6)
-                .help("Remove attached image")
+                .help(L("composer.removeImage"))
             }
-            Text("Image attached")
+            Text(L("composer.imageAttached"))
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()

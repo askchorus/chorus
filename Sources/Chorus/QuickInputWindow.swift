@@ -186,6 +186,7 @@ struct QuickInputView: View {
     // User-customizable quick-prompt chips (edited in Settings → Quick Prompts).
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
+    @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
 
     // Prompt history (↑/↓ recall) browsing state.
     @State private var historyIndex: Int? = nil
@@ -227,7 +228,7 @@ struct QuickInputView: View {
                     .padding(.top, 2)
 
                 TextField(
-                    "Ask all AIs at once...   (single word auto-looks up · /? for help)",
+                    L("quick.placeholder"),
                     text: $prompt,
                     axis: .vertical
                 )
@@ -267,7 +268,7 @@ struct QuickInputView: View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .help("Send to all AIs with “\(chip)：” prepended")
+                        .help(Lf("quick.chipHelp", chip))
                     }
                     Spacer()
                 }
@@ -302,7 +303,7 @@ struct QuickInputView: View {
                                 )
                         }
                         .buttonStyle(.plain)
-                        .help("Pronounce  (⌘L)")
+                        .help(L("quick.pronounce"))
                         .padding(.trailing, 12)
                         .padding(.top, 10)
                     }
@@ -410,7 +411,7 @@ struct QuickInputView: View {
 
         switch CommandRouter.route(prompt) {
         case .help:
-            commandResult = kHelpText
+            commandResult = helpText()
             isAutoDictionary = false
 
         case .broadcast:
