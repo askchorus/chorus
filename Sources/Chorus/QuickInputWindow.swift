@@ -244,15 +244,20 @@ struct QuickInputView: View {
             // something OR attached an image, and we're not in dictionary-lookup mode.
             // The chip set switches when an image is attached so the suggestions match
             // what makes sense for vision input.
-            if (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil),
-               !isAutoDictionary {
+            // Chips show whenever there's text or an image — INCLUDING during a dictionary
+            // hit. Looking a word up and wanting the AIs to expand on it ("解释一下 …") is a
+            // natural combo, so the two shouldn't be mutually exclusive.
+            if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil {
                 let chips = attachedImage != nil
                     ? parseChipList(imageChipsRaw, fallback: kImageChipPrompts)
                     : parseChipList(textChipsRaw, fallback: kDefaultChipPrompts)
                 HStack(spacing: 8) {
                     ForEach(chips, id: \.self) { chip in
                         Button {
-                            // Prepend chip prefix and broadcast immediately — one-tap action.
+                            // Tapping a chip is an explicit "broadcast" intent — leave any
+                            // dictionary-lookup mode so submit() broadcasts instead of just
+                            // dismissing the definition.
+                            isAutoDictionary = false
                             prompt = applyChipPrefix(chip, to: prompt)
                             submit()
                         } label: {
