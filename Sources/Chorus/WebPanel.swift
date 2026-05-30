@@ -92,7 +92,10 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     // Each finished navigation: remember this panel's current URL so we can reopen the
     // last conversation on next launch (gated by the "restore session" setting at read time).
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        Task { @MainActor in WebViewStore.shared.recordSessionURL(for: webView) }
+        Task { @MainActor in
+            WebViewStore.shared.recordSessionURL(for: webView)
+            WebViewStore.shared.fetchFavicon(for: webView)
+        }
     }
 
     // WebContent process crashed (panel goes blank). Auto-reload so it self-heals, but skip

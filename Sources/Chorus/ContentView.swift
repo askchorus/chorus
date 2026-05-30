@@ -16,6 +16,32 @@ final class WebViewStore: ObservableObject {
     /// Provider keys currently streaming a response — drives the per-panel "thinking" dot.
     @Published private(set) var streamingKeys: Set<String> = []
 
+    /// Favicons per provider key, fetched from each panel's real site — gives every panel
+    /// (built-in AND custom) a real logo with zero bundled assets.
+    @Published private(set) var favicons: [String: NSImage] = [:]
+
+    /// Grab the page's favicon for the panel and cache it. Reads the best <link rel=icon>
+    /// (or falls back to /favicon.ico), downloads it, and publishes for the header avatar.
+    func fetchFavicon(for webView: WKWebView) {
+        guard let key = cache.first(where: { $0.value === webView })?.key else { return }
+        let js = """
+        (() => {
+          const links = [...document.querySelectorAll('link[rel~="icon"],link[rel="apple-touch-icon"],link[rel="shortcut icon"]')];
+          const best = links.map(l => ({ href: l.href, size: parseInt((l.getAttribute('sizes')||'0').split('x')[0]) || 0 }))
+                            .sort((a,b) => b.size - a.size)[0];
+          return (best && best.href) ? best.href : (location.origin + '/favicon.ico');
+        })();
+        """
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let urlStr = result as? String, let url = URL(string: urlStr) else { return }
+            Task { [weak self] in
+                guard let (data, _) = try? await URLSession.shared.data(from: url),
+                      let img = NSImage(data: data), img.size.width > 0 else { return }
+                await MainActor.run { self?.favicons[key] = img }
+            }
+        }
+    }
+
     /// Provider keys whose last broadcast didn't land (e.g. logged out / composer not found),
     /// mapped to a short reason — drives the per-panel warning indicator.
     @Published private(set) var sendIssues: [String: String] = [:]
@@ -302,6 +328,7 @@ final class WebViewStore: ObservableObject {
         cache[key]?.removeFromSuperview()
         cache[key] = nil
         streamingKeys.remove(key)
+        favicons.removeValue(forKey: key)
     }
 }
 
@@ -411,6 +438,42 @@ enum ChorusTheme {
                      Color(red: 0.08, green: 0.08, blue: 0.09)],
             startPoint: .top, endPoint: .bottom
         )
+    }
+}
+
+/// Per-provider brand accent color. Known AIs get their real brand color; custom providers
+/// get a stable color derived from their host so each still reads as distinct.
+enum ProviderStyle {
+    static func accent(key: String, host: String) -> Color {
+        switch key {
+        case "chatgpt": return Color(red: 0.063, green: 0.639, blue: 0.498)  // #10A37F OpenAI green
+        case "claude":  return Color(red: 0.800, green: 0.471, blue: 0.361)  // #CC785C Anthropic clay
+        case "gemini":  return Color(red: 0.259, green: 0.522, blue: 0.957)  // #4285F4 Google blue
+        default:
+            // Stable hash → hue (String.hashValue is randomized per launch, so roll our own).
+            var h = 5381
+            for u in host.unicodeScalars { h = (h &* 33) &+ Int(u.value) }
+            let hue = Double(abs(h) % 360) / 360.0
+            return Color(hue: hue, saturation: 0.55, brightness: 0.85)
+        }
+    }
+}
+
+/// Thin brand-color bar across the top of a card. Pulses while that AI is streaming.
+struct AccentBar: View {
+    let color: Color
+    let active: Bool
+    @State private var pulse = false
+
+    var body: some View {
+        Rectangle()
+            .fill(color)
+            .frame(height: 2)
+            .opacity(active ? (pulse ? 0.3 : 1.0) : 0.85)
+            .animation(active ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default,
+                       value: pulse)
+            .onAppear { pulse = active }
+            .onChange(of: active) { newValue in pulse = newValue }
     }
 }
 
@@ -537,6 +600,8 @@ struct ContentView: View {
 
     private func card(for p: Provider) -> some View {
         VStack(spacing: 0) {
+            AccentBar(color: ProviderStyle.accent(key: p.key, host: p.url.host ?? ""),
+                      active: store.streamingKeys.contains(p.key))
             slimHeader(for: p)
             WebPanel(webView: store.getOrCreate(key: p.key, url: p.url))
         }
@@ -565,10 +630,17 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help(issue)
+            } else if let icon = store.favicons[p.key] {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 15, height: 15)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             } else {
+                // No favicon yet — fall back to a brand-color dot.
                 Circle()
-                    .fill(store.streamingKeys.contains(p.key) ? Color.accentColor : Color.secondary.opacity(0.35))
-                    .frame(width: 7, height: 7)
+                    .fill(ProviderStyle.accent(key: p.key, host: p.url.host ?? ""))
+                    .frame(width: 8, height: 8)
             }
             Text(p.name)
                 .font(.system(size: 12, weight: .medium))
