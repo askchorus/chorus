@@ -93,6 +93,7 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     // last conversation on next launch (gated by the "restore session" setting at read time).
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            WebViewStore.shared.recoverIfDeadConversation(webView)
             WebViewStore.shared.recordSessionURL(for: webView)
             WebViewStore.shared.fetchFavicon(for: webView)
         }
@@ -825,25 +826,30 @@ enum Broadcaster {
           //    is the primary signal. We also keep (b) as a backup for sites that just
           //    disable the send button. Transition "streaming → not streaming" = done.
           (() => {
+            const isGemini = location.hostname.includes('gemini');
+
             // Force-paint nudge for occluded windows. Some sites (Gemini in particular) use
             // IntersectionObserver / Polymer lazy rendering — when our window is occluded,
             // the page reports the message container as "not visible" and skips rendering
             // new content. A tiny scroll nudge causes the observer to re-evaluate visibility
             // and the layer to repaint. Net-zero scroll position, harmless side effect.
+            // PERF: the inner-scroll-container scan (a whole-document querySelectorAll every
+            // tick) is only needed for Gemini's lazy renderer — gating it to Gemini avoids
+            // bogging down ChatGPT/Claude, whose long DOMs made that scan expensive.
             const paintNudge = () => {
               try {
-                void document.body.offsetHeight;  // sync layout
                 const sx = window.scrollX, sy = window.scrollY;
                 window.scrollTo(sx, sy + 0.1);
                 window.scrollTo(sx, sy);
-                // Also nudge any inner scroll containers (Gemini's chat area is a custom element)
-                document.querySelectorAll('[class*="scroll" i]').forEach(el => {
-                  if (el.scrollHeight > el.clientHeight) {
-                    const t = el.scrollTop;
-                    el.scrollTop = t + 0.1;
-                    el.scrollTop = t;
-                  }
-                });
+                if (isGemini) {
+                  document.querySelectorAll('[class*="scroll" i]').forEach(el => {
+                    if (el.scrollHeight > el.clientHeight) {
+                      const t = el.scrollTop;
+                      el.scrollTop = t + 0.1;
+                      el.scrollTop = t;
+                    }
+                  });
+                }
               } catch (_) {}
             };
 
@@ -905,30 +911,46 @@ enum Broadcaster {
               return true;
             };
 
+            // PERF: only Gemini hides its stop button inside Web Component shadow roots, so
+            // only Gemini needs the expensive deepQuery (which does querySelectorAll('*') over
+            // the whole tree). ChatGPT/Claude expose it in the light DOM — a plain
+            // querySelectorAll is far cheaper and avoids freezing their long-thread pages.
+            const findStops = isGemini
+              ? () => deepQuery(STOP_SELECTORS)
+              : () => {
+                  const out = [];
+                  for (const sel of STOP_SELECTORS) {
+                    try { document.querySelectorAll(sel).forEach(e => out.push(e)); } catch (_) {}
+                  }
+                  return out;
+                };
+
             const isCurrentlyStreaming = () => {
               // ONLY use stop-button presence as the streaming signal. We previously also
               // treated "send button disabled" as streaming, but Claude/Gemini disable the
               // send button whenever the input is empty (which it is right after we send).
               // That gave a false positive that lasted forever.
-              const stops = deepQuery(STOP_SELECTORS);
-              for (const el of stops) {
+              for (const el of findStops()) {
                 if (isReallyVisible(el)) return true;
               }
               return false;
             };
 
+            // Only ONE completion poll per page at a time. A new broadcast cancels the prior
+            // poll — otherwise every send spun up its own 5-minute interval and they stacked,
+            // each doing DOM work every tick (a big reason ChatGPT got sluggish after a few sends).
+            if (window.__chorusPoll) { clearInterval(window.__chorusPoll); window.__chorusPoll = null; }
+
             let wasStreaming = false;
-            let lastDiagAt = 0;
+            let idleTicks = 0;
             const start = Date.now();
             const maxWait = 5 * 60 * 1000;
-            const pollMs = 500;
+            const pollMs = 800;  // was 500 — halving the tick rate roughly halves poll overhead
             const interval = setInterval(() => {
-              // Every tick: nudge a paint. Cheap; only matters when window is occluded.
               paintNudge();
 
               if (Date.now() - start > maxWait) {
-                clearInterval(interval);
-                console.log('[Chorus] completion poll timed out');
+                clearInterval(interval); window.__chorusPoll = null;
                 try {
                   window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
                     host: location.hostname,
@@ -939,8 +961,8 @@ enum Broadcaster {
               }
               const streaming = isCurrentlyStreaming();
               if (streaming) {
+                idleTicks = 0;
                 if (!wasStreaming) {
-                  console.log('[Chorus] streaming started');
                   try {
                     window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
                       host: location.hostname,
@@ -950,25 +972,21 @@ enum Broadcaster {
                 }
                 wasStreaming = true;
               } else if (wasStreaming) {
-                clearInterval(interval);
-                console.log('[Chorus] completion detected, posting to native');
-                try {
-                  window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
-                    host: location.hostname
-                  });
-                } catch (e) {
-                  console.warn('[Chorus] postMessage failed', e);
+                // Require the stop button to be gone for 2 consecutive ticks before declaring
+                // done — ChatGPT briefly flickers its stop button, which used to cause a false
+                // "completed" within ~0.5s of starting.
+                idleTicks++;
+                if (idleTicks >= 2) {
+                  clearInterval(interval); window.__chorusPoll = null;
+                  try {
+                    window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
+                      host: location.hostname
+                    });
+                  } catch (_) {}
                 }
-              } else {
-                // Already streaming (wasStreaming=true) but isCurrentlyStreaming returned false
-                // means we'd fall into the completion branch above — never reaches here.
-                // (This branch is for the case where we never saw streaming start, which
-                //  shouldn't happen now that all three sites detected it.)
               }
-
-              // (heartbeat diagnostic removed — was useful for finding the Claude/Gemini
-              //  stop-button bug, now noisy. streaming-started and completion are still logged.)
             }, pollMs);
+            window.__chorusPoll = interval;
           })();
 
           return clicked

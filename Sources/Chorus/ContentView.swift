@@ -154,17 +154,44 @@ final class WebViewStore: ObservableObject {
         cache[key]?.reload()
     }
 
-    /// Navigate a panel to its "new conversation" page (login/cookies preserved).
-    func newChat(key: String) {
-        let newChatURLs: [String: String] = [
+    /// A "fresh start" URL for a provider — its new-chat page for built-ins, else its base URL.
+    private func freshURL(forKey key: String) -> URL? {
+        let builtinNew: [String: String] = [
             "chatgpt": "https://chatgpt.com/",
             "claude":  "https://claude.ai/new",
             "gemini":  "https://gemini.google.com/app",
         ]
-        guard let webView = cache[key],
-              let str = newChatURLs[key],
-              let url = URL(string: str) else { return }
+        if let s = builtinNew[key], let u = URL(string: s) { return u }
+        return ProviderRegistry.all().first(where: { $0.key == key })?.url
+    }
+
+    /// Navigate a panel to its "new conversation" page (login/cookies preserved).
+    func newChat(key: String) {
+        guard let webView = cache[key], let url = freshURL(forKey: key) else { return }
         webView.load(URLRequest(url: url))
+    }
+
+    /// After a restored session loads, some deep links point at a conversation that no longer
+    /// exists — these sites return HTTP 200 and render a "Conversation not found" message via
+    /// JS (so navigation callbacks don't fire). Detect that text and recover to a fresh chat,
+    /// clearing the dead saved URL so it doesn't recur next launch.
+    func recoverIfDeadConversation(_ webView: WKWebView) {
+        guard let key = cache.first(where: { $0.value === webView })?.key else { return }
+        let js = """
+        (() => {
+          const t = ((document.body && document.body.innerText) || '').slice(0, 4000).toLowerCase();
+          return (t.includes('conversation not found') || t.includes('chat not found')
+                  || t.includes('对话未找到') || t.includes('未找到对话')) ? 'dead' : 'ok';
+        })();
+        """
+        webView.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let self, (result as? String) == "dead" else { return }
+            var map = self.sessionURLMap()
+            map.removeValue(forKey: key)
+            self.saveSessionMap(map)
+            chorusLog.notice("[Chorus.Restore] \(key, privacy: .public) hit a dead conversation — recovering to a fresh chat")
+            self.newChat(key: key)
+        }
     }
 
     /// Broadcast a prompt to all webviews. `source` is used by the completion notifier
