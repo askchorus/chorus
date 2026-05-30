@@ -54,8 +54,8 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
         }
 
         let content = UNMutableNotificationContent()
-        content.title = "Chorus test"
-        content.body = "If you see this, notifications are working."
+        content.title = L("notif.testTitle")
+        content.body = L("notif.testBody")
         content.sound = .default
 
         let req = UNNotificationRequest(
@@ -90,9 +90,7 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
 
         let content = UNMutableNotificationContent()
         content.title = "Chorus"
-        content.body = source == .quickInput
-            ? "All AIs finished responding"
-            : "All AIs finished"
+        content.body = completionNotificationBody()  // rotating minimal line, localized
         content.sound = .default
 
         let req = UNNotificationRequest(

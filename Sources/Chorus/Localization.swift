@@ -31,6 +31,15 @@ func Lf(_ key: String, _ args: CVarArg...) -> String {
     String(format: L(key), arguments: args)
 }
 
+/// Body text for the "all AIs finished" notification. Minimal lines, rotated so a message
+/// you see on every broadcast stays fresh instead of feeling robotic. Localized.
+func completionNotificationBody() -> String {
+    let pool = currentLang() == "zh"
+        ? ["都好了", "好了", "都答完了", "答案就绪"]
+        : ["All done.", "Ready.", "All in.", "Answers in."]
+    return pool.randomElement() ?? pool[0]
+}
+
 let L10nTable: [String: [String: String]] = [
     // MARK: Composer + panel chrome (main window)
     "composer.placeholder": [
@@ -66,6 +75,22 @@ let L10nTable: [String: [String: String]] = [
     // MARK: Settings — language
     "settings.language.label": ["zh": "界面语言", "en": "Interface language"],
     "settings.language.system": ["zh": "跟随系统", "en": "System"],
+
+    // MARK: Notifications
+    "notif.testTitle": ["zh": "Chorus 测试", "en": "Chorus test"],
+    "notif.testBody": ["zh": "看到这条就说明通知正常 ✅", "en": "If you see this, notifications work. ✅"],
+
+    // MARK: Menu bar
+    "menubar.idle": ["zh": "都闲着呢", "en": "All idle"],
+    "menubar.thinking": ["zh": "%d 个在思考…", "en": "%d thinking…"],
+    "menubar.open": ["zh": "打开 Chorus", "en": "Open Chorus"],
+    "menubar.quit": ["zh": "退出 Chorus", "en": "Quit Chorus"],
+    "settings.section.menubar": ["zh": "菜单栏", "en": "Menu Bar"],
+    "settings.menubar.show": ["zh": "在菜单栏显示图标", "en": "Show menu bar icon"],
+    "settings.menubar.desc": [
+        "zh": "在菜单栏常驻图标：显示是否有 AI 正在回答，点开可快速新建对话/刷新/打开主窗。开启时，关掉主窗 app 仍留在菜单栏；关闭后，关掉窗口即退出。",
+        "en": "Keep an icon in the menu bar: shows whether any AI is responding, with quick actions. When on, closing the window keeps the app alive in the menu bar; when off, closing the window quits.",
+    ],
 
     // MARK: Settings — appearance
     "settings.section.appearance": ["zh": "外观", "en": "Appearance"],

@@ -14,8 +14,9 @@ CONTENTS="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
 
-echo "==> Compiling release binary..."
-swift build -c release
+echo "==> Compiling universal release binary (arm64 + x86_64)..."
+swift build -c release --arch arm64 --arch x86_64
+BIN_PATH="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
 
 echo "==> Generating icon (if missing)..."
 if [ ! -f "$ROOT/scripts/AppIcon.icns" ]; then
@@ -31,7 +32,7 @@ echo "==> Assembling .app bundle..."
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cp "$ROOT/.build/release/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT/scripts/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/scripts/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 

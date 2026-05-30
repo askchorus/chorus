@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("restoreSession") private var restoreSession: Bool = true
     @AppStorage("appLanguage") private var appLanguage: String = "system"
     @AppStorage("appearance") private var appearance: String = "system"
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
 
     @State private var newProviderName: String = ""
     @State private var newProviderURL: String = ""
@@ -64,6 +65,15 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
 
                 Text(L("settings.appearance.desc"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 2)
+            }
+
+            Section(L("settings.section.menubar")) {
+                Toggle(L("settings.menubar.show"), isOn: $showMenuBarIcon)
+                    .padding(.vertical, 2)
+                Text(L("settings.menubar.desc"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 2)
