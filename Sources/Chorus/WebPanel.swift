@@ -249,6 +249,16 @@ enum WebViewFactory {
         // Install diagnostic log bridge so JS `[Chorus]` logs reach unified logging.
         config.userContentController.add(JSLogHandler.shared, name: "chorusJSLog")
 
+        // Persistent streaming watcher (auto-runs on every page load): a lightweight,
+        // event-driven MutationObserver that reports streaming start/finish even for messages
+        // the user sends manually inside a panel (not just our broadcasts). Drives the menu-bar
+        // icon + card pulse; never triggers notifications (manual sends aren't broadcast batches).
+        config.userContentController.addUserScript(
+            WKUserScript(source: Broadcaster.streamingWatcherScript(),
+                         injectionTime: .atDocumentEnd,
+                         forMainFrameOnly: true)
+        )
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
 
@@ -992,6 +1002,98 @@ enum Broadcaster {
           return clicked
             ? (imageAttached ? 'sent (with image)' : 'sent')
             : 'send button not found';
+        })();
+        """
+    }
+
+    /// A persistent, event-driven streaming watcher injected on every page load. Unlike the
+    /// broadcast poll (which only runs after WE send), this catches messages the user types
+    /// directly into a panel too. It's deliberately light:
+    ///   • a MutationObserver (zero cost when the page is idle) instead of a timer
+    ///   • throttled to coalesce bursts during streaming
+    ///   • a 700ms confirm before declaring "done" (avoids ChatGPT's stop-button flicker)
+    ///   • yields while a broadcast poll owns the page (window.__chorusPoll)
+    ///   • ChatGPT/Claude/custom: light DOM query + observer (event-driven, ~free at idle)
+    ///   • Gemini: its stop button hides in shadow DOM the observer can't see into, so it gets
+    ///     a shadow-aware query + a gentle 1.5s fallback poll (one panel, short-circuited)
+    /// It posts the same messages as the broadcast poll, so it feeds the menu-bar icon / card
+    /// pulse; manual sends never notify because they aren't part of a broadcast batch.
+    static func streamingWatcherScript() -> String {
+        return """
+        (() => {
+          if (window.__chorusWatcher) return;
+          window.__chorusWatcher = true;
+
+          const isGemini = location.hostname.includes('gemini');
+          const STOP = [
+            'button[data-testid="stop-button"]',
+            'button[data-testid="composer-stop-button"]',
+            'button[aria-label="Stop response"]',
+            'button[aria-label="Stop Response"]',
+            'button[aria-label*="Stop generating" i]',
+            'button[aria-label*="Stop streaming" i]',
+            'button[aria-label*="Stop" i]',
+            'button[aria-label*="停止" i]',
+          ];
+          const visible = (el) => {
+            if (!el || el.offsetParent === null) return false;
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return false;
+            const s = getComputedStyle(el);
+            return s.visibility !== 'hidden' && s.display !== 'none';
+          };
+          const lightHit = () => {
+            for (const sel of STOP) {
+              try { for (const el of document.querySelectorAll(sel)) if (visible(el)) return true; }
+              catch (_) {}
+            }
+            return false;
+          };
+          // Shadow-aware, short-circuits on first visible match (for Gemini's web components).
+          const deepHit = () => {
+            const stack = [document];
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root) continue;
+              for (const sel of STOP) {
+                try { for (const el of root.querySelectorAll(sel)) if (visible(el)) return true; }
+                catch (_) {}
+              }
+              let all; try { all = root.querySelectorAll('*'); } catch (_) { all = []; }
+              for (const el of all) if (el.shadowRoot) stack.push(el.shadowRoot);
+            }
+            return false;
+          };
+          const streaming = isGemini ? deepHit : lightHit;
+
+          let was = false, scheduled = false, confirm = null;
+          const post = (body) => {
+            try { window.webkit?.messageHandlers?.chorusCompletion?.postMessage(body); } catch (_) {}
+          };
+          const check = () => {
+            scheduled = false;
+            // While a broadcast is actively tracking this page, let it own the signal.
+            if (window.__chorusPoll) { was = false; if (confirm) { clearTimeout(confirm); confirm = null; } return; }
+            const now = streaming();
+            if (now) {
+              if (confirm) { clearTimeout(confirm); confirm = null; }
+              if (!was) { was = true; post({ host: location.hostname, diagnostic: 'streaming-started' }); }
+            } else if (was && !confirm) {
+              // Stop button gone — wait 700ms and re-check before declaring done (flicker guard).
+              confirm = setTimeout(() => {
+                confirm = null;
+                if (!window.__chorusPoll && !streaming()) { was = false; post({ host: location.hostname }); }
+              }, 700);
+            }
+          };
+          const schedule = () => { if (!scheduled) { scheduled = true; setTimeout(check, 350); } };
+
+          try {
+            new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+          } catch (_) {}
+
+          // Gemini's shadow-hosted stop button is invisible to the observer — gentle fallback poll.
+          if (isGemini) setInterval(schedule, 1500);
         })();
         """
     }
