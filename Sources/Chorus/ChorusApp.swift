@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Menu-bar status item (built manually — SwiftUI's MenuBarExtra doesn't reliably render
     /// alongside this app's AppKit lifecycle setup).
     private var statusItem: NSStatusItem?
+    private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -106,9 +107,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(action(L("menubar.quit"), #selector(mbQuit)))
 
-        item.menu = menu
+        // Left-click summons the quick input (the valuable, discoverable path); right-click
+        // (or control-click) shows this menu of occasional actions. We therefore DON'T assign
+        // item.menu permanently — that would make left-click open the menu instead.
+        statusMenu = menu
+        item.button?.target = self
+        item.button?.action = #selector(statusItemClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
         updateStatusIcon()
+    }
+
+    @objc private func statusItemClicked() {
+        let event = NSApp.currentEvent
+        let isRightClick = event?.type == .rightMouseUp
+            || (event?.modifierFlags.contains(.control) ?? false)
+        if isRightClick, let menu = statusMenu, let button = statusItem?.button {
+            // Temporarily attach the menu so the button pops it, then detach so left-click
+            // stays an action (the standard AppKit trick for left-action + right-menu).
+            statusItem?.menu = menu
+            button.performClick(nil)
+            statusItem?.menu = nil
+        } else {
+            QuickInputWindowController.shared.toggle()
+        }
     }
 
     private func action(_ title: String, _ sel: Selector) -> NSMenuItem {
