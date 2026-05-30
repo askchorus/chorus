@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
     @AppStorage("restoreSession") private var restoreSession: Bool = true
     @AppStorage("appLanguage") private var appLanguage: String = "system"
+    @AppStorage("appearance") private var appearance: String = "system"
 
     @State private var newProviderName: String = ""
     @State private var newProviderURL: String = ""
@@ -52,6 +53,20 @@ struct SettingsView: View {
                     Text("English").tag("en")
                 }
                 .pickerStyle(.menu)
+            }
+
+            Section(L("settings.section.appearance")) {
+                Picker(L("settings.appearance.label"), selection: $appearance) {
+                    Text(L("settings.appearance.system")).tag("system")
+                    Text(L("settings.appearance.light")).tag("light")
+                    Text(L("settings.appearance.dark")).tag("dark")
+                }
+                .pickerStyle(.segmented)
+
+                Text(L("settings.appearance.desc"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 2)
             }
 
             Section(L("settings.section.quickInput")) {
@@ -220,7 +235,10 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 540)
+        .frame(width: 520, height: 600)
+        .onChange(of: appearance) { newValue in
+            AppearanceManager.apply(newValue)
+        }
     }
 
 }

@@ -457,14 +457,46 @@ enum ChorusTheme {
     static let cardRadius: CGFloat = 12
     static let gap: CGFloat = 12
     static let margin: CGFloat = 14
-    static let cardBorder = Color.white.opacity(0.09)
 
-    static var canvas: LinearGradient {
-        LinearGradient(
-            colors: [Color(red: 0.13, green: 0.13, blue: 0.145),
-                     Color(red: 0.08, green: 0.08, blue: 0.09)],
-            startPoint: .top, endPoint: .bottom
-        )
+    static func cardBorder(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10)
+    }
+
+    static func canvas(_ scheme: ColorScheme) -> LinearGradient {
+        if scheme == .dark {
+            return LinearGradient(
+                colors: [Color(red: 0.13, green: 0.13, blue: 0.145),
+                         Color(red: 0.08, green: 0.08, blue: 0.09)],
+                startPoint: .top, endPoint: .bottom)
+        } else {
+            return LinearGradient(
+                colors: [Color(red: 0.93, green: 0.93, blue: 0.945),
+                         Color(red: 0.87, green: 0.87, blue: 0.89)],
+                startPoint: .top, endPoint: .bottom)
+        }
+    }
+
+    /// NSColor that adapts to the effective appearance — used for the window background so
+    /// it matches the canvas during resize / behind the content.
+    static var windowBackground: NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return dark ? NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+                        : NSColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1)
+        }
+    }
+}
+
+/// Applies the user's appearance choice (System / Light / Dark) to the whole app. Setting
+/// NSApp.appearance also changes what `prefers-color-scheme` WKWebViews report, so sites that
+/// follow the system theme switch along with our chrome.
+enum AppearanceManager {
+    static func apply(_ raw: String) {
+        switch raw {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:      NSApp.appearance = nil   // follow system
+        }
     }
 }
 
@@ -514,7 +546,7 @@ struct WindowConfigurator: NSViewRepresentable {
             w.isMovableByWindowBackground = true
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
-            w.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+            w.backgroundColor = ChorusTheme.windowBackground
         }
         return v
     }
@@ -531,6 +563,8 @@ struct ContentView: View {
     @AppStorage("hiddenProviders") private var hiddenProvidersRaw: String = ""
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
+    @AppStorage("appearance") private var appearance: String = "system"
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
     private var allProviders: [Provider] {
@@ -603,13 +637,17 @@ struct ContentView: View {
                 .padding(.bottom, ChorusTheme.margin)
         }
         .ignoresSafeArea(.container, edges: .top)   // pull content up under the hidden titlebar
-        .background(ChorusTheme.canvas.ignoresSafeArea())
+        .background(ChorusTheme.canvas(colorScheme).ignoresSafeArea())
         .background(WindowConfigurator())
         .onAppear {
+            AppearanceManager.apply(appearance)
             // Pre-create all webviews up-front so their lifecycle is independent of view rebuilds.
             for p in allProviders {
                 _ = store.getOrCreate(key: p.key, url: p.url)
             }
+        }
+        .onChange(of: appearance) { newValue in
+            AppearanceManager.apply(newValue)
         }
     }
 
@@ -636,7 +674,7 @@ struct ContentView: View {
         .overlay(
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
                 .strokeBorder(
-                    dropTargetKey == p.key ? Color.accentColor.opacity(0.8) : ChorusTheme.cardBorder,
+                    dropTargetKey == p.key ? Color.accentColor.opacity(0.8) : ChorusTheme.cardBorder(colorScheme),
                     lineWidth: dropTargetKey == p.key ? 2 : 1
                 )
         )
@@ -793,7 +831,7 @@ struct ContentView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                .strokeBorder(ChorusTheme.cardBorder, lineWidth: 1)
+                .strokeBorder(ChorusTheme.cardBorder(colorScheme), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 2)
         .onAppear {

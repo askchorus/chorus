@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Apply saved appearance (System / Light / Dark) before windows show.
+        AppearanceManager.apply(UserDefaults.standard.string(forKey: "appearance") ?? "system")
+
         antiNapToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .automaticTerminationDisabled],
             reason: "Keep AI streaming alive when Chorus is in the background"

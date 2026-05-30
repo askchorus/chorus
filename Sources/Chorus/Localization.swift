@@ -67,6 +67,17 @@ let L10nTable: [String: [String: String]] = [
     "settings.language.label": ["zh": "界面语言", "en": "Interface language"],
     "settings.language.system": ["zh": "跟随系统", "en": "System"],
 
+    // MARK: Settings — appearance
+    "settings.section.appearance": ["zh": "外观", "en": "Appearance"],
+    "settings.appearance.label": ["zh": "明暗模式", "en": "Theme"],
+    "settings.appearance.system": ["zh": "跟随系统", "en": "System"],
+    "settings.appearance.light": ["zh": "浅色", "en": "Light"],
+    "settings.appearance.dark": ["zh": "深色", "en": "Dark"],
+    "settings.appearance.desc": [
+        "zh": "切换 Chorus 界面的明暗。跟随系统的 AI 网站也会一起切换；少数有独立主题开关的站点需在站内自行设置。",
+        "en": "Switch Chorus between light and dark. AI sites that follow the system theme switch too; a few sites with their own theme toggle must be set inside the site.",
+    ],
+
     // MARK: Settings — quick input
     "settings.hotkey.label": ["zh": "快捷输入快捷键", "en": "Quick input shortcut"],
     "settings.hotkey.recording": ["zh": "按下组合键…", "en": "Press combo…"],
