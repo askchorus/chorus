@@ -75,6 +75,8 @@ final class WebViewStore: ObservableObject {
         var pendingKeys: Set<String>
         let source: BroadcastSource
         let startedAt: Date
+        let totalCount: Int
+        var lastActivityAt: Date
     }
 
     init() {
@@ -224,9 +226,12 @@ final class WebViewStore: ObservableObject {
             pendingBatches[batchID] = PendingBatch(
                 pendingKeys: trackKeys,
                 source: source,
-                startedAt: Date()
+                startedAt: Date(),
+                totalCount: trackKeys.count,
+                lastActivityAt: Date()
             )
             clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (visible=\(visibleKeys), required=\(requiredKeys))")
+            scheduleBatchFallback(batchID: batchID)
             DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
                 self?.pendingBatches.removeValue(forKey: batchID)
             }
@@ -326,12 +331,31 @@ final class WebViewStore: ObservableObject {
                     completedBatches.append(batch)
                     pendingBatches.removeValue(forKey: id)
                 } else {
+                    batch.lastActivityAt = Date()
                     pendingBatches[id] = batch
+                    scheduleBatchFallback(batchID: id)
                 }
             }
         }
 
         for batch in completedBatches {
+            CompletionNotifier.shared.handleBatchComplete(source: batch.source)
+        }
+    }
+
+    /// Safety net for undetected completions. Some AIs (Gemini's shadow-DOM stop button is the
+    /// usual culprit) occasionally never report "done", which would leave a batch waiting
+    /// forever and silently eat the notification. Once a batch has made *some* progress and
+    /// then gone quiet for `grace`, notify anyway. Re-armed on every partial completion, so a
+    /// genuinely slow AI that keeps reporting won't trip it early.
+    private func scheduleBatchFallback(batchID: UUID, grace: TimeInterval = 75) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
+            guard let self, let batch = self.pendingBatches[batchID] else { return }
+            let quiet = Date().timeIntervalSince(batch.lastActivityAt) >= grace - 1
+            let madeProgress = batch.pendingKeys.count < batch.totalCount
+            guard quiet, madeProgress else { return }
+            self.pendingBatches.removeValue(forKey: batchID)
+            clog("batch \(batchID.uuidString.prefix(8)) fallback-fired — undetected completion for \(batch.pendingKeys)")
             CompletionNotifier.shared.handleBatchComplete(source: batch.source)
         }
     }

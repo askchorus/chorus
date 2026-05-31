@@ -274,6 +274,10 @@ enum WebViewFactory {
         // Private API; raises no warning at compile time; only safe outside Mac App Store.
         disableWindowOcclusionDetection(webView)
 
+        // Chrome UA ONLY for Google services (they ship a heavy legacy bundle to non-Chrome UAs).
+        // Everyone else gets the real Safari UA — critical for ChatGPT: a Chrome UA on the WebKit
+        // engine is a fingerprint mismatch that Cloudflare flags as a bot → endless "verify you
+        // are human" loop. Native WebKit + Safari UA matches, so the challenge passes.
         let host = url.host ?? ""
         let isGoogleService = host.contains("google.com") || host.contains("gemini")
         webView.customUserAgent = isGoogleService ? chromeUA : safariUA
@@ -1066,6 +1070,32 @@ enum Broadcaster {
           };
           const streaming = isGemini ? deepHit : lightHit;
 
+          // ChatGPT frequently shows "Something went wrong while generating the response" in
+          // WKWebView under a proxy (WebKit's QUIC/h2 handling is weaker than Chromium's, and
+          // Apple exposes no app-level QUIC switch). We can't prevent it, but we can auto-click
+          // its Retry button so it self-heals. Rate-limited to avoid loops / wasted quota.
+          const isChatGPT = location.hostname.includes('chatgpt') || location.hostname.includes('openai');
+          const ERR_RE = /something went wrong|生成回答时出错|出错了|网络错误|an error occurred/i;
+          const RETRY_RE = /retry|regenerate|重试|重新生成|try again/i;
+          let retries = 0, retryWindow = 0;
+          const maybeAutoRetry = () => {
+            if (!isChatGPT) return;
+            const txt = (document.body && document.body.innerText) || '';
+            if (!ERR_RE.test(txt)) return;
+            const now = Date.now();
+            if (now - retryWindow > 90000) { retryWindow = now; retries = 0; }  // reset window
+            if (retries >= 2) return;                                            // cap: 2 / 90s
+            for (const b of document.querySelectorAll('button')) {
+              const label = ((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
+              if (RETRY_RE.test(label)) {
+                retries++;
+                try { b.click(); } catch (_) {}
+                try { window.webkit?.messageHandlers?.chorusJSLog?.postMessage(location.hostname + ': auto-retried error (' + retries + '/2)'); } catch (_) {}
+                return;
+              }
+            }
+          };
+
           let was = false, scheduled = false, confirm = null;
           const post = (body) => {
             try { window.webkit?.messageHandlers?.chorusCompletion?.postMessage(body); } catch (_) {}
@@ -1078,12 +1108,15 @@ enum Broadcaster {
             if (now) {
               if (confirm) { clearTimeout(confirm); confirm = null; }
               if (!was) { was = true; post({ host: location.hostname, diagnostic: 'streaming-started' }); }
-            } else if (was && !confirm) {
-              // Stop button gone — wait 700ms and re-check before declaring done (flicker guard).
-              confirm = setTimeout(() => {
-                confirm = null;
-                if (!window.__chorusPoll && !streaming()) { was = false; post({ host: location.hostname }); }
-              }, 700);
+            } else {
+              if (was && !confirm) {
+                // Stop button gone — wait 700ms and re-check before declaring done (flicker guard).
+                confirm = setTimeout(() => {
+                  confirm = null;
+                  if (!window.__chorusPoll && !streaming()) { was = false; post({ host: location.hostname }); }
+                }, 700);
+              }
+              maybeAutoRetry();  // errors appear after streaming stops — only scan when idle
             }
           };
           const schedule = () => { if (!scheduled) { scheduled = true; setTimeout(check, 350); } };
