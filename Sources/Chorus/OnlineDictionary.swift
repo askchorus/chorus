@@ -46,7 +46,7 @@ final class OnlineDictionary {
                 return nil
             }
             let entries = try JSONDecoder().decode([DictAPIEntry].self, from: data)
-            guard let first = entries.first else {
+            guard !entries.isEmpty else {
                 negativeCache.insert(key)
                 return nil
             }

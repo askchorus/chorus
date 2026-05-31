@@ -392,25 +392,8 @@ enum Broadcaster {
                 'button.send-button',
                 'button[aria-label*="Send" i]'
               ],
-              // Gemini doesn't render a static file input — it lazily creates one
-              // after clicking "Upload & tools". Use clickUpload strategy.
-              uploadMethod: 'clickUpload',
-              uploadButtonSelectors: [
-                'button[aria-label="Upload & tools"]',
-                'button[aria-label*="Upload" i]',
-                'button[aria-label*="Add files" i]',
-                'button[mattooltip*="Upload" i]',
-              ],
-              dropTargetSelectors: [
-                'rich-textarea',
-                'div.ql-editor[contenteditable="true"]',
-                'div[contenteditable="true"]'
-              ],
-              fileInputSelectors: [
-                'input[type="file"][accept*="image"]',
-                'input[type="file"][multiple]',
-                'input[type="file"]'
-              ],
+              // Gemini's image upload goes through the native runOpenPanel path
+              // (geminiUploadViaPanel), not this script — so no upload selectors here.
             },
           ];
 
@@ -499,29 +482,6 @@ enum Broadcaster {
 
             const method = cfg.uploadMethod || 'paste';
 
-            // Diagnostic DOM scan — runs BEFORE any strategy. Helps debug "why doesn't
-            // Gemini upload" by showing what file inputs / upload buttons actually exist.
-            const scanForUploadTargets = () => {
-              const fileInputs = deepQueryAll(['input[type="file"]']);
-              const uploadButtons = deepQueryAll([
-                'button[aria-label*="upload" i]',
-                'button[aria-label*="attach" i]',
-                'button[aria-label*="add" i]',
-                'button[mattooltip*="upload" i]',
-                'button[mattooltip*="attach" i]',
-              ]);
-              clog('image-upload scan: method=' + method + ' fileInputs=' + fileInputs.length + ' uploadButtons=' + uploadButtons.length);
-              fileInputs.slice(0, 3).forEach((fi, i) => {
-                clog('  fileInput[' + i + ']: accept=' + (fi.accept || '?') + ' multiple=' + (fi.multiple || false) + ' name=' + (fi.name || '?'));
-              });
-              uploadButtons.slice(0, 3).forEach((b, i) => {
-                clog('  uploadBtn[' + i + ']: label=' + (b.getAttribute('aria-label') || b.getAttribute('mattooltip') || '?'));
-              });
-            };
-
-            // Define deepQueryAll early since scanForUploadTargets uses it
-            // (the existing const declaration further down still works because of hoisting in arrow-fn context, but we just call it after the const below)
-
             const tryPaste = () => {
               if (!input) return false;
               try {
@@ -582,113 +542,12 @@ enum Broadcaster {
               return false;
             };
 
-            // Gemini-style "lazy" upload: site doesn't render a file input until
-            // you click its "Upload & tools" button. Click it, wait for the DOM
-            // to spin up an <input type="file">, and (if a menu pops instead)
-            // click the matching menu item, then set files on the input.
-            const tryClickThenFileInput = async () => {
-              const buttons = deepQueryAll(cfg.uploadButtonSelectors || []);
-              clog('clickThenFileInput: found ' + buttons.length + ' upload buttons');
-              if (buttons.length === 0) return false;
-
-              const btn = buttons[0];
-              const btnLabel = (btn.getAttribute('aria-label') || '').toLowerCase().trim();
-              clog('clickThenFileInput: clicking "' + btnLabel + '"');
-
-              // Material Design buttons frequently listen to pointer events but
-              // ignore raw .click() — dispatch the full pointer/mouse sequence.
-              const fireFullClick = (el) => {
-                const rect = el.getBoundingClientRect();
-                const opts = {
-                  bubbles: true, cancelable: true,
-                  clientX: rect.left + rect.width / 2,
-                  clientY: rect.top + rect.height / 2,
-                  button: 0, view: window,
-                };
-                try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (_) {}
-                el.dispatchEvent(new MouseEvent('mousedown', opts));
-                try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (_) {}
-                el.dispatchEvent(new MouseEvent('mouseup', opts));
-                try { el.click(); } catch (_) {}
-              };
-              clog('clickThenFileInput: btn=' + (btn.outerHTML || '').slice(0, 140));
-              fireFullClick(btn);
-              await new Promise(r => setTimeout(r, 700));
-
-              let inputs = deepQueryAll(['input[type="file"]']);
-              clog('clickThenFileInput: after click, ' + inputs.length + ' file inputs');
-
-              // If the click didn't directly reveal an input, the trigger probably
-              // opened a menu/popup. Dump EVERYTHING the click revealed so we can see
-              // Gemini's real markup (it changes often). Then click the best match.
-              if (inputs.length === 0) {
-                // Did anything menu-like appear at all? (distinguishes "click did
-                // nothing" from "menu opened but no matching item").
-                const roleEls = deepQueryAll([
-                  '[role="menuitem"]', '[role="option"]', '[role="menu"]',
-                  '[role="dialog"]', '[role="listbox"]',
-                ]);
-                const overlayEls = deepQueryAll([
-                  '.cdk-overlay-container', '.cdk-overlay-pane', '.mat-mdc-menu-panel',
-                ]);
-                clog('clickThenFileInput: post-click roleEls=' + roleEls.length +
-                     ' overlayEls=' + overlayEls.length);
-
-                // All upload-hinting clickables (light DOM + shadow + CDK overlay).
-                const hints = deepQueryAll([
-                  'button', 'a', '[role="button"]', '[role="menuitem"]',
-                  '[role="option"]', '[mat-menu-item]', 'div[tabindex]',
-                ]).filter(el => {
-                  if (el === btn) return false;
-                  const t = ((el.textContent || '') + ' ' +
-                             (el.getAttribute('aria-label') || '')).toLowerCase().trim();
-                  if (!t || t === btnLabel || t.includes('upload & tools')) return false;
-                  return /upload|from computer|add file|files from|photo|gallery|相册|拍照|从电脑|上传文件|本地文件|图片|文件/.test(t);
-                });
-                clog('clickThenFileInput: ' + hints.length + ' upload-hint clickables');
-                hints.slice(0, 12).forEach((el, i) => {
-                  const t = ((el.textContent || '') + ' | ' +
-                             (el.getAttribute('aria-label') || '')).trim();
-                  clog('  hint[' + i + ']: <' + el.tagName.toLowerCase() + '> "' +
-                       t.slice(0, 70) + '"');
-                });
-
-                if (hints.length > 0) {
-                  clog('clickThenFileInput: clicking hint[0]');
-                  fireFullClick(hints[0]);
-                  await new Promise(r => setTimeout(r, 700));
-                }
-
-                inputs = deepQueryAll(['input[type="file"]']);
-                clog('clickThenFileInput: after hint click, ' + inputs.length + ' file inputs');
-              }
-
-              for (const fi of inputs) {
-                try {
-                  const dt = new DataTransfer();
-                  dt.items.add(file);
-                  fi.files = dt.files;
-                  fi.dispatchEvent(new Event('change', { bubbles: true }));
-                  clog('clickThenFileInput: set files on ' + (fi.outerHTML || '?').slice(0, 120));
-                  return true;
-                } catch (e) {
-                  clog('clickThenFileInput: setting files threw — ' + e);
-                }
-              }
-              return false;
-            };
-
-            // Diagnostic scan before running strategies
-            scanForUploadTargets();
-
             // Run primary strategy; on failure walk through remaining methods.
             const order = method === 'drop'
               ? [['drop', tryDrop], ['fileInput', tryFileInput], ['paste', tryPaste]]
               : method === 'fileInput'
                 ? [['fileInput', tryFileInput], ['paste', tryPaste], ['drop', tryDrop]]
-                : method === 'clickUpload'
-                  ? [['clickUpload', tryClickThenFileInput], ['fileInput', tryFileInput], ['paste', tryPaste], ['drop', tryDrop]]
-                  : [['paste', tryPaste], ['fileInput', tryFileInput], ['drop', tryDrop]];
+                : [['paste', tryPaste], ['fileInput', tryFileInput], ['drop', tryDrop]];
 
             // `await` is safe on sync returns (just resolves immediately) — keeps
             // the loop compatible with both sync and async strategy functions.

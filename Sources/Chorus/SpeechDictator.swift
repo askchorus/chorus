@@ -24,6 +24,9 @@ final class SpeechDictator: ObservableObject {
     private var task: SFSpeechRecognitionTask?
     private var onUpdate: ((String) -> Void)?
     private var committedText = ""
+    /// True between start() and recording actually beginning — guards the async permission
+    /// window so a rapid second tap can't spin up a second task/tap (isRecording is still false then).
+    private var starting = false
 
     /// Auto-stop after this many seconds with no new speech (so the mic doesn't listen forever).
     private let silenceTimeout: TimeInterval = 4
@@ -36,23 +39,19 @@ final class SpeechDictator: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + silenceTimeout, execute: work)
     }
 
-    /// Toggle dictation. `onUpdate` is called on the main actor with the running transcript.
-    func toggle(onUpdate: @escaping (String) -> Void) {
-        if isRecording { stop() } else { start(onUpdate: onUpdate) }
-    }
-
     func start(onUpdate: @escaping (String) -> Void) {
-        guard !isRecording else { return }
+        guard !isRecording, !starting else { return }
+        starting = true
         self.onUpdate = onUpdate
         permissionDenied = false
 
         SFSpeechRecognizer.requestAuthorization { [weak self] auth in
             Task { @MainActor in
                 guard let self else { return }
-                guard auth == .authorized else { self.permissionDenied = true; return }
+                guard auth == .authorized else { self.abortStart(); return }
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     Task { @MainActor in
-                        guard granted else { self.permissionDenied = true; return }
+                        guard granted else { self.abortStart(); return }
                         self.beginRecording()
                     }
                 }
@@ -60,8 +59,16 @@ final class SpeechDictator: ObservableObject {
         }
     }
 
+    /// Any failure to start (denied, recognizer unavailable, audio-engine error). Clears the
+    /// starting latch AND sets permissionDenied — the published change lets the UI reset state
+    /// (e.g. the quick input's suppress-auto-hide flag), which would otherwise stay stuck.
+    private func abortStart() {
+        starting = false
+        permissionDenied = true
+    }
+
     private func beginRecording() {
-        guard let recognizer, recognizer.isAvailable else { permissionDenied = true; return }
+        guard let recognizer, recognizer.isAvailable else { abortStart(); return }
         committedText = ""
 
         let input = engine.inputNode
@@ -78,9 +85,11 @@ final class SpeechDictator: ObservableObject {
         } catch {
             chorusLog.notice("[Chorus.Speech] engine start failed: \(error.localizedDescription, privacy: .public)")
             cleanup()
+            abortStart()   // surface the failure so the UI resets (don't leave suppress-auto-hide stuck)
             return
         }
 
+        starting = false
         isRecording = true
         bumpSilenceTimer()   // auto-stop if they never speak
         startSegment()
@@ -131,5 +140,6 @@ final class SpeechDictator: ObservableObject {
         request = nil
         task = nil
         isRecording = false
+        starting = false
     }
 }

@@ -84,10 +84,6 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
         clog("batch complete — source=\(source), mode=\(mode), shouldNotify=\(shouldNotify)")
         guard shouldNotify else { return }
 
-        // (Removed isChorusMainWindowKey() check — it created intermittent behavior
-        //  when combined with foregroundMainOnSend. User wants consistent banners;
-        //  if they don't want them while looking at Chorus, they can switch notifyMode.)
-
         let content = UNMutableNotificationContent()
         content.title = "Chorus"
         content.body = completionNotificationBody()  // rotating minimal line, localized
@@ -103,13 +99,6 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
             let errStr = error?.localizedDescription ?? "nil"
             clog("real notification posted — error: \(errStr)")
         }
-    }
-
-    private func isChorusMainWindowKey() -> Bool {
-        for window in NSApp.windows where window.canBecomeMain {
-            if window.isKeyWindow { return true }
-        }
-        return false
     }
 }
 

@@ -5,10 +5,6 @@ import Foundation
 /// Instead `L("key")` looks the string up in `L10nTable` by the current language, which the
 /// user picks in Settings (system / 中文 / English) and can switch instantly.
 
-enum AppLanguage: String, CaseIterable {
-    case system, zh, en
-}
-
 /// The effective language code ("zh" or "en") given the user's setting + system preference.
 func currentLang() -> String {
     switch UserDefaults.standard.string(forKey: "appLanguage") ?? "system" {

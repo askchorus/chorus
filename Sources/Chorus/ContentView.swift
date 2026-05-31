@@ -42,39 +42,17 @@ final class WebViewStore: ObservableObject {
         }
     }
 
-    /// Provider keys whose last broadcast didn't land (e.g. logged out / composer not found),
-    /// mapped to a short reason — drives the per-panel warning indicator.
-    @Published private(set) var sendIssues: [String: String] = [:]
-
-    /// Interpret an injection result + the panel's URL, and record/clear a send issue.
-    /// The URL check is a backstop: a logged-out panel often sits on an auth/login page even
-    /// when the injection result is ambiguous.
-    private func recordSendResult(key: String, result: Any?, url: URL?) {
-        let s = (result as? String) ?? ""
-        let host = url?.host?.lowercased() ?? ""
-        let path = url?.path.lowercased() ?? ""
-        let looksLoggedOut = host.hasPrefix("accounts.") || host.hasPrefix("auth.")
-            || host.hasPrefix("login.") || path.contains("login")
-            || path.contains("signin") || path.contains("sign-in") || path.contains("/auth")
-
-        if s == "input not found" || looksLoggedOut {
-            sendIssues[key] = "可能未登录或输入框未找到 — 点击刷新"
-        } else if s.hasPrefix("host not supported") {
-            sendIssues[key] = "暂不支持该站点"
-        } else {
-            sendIssues.removeValue(forKey: key)
-        }
-        chorusLog.notice("[Chorus.Send] \(key, privacy: .public) result=\"\(s, privacy: .public)\" host=\(host, privacy: .public) → issue=\(self.sendIssues[key] ?? "none", privacy: .public)")
-    }
-
     /// Pending completion batches — one per broadcast. Each tracks which provider keys
     /// have not yet posted their completion message. When a batch's set empties → notify.
     private var pendingBatches: [UUID: PendingBatch] = [:]
 
+    /// Last time we auto-recovered a panel from a dead conversation — guards against an
+    /// infinite reload loop if the fresh page ever also matches the trigger text.
+    private var recoveredAt: [String: Date] = [:]
+
     private struct PendingBatch {
         var pendingKeys: Set<String>
         let source: BroadcastSource
-        let startedAt: Date
         let totalCount: Int
         var lastActivityAt: Date
     }
@@ -89,7 +67,6 @@ final class WebViewStore: ObservableObject {
             guard let self, let key = self.providerKey(forHost: host) else { return }
             if streaming {
                 self.streamingKeys.insert(key)
-                self.sendIssues.removeValue(forKey: key)  // it's clearly working
             } else {
                 self.streamingKeys.remove(key)
             }
@@ -179,6 +156,9 @@ final class WebViewStore: ObservableObject {
     /// clearing the dead saved URL so it doesn't recur next launch.
     func recoverIfDeadConversation(_ webView: WKWebView) {
         guard let key = cache.first(where: { $0.value === webView })?.key else { return }
+        // Don't recover again within 15s — prevents an infinite reload loop if the fresh page
+        // itself ever contains the trigger text.
+        if let last = recoveredAt[key], Date().timeIntervalSince(last) < 15 { return }
         let js = """
         (() => {
           const t = ((document.body && document.body.innerText) || '').slice(0, 4000).toLowerCase();
@@ -188,6 +168,7 @@ final class WebViewStore: ObservableObject {
         """
         webView.evaluateJavaScript(js) { [weak self] result, _ in
             guard let self, (result as? String) == "dead" else { return }
+            self.recoveredAt[key] = Date()
             var map = self.sessionURLMap()
             map.removeValue(forKey: key)
             self.saveSessionMap(map)
@@ -226,7 +207,6 @@ final class WebViewStore: ObservableObject {
             pendingBatches[batchID] = PendingBatch(
                 pendingKeys: trackKeys,
                 source: source,
-                startedAt: Date(),
                 totalCount: trackKeys.count,
                 lastActivityAt: Date()
             )
@@ -255,11 +235,10 @@ final class WebViewStore: ObservableObject {
                 geminiUploadViaPanel(into: webView, pngData: png, thenRun: jsGeminiSend)
                 continue
             }
-            webView.evaluateJavaScript(jsWithImage) { [weak self] result, error in
+            webView.evaluateJavaScript(jsWithImage) { result, error in
                 if let error = error {
                     print("[\(key)] error: \(error.localizedDescription)")
                 }
-                self?.recordSendResult(key: key, result: result, url: webView.url)
             }
         }
     }
@@ -294,9 +273,7 @@ final class WebViewStore: ObservableObject {
                 // The send script polls for the uploaded thumbnail itself (WAIT_UPLOAD), so we
                 // only need a short gap before kicking it off — it does the waiting internally.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    webView.evaluateJavaScript(js) { [weak self] result, _ in
-                        self?.recordSendResult(key: "gemini", result: result, url: webView.url)
-                    }
+                    webView.evaluateJavaScript(js) { _, _ in }
                 }
             }
         }
@@ -714,17 +691,7 @@ struct ContentView: View {
     /// Kept minimal so it doesn't compete with each site's own header below it.
     private func slimHeader(for p: Provider) -> some View {
         HStack(spacing: 7) {
-            if let issue = store.sendIssues[p.key] {
-                Button {
-                    store.reload(key: p.key)
-                } label: {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(.orange)
-                }
-                .buttonStyle(.plain)
-                .help(issue)
-            } else if let icon = store.favicons[p.key] {
+            if let icon = store.favicons[p.key] {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
