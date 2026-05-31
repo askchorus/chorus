@@ -18,11 +18,11 @@ echo "==> Compiling universal release binary (arm64 + x86_64)..."
 swift build -c release --arch arm64 --arch x86_64
 BIN_PATH="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
 
-echo "==> Generating icon (if missing)..."
+echo "==> Preparing icon (if missing)..."
 if [ ! -f "$ROOT/scripts/AppIcon.icns" ]; then
     pushd "$ROOT/scripts" > /dev/null
     rm -rf Chorus.iconset
-    swift generate-icon.swift Chorus.iconset
+    swift process-icon.swift icon-source.png Chorus.iconset   # rebuild from the source art
     iconutil -c icns Chorus.iconset -o AppIcon.icns
     rm -rf Chorus.iconset
     popd > /dev/null
