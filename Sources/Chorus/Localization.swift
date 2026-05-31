@@ -63,6 +63,9 @@ let L10nTable: [String: [String: String]] = [
         "en": "Ask all AIs at once…   (single word auto-looks up · /? for help)",
     ],
     "quick.pronounce": ["zh": "朗读  (⌘L)", "en": "Pronounce  (⌘L)"],
+    "quick.mic": ["zh": "语音输入", "en": "Voice input"],
+    "quick.micStop": ["zh": "停止录音", "en": "Stop recording"],
+    "quick.micDenied": ["zh": "麦克风/语音识别权限被拒——请到系统设置开启", "en": "Mic / speech permission denied — enable it in System Settings"],
     "quick.chipHelp": ["zh": "以「%@：」为前缀发送给所有 AI", "en": "Send to all AIs with “%@: ” prepended"],
 
     // MARK: Settings — sections

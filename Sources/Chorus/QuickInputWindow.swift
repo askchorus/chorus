@@ -15,6 +15,10 @@ final class QuickInputWindowController {
     private var panel: KeyablePanel?
     private var resignKeyObserver: NSObjectProtocol?
 
+    /// While true, the panel won't auto-hide on losing key focus. Set during voice input so
+    /// the mic-permission dialog / audio session stealing focus doesn't dismiss the panel.
+    var suppressAutoHide = false
+
     // Frame width is fixed; height tracks SwiftUI content.
     private let panelWidth: CGFloat = 640
 
@@ -41,6 +45,14 @@ final class QuickInputWindowController {
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    /// After voice input ends, bring the panel back to key so the text field is focused for
+    /// editing/sending and the normal click-away-to-dismiss behavior resumes.
+    func refocusAfterDictation() {
+        guard let panel = panel, panel.isVisible else { return }
+        panel.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self] in self?.focusTextField() }
     }
 
     func handlePostSubmit() {
@@ -129,7 +141,9 @@ final class QuickInputWindowController {
             queue: .main
         ) { [weak self] _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                if let pp = self?.panel, !pp.isKeyWindow { pp.orderOut(nil) }
+                guard let self else { return }
+                if self.suppressAutoHide { return }   // voice input in progress — keep panel up
+                if let pp = self.panel, !pp.isKeyWindow { pp.orderOut(nil) }
             }
         }
 
@@ -192,6 +206,11 @@ struct QuickInputView: View {
     @State private var historyIndex: Int? = nil
     @State private var historyDraft: String = ""
 
+    // Voice input (on-device dictation).
+    @StateObject private var dictator = SpeechDictator()
+    @State private var dictationBase = ""
+    @State private var micPulse = false
+
     private let store = WebViewStore.shared
 
     var body: some View {
@@ -236,6 +255,45 @@ struct QuickInputView: View {
                 .focused($focused)
                 .font(.system(size: 18))
                 .lineLimit(1...5)
+
+                Button {
+                    if dictator.isRecording {
+                        dictator.stop()
+                    } else {
+                        // Set BEFORE starting so the mic-permission dialog stealing focus
+                        // doesn't auto-dismiss the panel.
+                        QuickInputWindowController.shared.suppressAutoHide = true
+                        dictationBase = prompt.isEmpty ? "" : prompt + " "
+                        dictator.start { text in prompt = dictationBase + text }
+                    }
+                } label: {
+                    Image(systemName: dictator.isRecording ? "mic.fill" : "mic")
+                        .font(.system(size: 16))
+                        // Calm accent-color breathing pulse while listening (consistent with the
+                        // card "thinking" pulse) — not an alarming red.
+                        .foregroundColor(dictator.isRecording ? .accentColor : .secondary)
+                        .opacity(dictator.isRecording ? (micPulse ? 0.45 : 1.0) : 1.0)
+                        .animation(dictator.isRecording
+                                   ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                                   : .default, value: micPulse)
+                        .padding(.top, 3)
+                }
+                .buttonStyle(.plain)
+                .help(dictator.permissionDenied ? L("quick.micDenied")
+                      : (dictator.isRecording ? L("quick.micStop") : L("quick.mic")))
+                .onChange(of: dictator.isRecording) { recording in
+                    micPulse = recording
+                    if !recording {
+                        QuickInputWindowController.shared.suppressAutoHide = false
+                        QuickInputWindowController.shared.refocusAfterDictation()
+                    }
+                }
+                .onChange(of: dictator.permissionDenied) { denied in
+                    if denied {
+                        QuickInputWindowController.shared.suppressAutoHide = false
+                        QuickInputWindowController.shared.refocusAfterDictation()
+                    }
+                }
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
@@ -340,7 +398,7 @@ struct QuickInputView: View {
             loadClipboardIfEnabled()
             updateCommandResult()
         }
-        .onDisappear { removeMonitors() }
+        .onDisappear { removeMonitors(); dictator.stop() }
         // Re-load clipboard only when this notification follows a fresh show() call —
         // otherwise internal focus shuffles (clicking a chip / speaker button) would
         // clobber the prompt with stale clipboard content.
@@ -355,29 +413,24 @@ struct QuickInputView: View {
         }
     }
 
-    /// Auto-populate the input from the clipboard. Image takes priority over text.
-    /// If user disabled the toggle, we just clear instead.
+    /// Auto-populate the input from the clipboard — but ONLY when the box is empty, so it never
+    /// clobbers a draft you typed (or re-pastes over your edit every time focus shifts, which
+    /// made it look like you "couldn't delete" pasted text). Image takes priority over text.
     private func loadClipboardIfEnabled() {
+        // Never overwrite existing content — preserve the user's draft across hide/re-summon.
+        guard prompt.isEmpty, attachedImage == nil else { return }
         let enabled = UserDefaults.standard.object(forKey: "autoPasteOnSummon") as? Bool ?? true
-        guard enabled else {
-            prompt = ""
-            attachedImage = nil
-            return
-        }
+        guard enabled else { return }
         let pb = NSPasteboard.general
         if let img = NSImage(pasteboard: pb), img.size.width > 0, img.size.height > 0 {
             attachedImage = img
-            prompt = ""
         } else if let str = pb.string(forType: .string), !str.isEmpty {
             prompt = str
-            attachedImage = nil
-        } else {
-            prompt = ""
-            attachedImage = nil
         }
     }
 
     private func submit() {
+        dictator.stop()  // end any in-progress dictation before acting on the prompt
         switch CommandRouter.route(prompt) {
         case .help:
             commandResult = nil

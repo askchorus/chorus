@@ -34,5 +34,9 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Personal use only</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Chorus uses the microphone for voice input in the quick-input box.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Chorus transcribes your speech on-device to fill the quick-input box.</string>
 </dict>
 </plist>

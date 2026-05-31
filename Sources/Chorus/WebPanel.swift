@@ -842,28 +842,33 @@ enum Broadcaster {
           (() => {
             const isGemini = location.hostname.includes('gemini');
 
+            // Stronger repaint for Gemini's virtualized / IntersectionObserver renderer, which
+            // otherwise generates a response but never PAINTS it (you see nothing until a manual
+            // refresh). A net-zero 0.1px scroll wasn't enough; this also fires a resize event
+            // (makes the virtual list re-evaluate visibility) and, when the user is already near
+            // the bottom, scrolls fully down so the latest message renders into view.
+            const geminiRepaint = () => {
+              try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+              document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
+                if (el.scrollHeight > el.clientHeight + 4) {
+                  const nearBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 140;
+                  if (nearBottom) { el.scrollTop = el.scrollHeight; }   // keep latest message painted
+                  else { const t = el.scrollTop; el.scrollTop = t + 1; el.scrollTop = t; }
+                }
+              });
+            };
+
             // Force-paint nudge for occluded windows. Some sites (Gemini in particular) use
             // IntersectionObserver / Polymer lazy rendering — when our window is occluded,
             // the page reports the message container as "not visible" and skips rendering
             // new content. A tiny scroll nudge causes the observer to re-evaluate visibility
             // and the layer to repaint. Net-zero scroll position, harmless side effect.
-            // PERF: the inner-scroll-container scan (a whole-document querySelectorAll every
-            // tick) is only needed for Gemini's lazy renderer — gating it to Gemini avoids
-            // bogging down ChatGPT/Claude, whose long DOMs made that scan expensive.
             const paintNudge = () => {
               try {
                 const sx = window.scrollX, sy = window.scrollY;
                 window.scrollTo(sx, sy + 0.1);
                 window.scrollTo(sx, sy);
-                if (isGemini) {
-                  document.querySelectorAll('[class*="scroll" i]').forEach(el => {
-                    if (el.scrollHeight > el.clientHeight) {
-                      const t = el.scrollTop;
-                      el.scrollTop = t + 0.1;
-                      el.scrollTop = t;
-                    }
-                  });
-                }
+                if (isGemini) geminiRepaint();
               } catch (_) {}
             };
 
@@ -1070,6 +1075,22 @@ enum Broadcaster {
           };
           const streaming = isGemini ? deepHit : lightHit;
 
+          // Gemini generates responses but sometimes never PAINTS them (virtualized /
+          // IntersectionObserver renderer stalls) — you see nothing until a manual refresh.
+          // Force a repaint: fire resize + (if near the bottom) scroll fully down so the latest
+          // message renders. Runs during streaming and for a few seconds after (the tail render).
+          let paintUntil = 0;
+          const geminiRepaint = () => {
+            try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+            document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
+              if (el.scrollHeight > el.clientHeight + 4) {
+                const nearBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 140;
+                if (nearBottom) { el.scrollTop = el.scrollHeight; }
+                else { const t = el.scrollTop; el.scrollTop = t + 1; el.scrollTop = t; }
+              }
+            });
+          };
+
           // ChatGPT frequently shows "Something went wrong while generating the response" in
           // WKWebView under a proxy (WebKit's QUIC/h2 handling is weaker than Chromium's, and
           // Apple exposes no app-level QUIC switch). We can't prevent it, but we can auto-click
@@ -1106,6 +1127,7 @@ enum Broadcaster {
             if (window.__chorusPoll) { was = false; if (confirm) { clearTimeout(confirm); confirm = null; } return; }
             const now = streaming();
             if (now) {
+              if (isGemini) paintUntil = Date.now() + 6000;  // keep repainting through the stream
               if (confirm) { clearTimeout(confirm); confirm = null; }
               if (!was) { was = true; post({ host: location.hostname, diagnostic: 'streaming-started' }); }
             } else {
@@ -1118,6 +1140,8 @@ enum Broadcaster {
               }
               maybeAutoRetry();  // errors appear after streaming stops — only scan when idle
             }
+            // Repaint Gemini during the stream and for ~6s after (catches the stalled tail render).
+            if (isGemini && Date.now() < paintUntil) geminiRepaint();
           };
           const schedule = () => { if (!scheduled) { scheduled = true; setTimeout(check, 350); } };
 

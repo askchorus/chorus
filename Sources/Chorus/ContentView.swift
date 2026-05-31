@@ -583,6 +583,11 @@ struct ContentView: View {
     @State private var attachedImage: NSImage? = nil
     @FocusState private var promptFocused: Bool
 
+    // Voice input (on-device dictation) for the main composer.
+    @StateObject private var dictator = SpeechDictator()
+    @State private var dictationBase = ""
+    @State private var micPulse = false
+
     @AppStorage("providerOrder") private var providerOrderRaw: String = "chatgpt,claude,gemini"
     @AppStorage("hiddenProviders") private var hiddenProvidersRaw: String = ""
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
@@ -831,6 +836,29 @@ struct ContentView: View {
                     .lineLimit(1...8)
 
                 Button {
+                    if dictator.isRecording {
+                        dictator.stop()
+                    } else {
+                        dictationBase = prompt.isEmpty ? "" : prompt + " "
+                        dictator.start { text in prompt = dictationBase + text }
+                    }
+                } label: {
+                    Image(systemName: dictator.isRecording ? "mic.fill" : "mic")
+                        .font(.system(size: 15))
+                        .foregroundColor(dictator.isRecording ? .accentColor : .secondary)
+                        .opacity(dictator.isRecording ? (micPulse ? 0.45 : 1.0) : 1.0)
+                        .animation(dictator.isRecording
+                                   ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                                   : .default, value: micPulse)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(dictator.permissionDenied ? L("quick.micDenied")
+                      : (dictator.isRecording ? L("quick.micStop") : L("quick.mic")))
+                .onChange(of: dictator.isRecording) { micPulse = $0 }
+
+                Button {
                     send()
                 } label: {
                     Image(systemName: "arrow.up")
@@ -1038,6 +1066,7 @@ struct ContentView: View {
     }
 
     private func send() {
+        dictator.stop()  // end any in-progress dictation
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
         store.broadcast(text: text, image: attachedImage, source: .mainWindow)

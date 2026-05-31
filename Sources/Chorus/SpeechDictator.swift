@@ -1,0 +1,135 @@
+import Foundation
+import AVFoundation
+import Speech
+
+/// On-device voice dictation for the quick input. Uses Apple's native SFSpeechRecognizer with
+/// on-device recognition when available (private, offline, free, no bundled model). Streams
+/// partial results so the text box fills live as you speak. For short prompt dictation this is
+/// indistinguishable in accuracy from the newer SpeechAnalyzer API, but with a far more stable
+/// API and broader OS support.
+///
+/// Continuous dictation across pauses: SFSpeechRecognizer finalizes a segment after a pause and
+/// then starts a NEW segment whose transcript begins from scratch — which would overwrite what
+/// you already said. We avoid that by accumulating each finalized segment into `committedText`
+/// and restarting recognition, so the box shows `committedText + current segment`.
+@MainActor
+final class SpeechDictator: ObservableObject {
+    @Published private(set) var isRecording = false
+    /// Set when permission was denied, so the UI can hint the user to enable it in System Settings.
+    @Published var permissionDenied = false
+
+    private let recognizer = SFSpeechRecognizer(locale: Locale.preferredLanguages.first.map(Locale.init) ?? Locale.current)
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var onUpdate: ((String) -> Void)?
+    private var committedText = ""
+
+    /// Auto-stop after this many seconds with no new speech (so the mic doesn't listen forever).
+    private let silenceTimeout: TimeInterval = 4
+    private var silenceWork: DispatchWorkItem?
+
+    private func bumpSilenceTimer() {
+        silenceWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.stop() }
+        silenceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + silenceTimeout, execute: work)
+    }
+
+    /// Toggle dictation. `onUpdate` is called on the main actor with the running transcript.
+    func toggle(onUpdate: @escaping (String) -> Void) {
+        if isRecording { stop() } else { start(onUpdate: onUpdate) }
+    }
+
+    func start(onUpdate: @escaping (String) -> Void) {
+        guard !isRecording else { return }
+        self.onUpdate = onUpdate
+        permissionDenied = false
+
+        SFSpeechRecognizer.requestAuthorization { [weak self] auth in
+            Task { @MainActor in
+                guard let self else { return }
+                guard auth == .authorized else { self.permissionDenied = true; return }
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    Task { @MainActor in
+                        guard granted else { self.permissionDenied = true; return }
+                        self.beginRecording()
+                    }
+                }
+            }
+        }
+    }
+
+    private func beginRecording() {
+        guard let recognizer, recognizer.isAvailable else { permissionDenied = true; return }
+        committedText = ""
+
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        input.removeTap(onBus: 0)
+        // Feed audio to whichever request is current (it gets swapped on each segment restart).
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            self?.request?.append(buffer)
+        }
+
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            chorusLog.notice("[Chorus.Speech] engine start failed: \(error.localizedDescription, privacy: .public)")
+            cleanup()
+            return
+        }
+
+        isRecording = true
+        bumpSilenceTimer()   // auto-stop if they never speak
+        startSegment()
+    }
+
+    /// Start (or restart) a recognition task. Called once at begin and again after each segment
+    /// is finalized, so dictation continues across pauses without losing earlier text.
+    private func startSegment() {
+        guard let recognizer, isRecording else { return }
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        req.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+        request = req
+
+        task = recognizer.recognitionTask(with: req) { [weak self] result, error in
+            Task { @MainActor in
+                guard let self, self.isRecording else { return }
+                if let result {
+                    self.bumpSilenceTimer()   // speech detected → push back the auto-stop
+                    let live = result.bestTranscription.formattedString
+                    self.onUpdate?(self.committedText + live)
+                    if result.isFinal {
+                        if !live.isEmpty { self.committedText += live + " " }
+                        self.request = nil
+                        self.task = nil
+                        self.startSegment()   // continue listening for the next sentence
+                    }
+                } else if error != nil {
+                    // Don't tight-loop on errors: commit what we have and stop cleanly.
+                    self.stop()
+                }
+            }
+        }
+    }
+
+    func stop() {
+        guard isRecording else { cleanup(); return }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        task?.cancel()
+        cleanup()
+    }
+
+    private func cleanup() {
+        silenceWork?.cancel()
+        silenceWork = nil
+        request = nil
+        task = nil
+        isRecording = false
+    }
+}
