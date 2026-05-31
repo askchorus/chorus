@@ -706,6 +706,17 @@ enum Broadcaster {
             // refresh). A net-zero 0.1px scroll wasn't enough; this also fires a resize event
             // (makes the virtual list re-evaluate visibility) and, when the user is already near
             // the bottom, scrolls fully down so the latest message renders into view.
+            // Keep the view pinned to the streaming response — but only if the user is already
+            // near the bottom, so we never yank them while they scroll up to read history. Fixes
+            // panels (Claude especially) that don't auto-follow their own stream in WKWebView.
+            const followBottom = () => {
+              document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
+                if (el.scrollHeight > el.clientHeight + 4 &&
+                    el.scrollHeight - el.clientHeight - el.scrollTop < 140) {
+                  el.scrollTop = el.scrollHeight;
+                }
+              });
+            };
             const geminiRepaint = () => {
               try { window.dispatchEvent(new Event('resize')); } catch (_) {}
               document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
@@ -727,7 +738,7 @@ enum Broadcaster {
                 const sx = window.scrollX, sy = window.scrollY;
                 window.scrollTo(sx, sy + 0.1);
                 window.scrollTo(sx, sy);
-                if (isGemini) geminiRepaint();
+                if (isGemini) geminiRepaint(); else followBottom();
               } catch (_) {}
             };
 
@@ -934,6 +945,18 @@ enum Broadcaster {
           };
           const streaming = isGemini ? deepHit : lightHit;
 
+          // Keep the view pinned to the streaming response (only when already near the bottom,
+          // so scrolling up to read history isn't disturbed). Fixes panels like Claude that
+          // don't auto-follow their own stream in WKWebView.
+          const followBottom = () => {
+            document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
+              if (el.scrollHeight > el.clientHeight + 4 &&
+                  el.scrollHeight - el.clientHeight - el.scrollTop < 140) {
+                el.scrollTop = el.scrollHeight;
+              }
+            });
+          };
+
           // Gemini generates responses but sometimes never PAINTS them (virtualized /
           // IntersectionObserver renderer stalls) — you see nothing until a manual refresh.
           // Force a repaint: fire resize + (if near the bottom) scroll fully down so the latest
@@ -987,6 +1010,7 @@ enum Broadcaster {
             const now = streaming();
             if (now) {
               if (isGemini) paintUntil = Date.now() + 6000;  // keep repainting through the stream
+              else followBottom();                            // other panels: just follow the stream
               if (confirm) { clearTimeout(confirm); confirm = null; }
               if (!was) { was = true; post({ host: location.hostname, diagnostic: 'streaming-started' }); }
             } else {
