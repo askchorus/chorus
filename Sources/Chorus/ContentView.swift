@@ -570,6 +570,7 @@ struct ContentView: View {
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
     @AppStorage("appearance") private var appearance: String = "system"
+    @AppStorage("minimalMode") private var minimalMode: Bool = false
     @Environment(\.colorScheme) private var colorScheme
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
@@ -796,7 +797,8 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 10) {
                 composerMenu
 
-                TextField(L("composer.placeholder"), text: $prompt, axis: .vertical)
+                TextField(minimalMode ? "" : L("composer.placeholder"),
+                          text: $prompt, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .focused($promptFocused)

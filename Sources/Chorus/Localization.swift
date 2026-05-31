@@ -55,8 +55,8 @@ let L10nTable: [String: [String: String]] = [
 
     // MARK: Quick input
     "quick.placeholder": [
-        "zh": "一次问所有 AI…   （单个词自动查词 · /? 看帮助）",
-        "en": "Ask all AIs at once…   (single word auto-looks up · /? for help)",
+        "zh": "问所有 AI…",
+        "en": "Ask all AIs…",
     ],
     "quick.pronounce": ["zh": "朗读  (⌘L)", "en": "Pronounce  (⌘L)"],
     "quick.mic": ["zh": "语音输入", "en": "Voice input"],
@@ -89,6 +89,13 @@ let L10nTable: [String: [String: String]] = [
     "settings.menubar.desc": [
         "zh": "在菜单栏常驻图标：显示是否有 AI 正在回答，点开可快速新建对话/刷新/打开主窗。开启时，关掉主窗 app 仍留在菜单栏；关闭后，关掉窗口即退出。",
         "en": "Keep an icon in the menu bar: shows whether any AI is responding, with quick actions. When on, closing the window keeps the app alive in the menu bar; when off, closing the window quits.",
+    ],
+
+    // MARK: Settings — minimal mode
+    "settings.minimalMode": ["zh": "简洁模式", "en": "Minimal mode"],
+    "settings.minimalMode.desc": [
+        "zh": "隐藏输入框里的快捷键提示和设置项的说明文字，界面更清爽。",
+        "en": "Hide input shortcut hints and the description text under settings for a cleaner look.",
     ],
 
     // MARK: Settings — appearance

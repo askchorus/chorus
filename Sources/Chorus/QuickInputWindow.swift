@@ -97,12 +97,26 @@ final class QuickInputWindowController {
         let newHeight = max(size.height, 50)
         let old = panel.frame
         clog("[Resize] content reported=\(Int(size.width))x\(Int(size.height)) panel current=\(Int(old.size.width))x\(Int(old.size.height))")
-        guard abs(old.size.height - newHeight) > 0.5 else { return }
+        let delta = abs(old.size.height - newHeight)
+        guard delta > 0.5 else { return }
         let centerY = old.midY
         var f = old
         f.size.height = newHeight
         f.origin.y = centerY - newHeight / 2
-        panel.setFrame(f, display: true, animate: false)
+
+        // Smoothly animate big jumps (chips / dictionary result appearing or disappearing) for a
+        // polished "grows to fit" feel. Keep small jumps (a typed line wrapping) and the initial
+        // grow-in right after summon instant, so typing stays snappy and summon isn't a wipe.
+        let justShown = Date().timeIntervalSince(lastShowAt) < 0.3
+        if delta >= 30 && !justShown {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.2
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(f, display: true)
+            }
+        } else {
+            panel.setFrame(f, display: true, animate: false)
+        }
         clog("[Resize] panel grew to \(Int(f.size.width))x\(Int(f.size.height))")
     }
 
@@ -201,6 +215,7 @@ struct QuickInputView: View {
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
+    @AppStorage("minimalMode") private var minimalMode: Bool = false
 
     // Prompt history (↑/↓ recall) browsing state.
     @State private var historyIndex: Int? = nil
@@ -210,6 +225,7 @@ struct QuickInputView: View {
     @StateObject private var dictator = SpeechDictator()
     @State private var dictationBase = ""
     @State private var micPulse = false
+    @State private var hoveredChip: String? = nil
 
     private let store = WebViewStore.shared
 
@@ -240,20 +256,20 @@ struct QuickInputView: View {
                 .padding(.top, 10)
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 13) {
                 Image(systemName: iconForCurrentInput())
-                    .font(.system(size: 18))
+                    .font(.system(size: 19))
                     .foregroundColor(.secondary)
-                    .padding(.top, 2)
+                    .padding(.top, 3)
 
                 TextField(
-                    L("quick.placeholder"),
+                    minimalMode ? "" : L("quick.placeholder"),
                     text: $prompt,
                     axis: .vertical
                 )
                 .textFieldStyle(.plain)
                 .focused($focused)
-                .font(.system(size: 18))
+                .font(.system(size: 20))
                 .lineLimit(1...5)
 
                 Button {
@@ -321,17 +337,21 @@ struct QuickInputView: View {
                         } label: {
                             Text(chip)
                                 .font(.system(size: 12))
-                                .padding(.horizontal, 10)
+                                .padding(.horizontal, 11)
                                 .padding(.vertical, 5)
                                 .background(
-                                    Capsule().fill(Color.primary.opacity(0.08))
+                                    Capsule().fill(Color.primary.opacity(hoveredChip == chip ? 0.15 : 0.07))
                                 )
                                 .overlay(
-                                    Capsule().strokeBorder(Color.primary.opacity(0.05))
+                                    Capsule().strokeBorder(Color.primary.opacity(hoveredChip == chip ? 0.12 : 0.05))
                                 )
                         }
                         .buttonStyle(.plain)
                         .help(Lf("quick.chipHelp", chip))
+                        .onHover { hovering in
+                            hoveredChip = hovering ? chip : (hoveredChip == chip ? nil : hoveredChip)
+                        }
+                        .animation(.easeOut(duration: 0.12), value: hoveredChip)
                     }
                     Spacer()
                 }
@@ -374,12 +394,20 @@ struct QuickInputView: View {
             }
         }
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.primary.opacity(0.08))
+            // Glass edge: a top-lit gradient stroke (bright at the top, fading down) reads as a
+            // lit pane of glass — the core of the Raycast/Tahoe "premium" feel vs a flat hairline.
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.05)],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
         )
-        .padding(6)
+        .padding(8)
         .frame(width: 640)
         .background(
             GeometryReader { geo in
@@ -553,6 +581,7 @@ struct QuickInputView: View {
         case .broadcast:  return isAutoDictionary ? "book.closed" : "sparkles"
         }
     }
+
 
     private func installMonitors() {
         guard pasteMonitor == nil else { return }

@@ -16,6 +16,17 @@ struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguage: String = "system"
     @AppStorage("appearance") private var appearance: String = "system"
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
+    @AppStorage("minimalMode") private var minimalMode: Bool = false
+
+    /// A settings description caption — hidden in Minimal mode.
+    @ViewBuilder private func hint(_ key: String) -> some View {
+        if !minimalMode {
+            Text(L(key))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.vertical, 3)
+        }
+    }
 
     @State private var newProviderName: String = ""
     @State private var newProviderURL: String = ""
@@ -64,19 +75,17 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Text(L("settings.appearance.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                hint("settings.appearance.desc")
+
+                Toggle(L("settings.minimalMode"), isOn: $minimalMode)
                     .padding(.vertical, 2)
+                hint("settings.minimalMode.desc")
             }
 
             Section(L("settings.section.menubar")) {
                 Toggle(L("settings.menubar.show"), isOn: $showMenuBarIcon)
                     .padding(.vertical, 2)
-                Text(L("settings.menubar.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 2)
+                hint("settings.menubar.desc")
             }
 
             Section(L("settings.section.quickInput")) {
@@ -96,24 +105,15 @@ struct SettingsView: View {
                 Toggle(L("settings.autoPaste"), isOn: $autoPasteOnSummon)
                     .padding(.vertical, 2)
 
-                Text(L("settings.quickInput.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 4)
+                hint("settings.quickInput.desc")
             }
 
             Section(L("settings.section.providers")) {
                 Toggle(L("settings.restoreSession"), isOn: $restoreSession)
                     .padding(.vertical, 2)
-                Text(L("settings.restoreSession.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.bottom, 4)
+                hint("settings.restoreSession.desc")
 
-                Text(L("settings.providers.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 2)
+                hint("settings.providers.desc")
 
                 ForEach(allProviders) { p in
                     HStack(spacing: 8) {
@@ -197,18 +197,17 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Text(L("settings.notify.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 4)
+                hint("settings.notify.desc")
 
                 HStack {
                     Button(L("settings.notify.test")) {
                         CompletionNotifier.shared.sendTestNotification()
                     }
-                    Text(L("settings.notify.testDesc"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if !minimalMode {
+                        Text(L("settings.notify.testDesc"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .padding(.vertical, 2)
 
@@ -223,17 +222,11 @@ struct SettingsView: View {
                         .padding(.leading, 4)
                 }
 
-                Text(L("settings.notify.waitDesc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 4)
+                hint("settings.notify.waitDesc")
             }
 
             Section(L("settings.section.quickPrompts")) {
-                Text(L("settings.prompts.desc"))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 2)
+                hint("settings.prompts.desc")
 
                 ChipListEditor(title: L("settings.prompts.textChips"),
                                raw: $textChipsRaw,
