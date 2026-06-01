@@ -343,13 +343,14 @@ enum WebViewFactory {
         // Private API; raises no warning at compile time; only safe outside Mac App Store.
         disableWindowOcclusionDetection(webView)
 
-        // Chrome UA ONLY for Google services (they ship a heavy legacy bundle to non-Chrome UAs).
-        // Everyone else gets the real Safari UA — critical for ChatGPT: a Chrome UA on the WebKit
-        // engine is a fingerprint mismatch that Cloudflare flags as a bot → endless "verify you
-        // are human" loop. Native WebKit + Safari UA matches, so the challenge passes.
-        let host = url.host ?? ""
-        let isGoogleService = host.contains("google.com") || host.contains("gemini")
-        webView.customUserAgent = isGoogleService ? chromeUA : safariUA
+        // EVERYONE gets the real Safari UA now, including Google. A Chrome UA on the WebKit
+        // engine is a fingerprint MISMATCH (claims AppleWebKit/537.36 + Chrome but the engine is
+        // WebKit 605): Cloudflare flags it as a bot (ChatGPT "verify you are human" loop) and —
+        // the reason for this change — Google's sign-in flags it as "此浏览器或应用可能不安全 /
+        // this browser or app may not be secure" and BLOCKS login. An authentic Safari UA matches
+        // the engine, so sign-in is far more likely to be allowed. (We lose the ~30–40% chance of
+        // Google serving Gemini its Chrome-optimized bundle, but being able to log in wins.)
+        webView.customUserAgent = safariUA
 
         if #available(macOS 13.3, *) {
             webView.isInspectable = true
@@ -778,13 +779,48 @@ enum Broadcaster {
             // Keep the view pinned to the streaming response — but only if the user is already
             // near the bottom, so we never yank them while they scroll up to read history. Fixes
             // panels (Claude especially) that don't auto-follow their own stream in WKWebView.
-            const followBottom = () => {
+            const followBottom = (thresh) => {
+              const limit = thresh || 140;   // generous limit at completion catches a chunky stream
               document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
                 if (el.scrollHeight > el.clientHeight + 4 &&
-                    el.scrollHeight - el.clientHeight - el.scrollTop < 140) {
+                    el.scrollHeight - el.clientHeight - el.scrollTop < limit) {
                   el.scrollTop = el.scrollHeight;
                 }
               });
+            };
+            // Robust "jump to the very end", used at completion. Class-name matching misses
+            // Claude (obfuscated classes), so find the LARGEST genuinely-scrollable element and
+            // pin it to the bottom. Run a few times because Claude keeps rendering markdown for
+            // a beat after the stop button disappears (so the height is still growing).
+            const scrollToEnd = () => {
+              try {
+                let best = null, bestArea = 0;
+                document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
+                  if (el.scrollHeight <= el.clientHeight + 40) return;
+                  const oy = getComputedStyle(el).overflowY;
+                  if (oy !== 'auto' && oy !== 'scroll') return;
+                  const area = el.clientWidth * el.clientHeight;
+                  if (area > bestArea) { bestArea = area; best = el; }
+                });
+                if (best) best.scrollTop = best.scrollHeight;
+                const se = document.scrollingElement || document.body;
+                if (se) window.scrollTo(0, se.scrollHeight);
+              } catch (_) {}
+            };
+            const scrollToEndRepeated = () => { scrollToEnd(); setTimeout(scrollToEnd, 250); setTimeout(scrollToEnd, 700); };
+            // On completion, prefer landing at the START of the latest answer (read it from the
+            // top) over the very bottom: put the user's last message at the top, answer below it.
+            const scrollLatestAnswerTop = () => {
+              try {
+                const ums = document.querySelectorAll('[data-message-author-role="user"], [data-testid="user-message"], [data-testid="human-turn"]');
+                const last = ums[ums.length - 1];
+                if (last) { last.scrollIntoView({ block: 'start', behavior: 'auto' }); return true; }
+              } catch (_) {}
+              return false;   // couldn't locate the turn → caller falls back to bottom
+            };
+            const scrollOnComplete = () => {
+              const go = () => { if (!scrollLatestAnswerTop()) scrollToEnd(); };
+              go(); setTimeout(go, 300); setTimeout(go, 800);   // retries catch post-stream re-render
             };
             const geminiRepaint = () => {
               try { window.dispatchEvent(new Event('resize')); } catch (_) {}
@@ -936,6 +972,8 @@ enum Broadcaster {
                 idleTicks++;
                 if (idleTicks >= 2) {
                   clearInterval(interval); window.__chorusPoll = null;
+                  // Response finished — land at the start of the latest answer (fallback: bottom).
+                  if (!isGemini) scrollOnComplete();
                   try {
                     window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
                       host: location.hostname
@@ -1017,13 +1055,45 @@ enum Broadcaster {
           // Keep the view pinned to the streaming response (only when already near the bottom,
           // so scrolling up to read history isn't disturbed). Fixes panels like Claude that
           // don't auto-follow their own stream in WKWebView.
-          const followBottom = () => {
+          const followBottom = (thresh) => {
+            const limit = thresh || 140;   // generous limit at completion catches a chunky stream
             document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
               if (el.scrollHeight > el.clientHeight + 4 &&
-                  el.scrollHeight - el.clientHeight - el.scrollTop < 140) {
+                  el.scrollHeight - el.clientHeight - el.scrollTop < limit) {
                 el.scrollTop = el.scrollHeight;
               }
             });
+          };
+          // Robust jump-to-end for completion (Claude's scroll container has obfuscated classes,
+          // so find the largest genuinely-scrollable element); repeated to catch post-stream render.
+          const scrollToEnd = () => {
+            try {
+              let best = null, bestArea = 0;
+              document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
+                if (el.scrollHeight <= el.clientHeight + 40) return;
+                const oy = getComputedStyle(el).overflowY;
+                if (oy !== 'auto' && oy !== 'scroll') return;
+                const area = el.clientWidth * el.clientHeight;
+                if (area > bestArea) { bestArea = area; best = el; }
+              });
+              if (best) best.scrollTop = best.scrollHeight;
+              const se = document.scrollingElement || document.body;
+              if (se) window.scrollTo(0, se.scrollHeight);
+            } catch (_) {}
+          };
+          const scrollToEndRepeated = () => { scrollToEnd(); setTimeout(scrollToEnd, 250); setTimeout(scrollToEnd, 700); };
+          // On completion, prefer landing at the START of the latest answer over the bottom.
+          const scrollLatestAnswerTop = () => {
+            try {
+              const ums = document.querySelectorAll('[data-message-author-role="user"], [data-testid="user-message"], [data-testid="human-turn"]');
+              const last = ums[ums.length - 1];
+              if (last) { last.scrollIntoView({ block: 'start', behavior: 'auto' }); return true; }
+            } catch (_) {}
+            return false;
+          };
+          const scrollOnComplete = () => {
+            const go = () => { if (!scrollLatestAnswerTop()) scrollToEnd(); };
+            go(); setTimeout(go, 300); setTimeout(go, 800);
           };
 
           // Gemini generates responses but sometimes never PAINTS them (virtualized /
@@ -1087,7 +1157,11 @@ enum Broadcaster {
                 // Stop button gone — wait 700ms and re-check before declaring done (flicker guard).
                 confirm = setTimeout(() => {
                   confirm = null;
-                  if (!window.__chorusPoll && !streaming()) { was = false; post({ host: location.hostname }); }
+                  if (!window.__chorusPoll && !streaming()) {
+                    was = false;
+                    if (!isGemini) scrollOnComplete();   // land at the start of the finished answer
+                    post({ host: location.hostname });
+                  }
                 }, 700);
               }
               maybeAutoRetry();  // errors appear after streaming stops — only scan when idle

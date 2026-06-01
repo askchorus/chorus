@@ -12,6 +12,8 @@ final class WebViewStore: ObservableObject {
     static let shared = WebViewStore()
 
     private var cache: [String: WKWebView] = [:]
+    /// KVO tokens for each webview's `.url`, so SPA conversation switches get recorded for restore.
+    private var urlObservers: [String: NSKeyValueObservation] = [:]
 
     /// Provider keys currently streaming a response — drives the per-panel "thinking" dot.
     @Published private(set) var streamingKeys: Set<String> = []
@@ -85,6 +87,13 @@ final class WebViewStore: ObservableObject {
         let initialURL = restore ? (savedSessionURL(for: key) ?? url) : url
         let webView = WebViewFactory.make(url: initialURL)
         cache[key] = webView
+        // Record the conversation URL whenever it changes. `didFinish` only fires on full
+        // navigations, so in-app conversation switches done as SPA history.pushState (Gemini,
+        // Claude, ChatGPT) were never captured — the saved session stayed on the initial page
+        // and "reopen last chat" landed on a new chat. KVO on `.url` sees pushState too.
+        urlObservers[key] = webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
+            self?.recordSessionURL(for: wv)
+        }
         return webView
     }
 

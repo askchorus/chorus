@@ -197,6 +197,54 @@ private struct ContentSizeKey: PreferenceKey {
     }
 }
 
+/// Natural height of the definition text, measured by an off-screen twin (see the dictionary
+/// hit view) so we can size the scroll area to the content, capped — neither cramped nor giant.
+private struct DefHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// The scrollable, height-capped dictionary definition. Pulled into its OWN View on purpose:
+/// SwiftUI then re-renders it only when the definition `text` changes — not on every keystroke
+/// in the prompt above it. Inlined in the parent body, the off-screen measuring twin re-laid-out
+/// the whole (long) definition on every key, which is what stuttered typing/deleting.
+private struct DictDefinitionView: View {
+    let text: String
+    @State private var defHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView(.vertical) {
+            Text(text)
+                .font(.system(size: 14))
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        // Height = natural content height, capped at 340 (off-screen twin measures it).
+        .frame(height: min(max(defHeight, 56), 340))
+        .background(
+            Text(text)
+                .font(.system(size: 14))
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: DefHeightKey.self, value: g.size.height)
+                })
+                .hidden()
+                .allowsHitTesting(false)
+        )
+        .onPreferenceChange(DefHeightKey.self) { defHeight = $0 }
+    }
+}
+
 struct QuickInputView: View {
     let onSubmitCompleted: () -> Void
     let onDismiss: () -> Void
@@ -208,7 +256,10 @@ struct QuickInputView: View {
     @State private var keyMonitor: Any? = nil
     @State private var commandResult: String? = nil      // inline preview (definition / help)
     @State private var isAutoDictionary: Bool = false    // true when current prompt produced a dict hit
+    @State private var aiFallbackWord: String? = nil     // non-nil → show the "not in dictionaries" clickable actions
+    @State private var hoveredFallback: String? = nil    // which fallback action row is hovered
     @State private var lookupTask: Task<Void, Never>? = nil   // cancels stale online lookups when prompt changes
+    @State private var commandUpdateTask: Task<Void, Never>? = nil  // debounces lookups so fast typing/deleting stays smooth
     @FocusState private var focused: Bool
 
     // User-customizable quick-prompt chips (edited in Settings → Quick Prompts).
@@ -360,37 +411,38 @@ struct QuickInputView: View {
             }
 
             // Result area — only shown when a command produced output.
-            if let result = commandResult, !result.isEmpty {
+            if isAutoDictionary, let result = commandResult, !result.isEmpty {
+                // Dictionary / Wikipedia HIT. Long entries (e.g. "take") used to grow the panel
+                // to full-screen height — cap it and make it scroll. The action footer is still
+                // offered so you can ask all AIs / Google the word even when a definition shows.
                 Divider()
                 ZStack(alignment: .topTrailing) {
-                    Text(result)
-                        .font(.system(size: 14))
-                        .lineSpacing(4)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 14)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    // Speaker button — only for dictionary hits, plays the looked-up word via TTS
-                    if isAutoDictionary {
-                        Button {
-                            speakCurrentWord()
-                        } label: {
-                            Image(systemName: "speaker.wave.2.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(.secondary)
-                                .padding(8)
-                                .background(
-                                    Circle().fill(Color.primary.opacity(0.06))
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .help(L("quick.pronounce"))
-                        .padding(.trailing, 12)
-                        .padding(.top, 10)
-                    }
+                    DictDefinitionView(text: result)   // own View → not re-laid-out on every keystroke
+                    speakerButton
                 }
+                actionFooter
+            } else if let word = aiFallbackWord {
+                // Dictionary MISS: short message + the same action footer.
+                Divider()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("“\(word)” isn't in your dictionaries.")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 12)
+                    actionFooter
+                }
+            } else if let result = commandResult, !result.isEmpty {
+                // Other inline output (e.g. help text): plain, no footer.
+                Divider()
+                Text(result)
+                    .font(.system(size: 14))
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .background(
@@ -429,7 +481,14 @@ struct QuickInputView: View {
             onSizeChange(size)
         }
         .onChange(of: prompt) { _ in
-            updateCommandResult()
+            // Debounce: don't run the dictionary lookup on every keystroke (it stutters fast
+            // typing / deleting and the IME commit). Wait ~150ms after the last change.
+            commandUpdateTask?.cancel()
+            commandUpdateTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                if Task.isCancelled { return }
+                updateCommandResult()
+            }
         }
         .onAppear {
             focused = true
@@ -493,8 +552,26 @@ struct QuickInputView: View {
             prompt = ""
             attachedImage = nil
             commandResult = nil
+            aiFallbackWord = nil
             onSubmitCompleted()
         }
+    }
+
+    /// Broadcast the current prompt to all AIs regardless of whether a dictionary entry is
+    /// showing (plain Enter dismisses on a dict hit; the footer's "Ask all AIs" / ⌘↩ uses this
+    /// so you can always send the word to the AIs).
+    private func broadcastCurrent() {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || attachedImage != nil else { return }
+        store.broadcast(text: text, image: attachedImage, source: .quickInput)
+        PromptHistory.add(text)
+        historyIndex = nil
+        prompt = ""
+        attachedImage = nil
+        commandResult = nil
+        aiFallbackWord = nil
+        isAutoDictionary = false
+        onSubmitCompleted()
     }
 
     /// Update the inline result preview based on what's currently in the prompt.
@@ -505,6 +582,7 @@ struct QuickInputView: View {
         // Always cancel any pending online lookup when prompt changes
         lookupTask?.cancel()
         lookupTask = nil
+        aiFallbackWord = nil   // cleared here; re-set only on a confirmed dictionary miss below
 
         switch CommandRouter.route(prompt) {
         case .help:
@@ -519,56 +597,125 @@ struct QuickInputView: View {
                 return
             }
 
-            // 1. Local macOS Dictionary first — instant
-            if let def = dictionaryDefinition(of: candidate) {
-                commandResult = def
-                isAutoDictionary = true
-                Task { await WordSpeaker.shared.prefetchAudio(for: candidate) }
-                return
-            }
+            // All lookups run OFF the main thread. DCSCopyTextDefinition is synchronous and
+            // blocks; running it inline on every keystroke is what stuttered typing/deleting and
+            // the IME commit. Local DCS first (detached), then English misses → online (API + Wiki).
+            let target = candidate
+            lookupTask = Task {
+                let localDef = await Task.detached(priority: .userInitiated) {
+                    dictionaryDefinition(of: target)
+                }.value
+                if Task.isCancelled { return }
+                guard stillCurrent(target) else { return }
 
-            // 2. English word + local miss → try Free Dictionary API and Wikipedia
-            //    in PARALLEL. Whichever returns first wins. If both miss, show hint.
-            if isLikelyEnglishWord(candidate) {
-                commandResult = nil
-                isAutoDictionary = false
-                let target = candidate
-                lookupTask = Task {
-                    async let api = OnlineDictionary.shared.lookup(target)
-                    async let wiki = WikipediaSummary.shared.lookup(target)
-                    let (apiResult, wikiResult) = await (api, wiki)
-                    if Task.isCancelled { return }
-                    let current = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard current.caseInsensitiveCompare(target) == .orderedSame else { return }
-
-                    if let apiResult = apiResult {
-                        commandResult = apiResult.formatted
-                        isAutoDictionary = true
-                    } else if let wikiResult = wikiResult {
-                        commandResult = wikiResult
-                        isAutoDictionary = true   // Enter dismisses; Wikipedia is "content to read"
-                    } else {
-                        commandResult = aiFallbackHint(for: target)
-                        isAutoDictionary = false
-                    }
+                if let def = localDef {
+                    commandResult = def
+                    isAutoDictionary = true
+                    aiFallbackWord = nil
+                    Task { await WordSpeaker.shared.prefetchAudio(for: target) }
+                    return
                 }
-                return
-            }
 
-            // 3. Non-English (Chinese / Japanese / etc.) miss: hint immediately.
-            commandResult = aiFallbackHint(for: candidate)
-            isAutoDictionary = false
+                guard isLikelyEnglishWord(target) else {
+                    // Non-English (Chinese / Japanese / …) miss → AI / Google fallback.
+                    commandResult = nil
+                    aiFallbackWord = target
+                    isAutoDictionary = false
+                    return
+                }
+
+                // English word + local miss → Free Dictionary API and Wikipedia in parallel.
+                async let api = OnlineDictionary.shared.lookup(target)
+                async let wiki = WikipediaSummary.shared.lookup(target)
+                let (apiResult, wikiResult) = await (api, wiki)
+                if Task.isCancelled { return }
+                guard stillCurrent(target) else { return }
+
+                if let apiResult = apiResult {
+                    commandResult = apiResult.formatted
+                    isAutoDictionary = true
+                    aiFallbackWord = nil
+                } else if let wikiResult = wikiResult {
+                    commandResult = wikiResult
+                    isAutoDictionary = true   // Enter dismisses; Wikipedia is "content to read"
+                    aiFallbackWord = nil
+                } else {
+                    commandResult = nil
+                    aiFallbackWord = target
+                    isAutoDictionary = false
+                }
+            }
         }
     }
 
-    /// One-line hint shown when neither local nor online dictionary has the word.
-    private func aiFallbackHint(for word: String) -> String {
-        """
-        “\(word)” isn't in your dictionaries.
+    /// True if the prompt still equals `target` (case-insensitively) — guards against a stale
+    /// async lookup overwriting the result after the user has typed something else.
+    private func stillCurrent(_ target: String) -> Bool {
+        prompt.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(target) == .orderedSame
+    }
 
-        ↩    Enter to ask all AIs
-        ⌘B  Open Google search in your browser
-        """
+    /// Speaker button for dictionary hits — plays the looked-up word via TTS.
+    private var speakerButton: some View {
+        Button { speakCurrentWord() } label: {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+                .padding(8)
+                .background(Circle().fill(Color.primary.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+        .help(L("quick.pronounce"))
+        .padding(.trailing, 12)
+        .padding(.top, 10)
+    }
+
+    /// Shared action footer shown under the dictionary preview in BOTH the hit and miss cases:
+    /// "Ask all AIs" and "Google search" as clickable hover-highlight rows (mouse-friendly).
+    /// ⌘↩ / ⌘B trigger them from the keyboard too — ⌘↩ rather than plain Enter because on a
+    /// dictionary HIT plain Enter means "done reading, dismiss".
+    private var actionFooter: some View {
+        VStack(spacing: 2) {
+            Divider().padding(.horizontal, 10).padding(.bottom, 4)
+            fallbackRow(id: "ask", cap: "⌘↩", label: "Ask all AIs") {
+                broadcastCurrent()
+            }
+            fallbackRow(id: "google", cap: "⌘B", label: "Open Google search in your browser") {
+                openGoogleSearch(prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+                onDismiss()
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 10)
+    }
+
+    /// One clickable action row in the dictionary-miss view: a key-cap chip + label, with a
+    /// soft hover highlight. `contentShape` makes the whole row hit-testable.
+    private func fallbackRow(id: String, cap: String, label: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Text(cap)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundColor(.secondary)
+                .frame(minWidth: 26)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 6)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06)))
+            Text(label)
+                .font(.system(size: 14))
+                .foregroundColor(.primary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(hoveredFallback == id ? Color.primary.opacity(0.07) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { hoveredFallback = id }
+            else if hoveredFallback == id { hoveredFallback = nil }
+        }
+        .onTapGesture(perform: action)
     }
 
     /// Speak the currently looked-up word via macOS TTS.
@@ -636,6 +783,21 @@ struct QuickInputView: View {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard panelIsKey() else { return event }
 
+            // IME GUARD (must be first): while an input method is composing — e.g. typing
+            // English/pinyin through a Chinese IME, with marked (underlined) text and a candidate
+            // window open — the input method owns the keys: arrows navigate candidates, Enter
+            // commits. If ANY handler below intercepts them, the composition freezes mid-word
+            // (the reported "卡住" when hitting Enter to commit English via a Chinese IME). So
+            // pass every key straight through until the text is actually committed.
+            //
+            // Detection: the firstResponder is usually the field editor (an NSTextView), but in
+            // some SwiftUI/NSPanel setups it's reported as the NSTextField — so also consult the
+            // window's shared field editor directly. Either reporting marked text == composing.
+            let kw = NSApp.keyWindow
+            let composing = ((kw?.firstResponder as? NSTextInputClient)?.hasMarkedText() == true)
+                || ((kw?.fieldEditor(false, for: nil) as? NSTextView)?.hasMarkedText() == true)
+            if composing { return event }
+
             // Prompt history recall: ↑ at text start, ↓ at text end (otherwise move the caret).
             if event.keyCode == 126 {  // up arrow → older
                 guard caretAtTextStart(),
@@ -665,6 +827,14 @@ struct QuickInputView: View {
                event.charactersIgnoringModifiers?.lowercased() == "l",
                isAutoDictionary {
                 Task { @MainActor in speakCurrentWord() }
+                return nil
+            }
+
+            // Cmd+Return → broadcast to all AIs even when a dictionary entry is showing (plain
+            // Enter dismisses on a dict hit). Mirrors the footer's "Ask all AIs" row.
+            if event.modifierFlags.contains(.command),
+               event.keyCode == UInt16(kVK_Return) {
+                Task { @MainActor in broadcastCurrent() }
                 return nil
             }
 
