@@ -133,6 +133,36 @@ final class WebViewStore: ObservableObject {
         cache[key]?.reload()
     }
 
+    /// Live-checks whether ANY of `keys` still shows a stop button — i.e. is still generating
+    /// or thinking right now. Async; `completion` runs on the main actor. Ground truth (queries
+    /// the live DOM), used by the completion safety net so it won't declare "done" mid-thought.
+    func anyBusy(_ keys: Set<String>, completion: @escaping (Bool) -> Void) {
+        let webviews = keys.compactMap { cache[$0] }
+        guard !webviews.isEmpty else { completion(false); return }
+        let group = DispatchGroup()
+        var busy = false
+        for wv in webviews {
+            group.enter()
+            wv.evaluateJavaScript(Broadcaster.busyCheckScript()) { result, _ in
+                if (result as? Bool) == true { busy = true }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { completion(busy) }
+    }
+
+    /// Add/remove the cosmetic cream tint on every live panel — lets the Settings toggle
+    /// apply instantly without a reload. New page loads pick it up via the injected
+    /// user script (see WebViewFactory.make), which is added/skipped per the same setting;
+    /// existing webviews keep their old user-script set until reload, so we drive those
+    /// directly here.
+    func setWarmTint(_ on: Bool) {
+        let js = on ? Broadcaster.warmTintAddJS : Broadcaster.warmTintRemoveJS
+        for (_, webView) in cache {
+            webView.evaluateJavaScript(js, completionHandler: nil)
+        }
+    }
+
     /// A "fresh start" URL for a provider — its new-chat page for built-ins, else its base URL.
     private func freshURL(forKey key: String) -> URL? {
         let builtinNew: [String: String] = [
@@ -331,9 +361,24 @@ final class WebViewStore: ObservableObject {
             let quiet = Date().timeIntervalSince(batch.lastActivityAt) >= grace - 1
             let madeProgress = batch.pendingKeys.count < batch.totalCount
             guard quiet, madeProgress else { return }
-            self.pendingBatches.removeValue(forKey: batchID)
-            clog("batch \(batchID.uuidString.prefix(8)) fallback-fired — undetected completion for \(batch.pendingKeys)")
-            CompletionNotifier.shared.handleBatchComplete(source: batch.source)
+            // Before declaring "all done", live-check the still-pending AIs. If any still shows a
+            // stop button it's still generating OR THINKING (Claude's extended reasoning keeps the
+            // stop button up and can outlast the 75s grace, while lastActivityAt only advances on
+            // completions — so the batch looked "quiet" though Claude was still working). Don't
+            // notify; re-arm a shorter recheck so we fire promptly once it truly stops. This is
+            // the fix for "notified complete while an AI was still Thinking".
+            self.anyBusy(batch.pendingKeys) { busy in
+                guard self.pendingBatches[batchID] != nil else { return }  // completed meanwhile
+                if busy {
+                    self.pendingBatches[batchID]?.lastActivityAt = Date()
+                    clog("batch \(batchID.uuidString.prefix(8)) fallback deferred — still thinking: \(batch.pendingKeys)")
+                    self.scheduleBatchFallback(batchID: batchID, grace: 15)
+                    return
+                }
+                self.pendingBatches.removeValue(forKey: batchID)
+                clog("batch \(batchID.uuidString.prefix(8)) fallback-fired — undetected completion for \(batch.pendingKeys)")
+                CompletionNotifier.shared.handleBatchComplete(source: batch.source)
+            }
         }
     }
 
@@ -470,9 +515,10 @@ enum ChorusTheme {
                          Color(red: 0.08, green: 0.08, blue: 0.09)],
                 startPoint: .top, endPoint: .bottom)
         } else {
+            // Warm cream "paper" — matches the icon's vibe, not a cold gray.
             return LinearGradient(
-                colors: [Color(red: 0.93, green: 0.93, blue: 0.945),
-                         Color(red: 0.87, green: 0.87, blue: 0.89)],
+                colors: [Color(red: 0.965, green: 0.945, blue: 0.905),
+                         Color(red: 0.925, green: 0.895, blue: 0.840)],
                 startPoint: .top, endPoint: .bottom)
         }
     }
@@ -483,8 +529,27 @@ enum ChorusTheme {
         NSColor(name: nil) { appearance in
             let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             return dark ? NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
-                        : NSColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1)
+                        : NSColor(red: 0.95, green: 0.93, blue: 0.89, alpha: 1)   // warm cream
         }
+    }
+
+    /// A CONCRETE color for the window background, resolved against the *app's* current
+    /// (possibly forced) appearance — NOT the dynamic color's `.cgColor`, which resolves
+    /// against the *system* appearance and would pick the dark branch when the system is in
+    /// dark mode even though Chorus is forced light. Used for webview backdrops where a
+    /// dynamic NSColor isn't reliably resolved (WebKit's `underPageBackgroundColor`, CALayer
+    /// backgroundColor).
+    static func windowBackgroundColor() -> NSColor {
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
+                    : NSColor(red: 0.95, green: 0.93, blue: 0.89, alpha: 1)
+    }
+    static func windowBackgroundCGColor() -> CGColor { windowBackgroundColor().cgColor }
+
+    /// Card / composer drop shadow — soft & warm-light in light mode (paper lift), deeper in dark.
+    static func cardShadow(_ scheme: ColorScheme) -> (color: Color, radius: CGFloat, y: CGFloat) {
+        scheme == .dark ? (Color.black.opacity(0.30), 9, 3)
+                        : (Color(red: 0.4, green: 0.34, blue: 0.24).opacity(0.16), 10, 4)
     }
 }
 
@@ -506,7 +571,7 @@ enum AppearanceManager {
 enum ProviderStyle {
     static func accent(key: String, host: String) -> Color {
         switch key {
-        case "chatgpt": return Color(red: 0.063, green: 0.639, blue: 0.498)  // #10A37F OpenAI green
+        case "chatgpt": return Color(red: 0.125, green: 0.129, blue: 0.137)  // #202123 OpenAI near-black (matches the current monochrome logo; the old #10A37F green is retired)
         case "claude":  return Color(red: 0.800, green: 0.471, blue: 0.361)  // #CC785C Anthropic clay
         case "gemini":  return Color(red: 0.259, green: 0.522, blue: 0.957)  // #4285F4 Google blue
         default:
@@ -565,11 +630,15 @@ struct ContentView: View {
     @State private var dictationBase = ""
     @State private var micPulse = false
 
+    // Drives the per-panel native cream cover during a removal reflow (masks WKWebView's white
+    // repaint-on-resize). Raised proactively in toggleHidden, before the reflow.
+    @State private var reflowing = false
+
     @AppStorage("providerOrder") private var providerOrderRaw: String = "chatgpt,claude,gemini"
     @AppStorage("hiddenProviders") private var hiddenProvidersRaw: String = ""
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
-    @AppStorage("appearance") private var appearance: String = "system"
+    @AppStorage("appearance") private var appearance: String = "light"
     @AppStorage("minimalMode") private var minimalMode: Bool = false
     @Environment(\.colorScheme) private var colorScheme
 
@@ -612,14 +681,24 @@ struct ContentView: View {
     private func toggleHidden(_ key: String) {
         var keys = hiddenKeys
         if keys.contains(key) {
+            // Un-hiding adds a panel → survivors only shrink, which never flashes. Apply directly.
             keys.remove(key)
+            hiddenProvidersRaw = keys.sorted().joined(separator: ",")
         } else {
             // Don't allow hiding if it would leave 0 visible panels
             let remainingVisible = orderedProviders.count - keys.count - 1
             guard remainingVisible >= 1 else { return }
             keys.insert(key)
+            let newRaw = keys.sorted().joined(separator: ",")
+            // Hiding makes survivors WIDEN → WKWebView paints that strip white for a beat. Raise
+            // the native cream cover THIS frame, then do the actual removal next runloop so the
+            // widen happens under the cover; fade the cover out after WebKit has redrawn.
+            reflowing = true
+            DispatchQueue.main.async {
+                hiddenProvidersRaw = newRaw
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { reflowing = false }
+            }
         }
-        hiddenProvidersRaw = keys.sorted().joined(separator: ",")
     }
 
     var body: some View {
@@ -675,7 +754,7 @@ struct ContentView: View {
             AccentBar(color: ProviderStyle.accent(key: p.key, host: p.url.host ?? ""),
                       active: store.streamingKeys.contains(p.key))
             slimHeader(for: p)
-            WebPanel(webView: store.getOrCreate(key: p.key, url: p.url))
+            WebPanel(webView: store.getOrCreate(key: p.key, url: p.url), reflowing: reflowing)
         }
         .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
         .overlay(
@@ -685,7 +764,9 @@ struct ContentView: View {
                     lineWidth: dropTargetKey == p.key ? 2 : 1
                 )
         )
-        .shadow(color: .black.opacity(0.30), radius: 9, x: 0, y: 3)
+        .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
+                radius: ChorusTheme.cardShadow(colorScheme).radius,
+                x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
     }
 
     /// Thin neutral status strip: a "thinking" dot, the provider name, and hover actions.
@@ -854,7 +935,9 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
                 .strokeBorder(ChorusTheme.cardBorder(colorScheme), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 2)
+        .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
+                radius: ChorusTheme.cardShadow(colorScheme).radius,
+                x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
         .onAppear {
             promptFocused = true
             installPasteMonitor()

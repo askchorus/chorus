@@ -52,6 +52,16 @@ if [ "${1:-}" = "-i" ] || [ "${1:-}" = "-r" ]; then
     cp -R "$APP_DIR" "/Applications/$APP_NAME.app"
     echo "✓ Installed: /Applications/$APP_NAME.app"
 
+    # rm+cp gives the bundle a fresh inode each time, so LaunchServices keeps serving the
+    # OLD cached icon for this path. Re-register + touch + restart the Dock so the new
+    # AppIcon shows immediately instead of "reverting" to the previous one.
+    echo "==> Refreshing icon cache..."
+    LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+    "$LSREG" -f "/Applications/$APP_NAME.app" 2>/dev/null || true
+    touch "/Applications/$APP_NAME.app" 2>/dev/null || true
+    rm -rf "$(getconf DARWIN_USER_CACHE_DIR)com.apple.iconservices.store" 2>/dev/null || true
+    killall Dock 2>/dev/null || true
+
     if [ "${1:-}" = "-r" ]; then
         echo "==> Relaunching..."
         open "/Applications/$APP_NAME.app"

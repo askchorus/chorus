@@ -23,6 +23,30 @@ let inset = 0.11
 let cx = Int(Double(W) * inset), cy = Int(Double(H) * inset)
 let cropped = full.cropping(to: CGRect(x: cx, y: cy, width: W - 2*cx, height: H - 2*cy))!
 
+// Gentle "warm white" point. The squircle fill is a near-white ~#FCF9F4; multiply the whole
+// image by these factors so it lands at ~#F9F4EC — visibly warmer than the original near-white
+// (so it harmonizes with the app's cream UI), yet far lighter than the full canvas cream
+// (#F6F1E7), so it still reads as a clean white — not a dingy/yellow tile — in the Dock. The
+// factors are ~0.97–0.99, so the dark shapes/outlines stay essentially black.
+func tintWarm(_ image: CGImage) -> CGImage {
+    let w = image.width, h = image.height
+    let bpr = w * 4
+    var buf = [UInt8](repeating: 0, count: h * bpr)
+    let c = CGContext(data: &buf, width: w, height: h, bitsPerComponent: 8, bytesPerRow: bpr,
+                      space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    c.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    let rf = 0.988, gf = 0.980, bf = 0.967
+    var i = 0
+    while i < buf.count {
+        buf[i]   = UInt8(min(255.0, (Double(buf[i])   * rf).rounded()))
+        buf[i+1] = UInt8(min(255.0, (Double(buf[i+1]) * gf).rounded()))
+        buf[i+2] = UInt8(min(255.0, (Double(buf[i+2]) * bf).rounded()))
+        i += 4   // leave alpha (buf[i+3]) untouched
+    }
+    return c.makeImage()!
+}
+let tinted = tintWarm(cropped)
+
 let sizes: [(String, Int)] = [
     ("icon_16x16.png",16), ("icon_16x16@2x.png",32),
     ("icon_32x32.png",32), ("icon_32x32@2x.png",64),
@@ -39,7 +63,7 @@ func render(_ size: Int) -> CGImage {
     ctx.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: s, height: s), cornerWidth: r, cornerHeight: r, transform: nil))
     ctx.clip()
     ctx.interpolationQuality = .high
-    ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: s, height: s))
+    ctx.draw(tinted, in: CGRect(x: 0, y: 0, width: s, height: s))
     return ctx.makeImage()!
 }
 

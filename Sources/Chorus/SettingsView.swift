@@ -14,7 +14,8 @@ struct SettingsView: View {
     @AppStorage("customProviders") private var customProvidersRaw: String = ""
     @AppStorage("restoreSession") private var restoreSession: Bool = true
     @AppStorage("appLanguage") private var appLanguage: String = "system"
-    @AppStorage("appearance") private var appearance: String = "system"
+    @AppStorage("appearance") private var appearance: String = "light"
+    @AppStorage("warmWebPages") private var warmWebPages: Bool = true
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("minimalMode") private var minimalMode: Bool = false
 
@@ -30,6 +31,15 @@ struct SettingsView: View {
 
     @State private var newProviderName: String = ""
     @State private var newProviderURL: String = ""
+
+    // API model (OpenAI-compatible) add form.
+    @AppStorage("apiProviders") private var apiProvidersRaw: String = ""
+    @State private var newAPIName: String = ""
+    @State private var newAPIBase: String = ""
+    @State private var newAPIModel: String = ""
+    @State private var newAPIKey: String = ""
+
+    private var apiProviders: [APIProvider] { APIProviderRegistry.all() }
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
     private var allProviders: [Provider] {
@@ -76,6 +86,13 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
 
                 hint("settings.appearance.desc")
+
+                Toggle(L("settings.warmWeb"), isOn: $warmWebPages)
+                    .padding(.vertical, 2)
+                    .onChange(of: warmWebPages) { on in
+                        WebViewStore.shared.setWarmTint(on)
+                    }
+                hint("settings.warmWeb.desc")
 
                 Toggle(L("settings.minimalMode"), isOn: $minimalMode)
                     .padding(.vertical, 2)
@@ -187,6 +204,74 @@ struct SettingsView: View {
                         .disabled(newProviderURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .padding(.top, 4)
+            }
+
+            Section(L("settings.section.apiModels")) {
+                hint("settings.api.desc")
+
+                ForEach(apiProviders) { p in
+                    HStack(spacing: 8) {
+                        Text(p.name).font(.system(size: 13, weight: .medium))
+                        Text(p.model.isEmpty ? (p.baseURL) : p.model)
+                            .font(.caption).foregroundColor(.secondary).lineLimit(1)
+                        Spacer()
+                        Button {
+                            APIProviderRegistry.remove(id: p.id)
+                            apiProvidersRaw = UserDefaults.standard.string(forKey: "apiProviders") ?? ""
+                        } label: { Image(systemName: "trash").foregroundColor(.secondary) }
+                            .buttonStyle(.plain)
+                            .help(Lf("settings.api.remove", p.name))
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                // One-tap presets prefill the form below.
+                Text(L("settings.api.presets")).font(.caption).foregroundColor(.secondary).padding(.top, 4)
+                FlowLayout(spacing: 8) {
+                    ForEach(APIProviderRegistry.presets, id: \.name) { preset in
+                        Button {
+                            newAPIName = preset.name
+                            newAPIBase = preset.baseURL
+                            newAPIModel = preset.model
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                                Text(preset.name).font(.system(size: 12))
+                                if !preset.needsKey {
+                                    Text(L("settings.api.local")).font(.system(size: 9)).foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill(Color.primary.opacity(0.06)))
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                        .help(preset.baseURL)
+                    }
+                }
+
+                // Add form
+                HStack(spacing: 8) {
+                    TextField(text: $newAPIName, prompt: Text(L("settings.api.name"))) { EmptyView() }
+                        .labelsHidden().textFieldStyle(.roundedBorder).frame(width: 110)
+                    TextField(text: $newAPIModel, prompt: Text(L("settings.api.model"))) { EmptyView() }
+                        .labelsHidden().textFieldStyle(.roundedBorder).frame(width: 150)
+                }
+                .padding(.top, 2)
+                TextField(text: $newAPIBase, prompt: Text("https://api.openai.com/v1")) { EmptyView() }
+                    .labelsHidden().textFieldStyle(.roundedBorder)
+                HStack(spacing: 8) {
+                    SecureField(text: $newAPIKey, prompt: Text(L("settings.api.key"))) { EmptyView() }
+                        .labelsHidden().textFieldStyle(.roundedBorder)
+                    Button(L("settings.api.add")) {
+                        if APIProviderRegistry.add(name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey) {
+                            newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""
+                            apiProvidersRaw = UserDefaults.standard.string(forKey: "apiProviders") ?? ""
+                        }
+                    }
+                    .disabled(newAPIName.trimmingCharacters(in: .whitespaces).isEmpty
+                              || newAPIBase.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
 
             Section(L("settings.section.notifications")) {

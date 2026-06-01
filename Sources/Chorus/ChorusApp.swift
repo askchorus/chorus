@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         // Apply saved appearance (System / Light / Dark) before windows show.
-        AppearanceManager.apply(UserDefaults.standard.string(forKey: "appearance") ?? "system")
+        AppearanceManager.apply(UserDefaults.standard.string(forKey: "appearance") ?? "light")
 
         antiNapToken = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .automaticTerminationDisabled],

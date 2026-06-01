@@ -226,6 +226,7 @@ struct QuickInputView: View {
     @State private var dictationBase = ""
     @State private var micPulse = false
     @State private var hoveredChip: String? = nil
+    @Environment(\.colorScheme) private var colorScheme
 
     private let store = WebViewStore.shared
 
@@ -257,8 +258,7 @@ struct QuickInputView: View {
             }
 
             HStack(alignment: .top, spacing: 13) {
-                Image(systemName: iconForCurrentInput())
-                    .font(.system(size: 19))
+                leadingIcon
                     .foregroundColor(.secondary)
                     .padding(.top, 3)
 
@@ -393,17 +393,28 @@ struct QuickInputView: View {
                 }
             }
         }
-        .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
+        .background(
+            ZStack {
+                // Dark: the classic translucent HUD. Light: a soft popover material warmed with
+                // a cream tint so it matches the paper canvas / icon instead of a cold panel.
+                VisualEffectView(material: colorScheme == .dark ? .hudWindow : .popover,
+                                 blendingMode: .behindWindow)
+                if colorScheme != .dark {
+                    Color(red: 0.965, green: 0.945, blue: 0.905).opacity(0.78)
+                }
+            }
+        )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            // Glass edge: a top-lit gradient stroke (bright at the top, fading down) reads as a
-            // lit pane of glass — the core of the Raycast/Tahoe "premium" feel vs a flat hairline.
+            // Dark: a top-lit gradient "glass edge". Light: a soft warm hairline (the white
+            // gradient would be invisible on cream).
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.05)],
-                        startPoint: .top, endPoint: .bottom
-                    ),
+                    colorScheme == .dark
+                        ? AnyShapeStyle(LinearGradient(
+                            colors: [Color.white.opacity(0.28), Color.white.opacity(0.05)],
+                            startPoint: .top, endPoint: .bottom))
+                        : AnyShapeStyle(Color(red: 0.45, green: 0.38, blue: 0.26).opacity(0.18)),
                     lineWidth: 1
                 )
         )
@@ -580,6 +591,18 @@ struct QuickInputView: View {
         case .help:       return "questionmark.circle"
         case .broadcast:  return isAutoDictionary ? "book.closed" : "sparkles"
         }
+    }
+
+    /// Leading glyph. In the normal broadcast state we echo the app logo — the
+    /// circle / square / triangle trio — instead of a generic SF Symbol, so the
+    /// quick input feels like the same product. Contextual modes (help, dictionary)
+    /// keep their meaningful SF Symbol.
+    // NOTE (future): replace ✨ with a purpose-made monochrome brand mark (circle/square/
+    // triangle) that also doubles as the menu-bar icon. The hand-drawn cluster + the shrunk
+    // app icon both looked off; this needs a real designed glyph (vector/PNG) before swapping in.
+    @ViewBuilder private var leadingIcon: some View {
+        Image(systemName: iconForCurrentInput())
+            .font(.system(size: 19))
     }
 
 

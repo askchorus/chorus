@@ -91,6 +91,20 @@ let L10nTable: [String: [String: String]] = [
         "en": "Keep an icon in the menu bar: shows whether any AI is responding, with quick actions. When on, closing the window keeps the app alive in the menu bar; when off, closing the window quits.",
     ],
 
+    // MARK: Settings — API models
+    "settings.section.apiModels": ["zh": "API 模型", "en": "API Models"],
+    "settings.api.desc": [
+        "zh": "接入任何 OpenAI 兼容接口（OpenAI / DeepSeek / Groq / OpenRouter / 本地 Ollama 等），和网页 AI 并排。密钥安全存于钥匙串。",
+        "en": "Connect any OpenAI-compatible endpoint (OpenAI / DeepSeek / Groq / OpenRouter / local Ollama…) alongside the web AIs. Keys are stored securely in the Keychain.",
+    ],
+    "settings.api.name": ["zh": "名称", "en": "Name"],
+    "settings.api.model": ["zh": "模型", "en": "Model"],
+    "settings.api.key": ["zh": "API 密钥（本地模型可留空）", "en": "API key (leave blank for local)"],
+    "settings.api.add": ["zh": "添加", "en": "Add"],
+    "settings.api.remove": ["zh": "移除 %@", "en": "Remove %@"],
+    "settings.api.presets": ["zh": "快速填充", "en": "Quick fill"],
+    "settings.api.local": ["zh": "本地", "en": "local"],
+
     // MARK: Settings — minimal mode
     "settings.minimalMode": ["zh": "简洁模式", "en": "Minimal mode"],
     "settings.minimalMode.desc": [
@@ -107,6 +121,11 @@ let L10nTable: [String: [String: String]] = [
     "settings.appearance.desc": [
         "zh": "切换 Chorus 界面的明暗。跟随系统的 AI 网站也会一起切换；少数有独立主题开关的站点需在站内自行设置。",
         "en": "Switch Chorus between light and dark. AI sites that follow the system theme switch too; a few sites with their own theme toggle must be set inside the site.",
+    ],
+    "settings.warmWeb": ["zh": "给 AI 网页染上暖色调", "en": "Warm-tint the AI web pages"],
+    "settings.warmWeb.desc": [
+        "zh": "在各家 AI 网页上叠一层很淡的奶油色，让它们更贴近 Chorus 的暖色外壳。纯外观、本地实现，不影响登录或账号安全；浅色模式下效果最明显。实验功能，觉得不顺眼随时关。",
+        "en": "Overlays a faint cream layer on each AI page so they lean toward Chorus's warm shell. Purely cosmetic and local — it never touches your login or account. Most visible in light mode. Experimental; turn it off anytime.",
     ],
 
     // MARK: Settings — quick input

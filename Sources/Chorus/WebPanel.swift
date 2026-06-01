@@ -7,16 +7,62 @@ import WebKit
 /// This preserves navigation state, scroll, in-flight messages, etc.
 struct WebPanel: NSViewRepresentable {
     let webView: WKWebView
+    /// When true, an opaque cream cover is shown over this panel; when it flips back to false
+    /// the cover fades out. Driven by ContentView during a removal reflow so the WKWebView's
+    /// white repaint-on-resize is masked. (Animating the resize instead made the white edge
+    /// visible for the WHOLE animation, which was worse — hence this cover approach.)
+    var reflowing: Bool = false
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator {
+        weak var cover: NSView?
+        var lastReflowing = false
+    }
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = ChorusTheme.windowBackgroundCGColor()
         embed(webView, in: container)
+
+        // Native cream cover ON TOP of the webview. A SwiftUI `.overlay` does NOT render above
+        // an embedded WKWebView (AppKit-hosted views punch through SwiftUI layers), so masking
+        // the white repaint-on-resize requires a native sibling layered above it.
+        let cover = NSView()
+        cover.wantsLayer = true
+        cover.layer?.backgroundColor = ChorusTheme.windowBackgroundCGColor()
+        cover.frame = container.bounds
+        cover.autoresizingMask = [.width, .height]
+        cover.alphaValue = 0
+        cover.isHidden = true
+        container.addSubview(cover)               // added last → topmost
+        context.coordinator.cover = cover
         return container
     }
 
     func updateNSView(_ container: NSView, context: Context) {
         if webView.superview !== container {
             embed(webView, in: container)
+        }
+        guard let cover = context.coordinator.cover else { return }
+        if container.subviews.last !== cover {     // embed() re-adds the webView above it
+            cover.removeFromSuperview()
+            cover.frame = container.bounds
+            cover.autoresizingMask = [.width, .height]
+            container.addSubview(cover)
+        }
+        if context.coordinator.lastReflowing != reflowing {
+            context.coordinator.lastReflowing = reflowing
+            if reflowing {
+                cover.layer?.removeAllAnimations()
+                cover.isHidden = false
+                cover.alphaValue = 1
+            } else {
+                NSAnimationContext.runAnimationGroup({ c in
+                    c.duration = 0.22
+                    cover.animator().alphaValue = 0
+                }, completionHandler: { cover.isHidden = true })
+            }
         }
     }
 
@@ -259,8 +305,31 @@ enum WebViewFactory {
                          forMainFrameOnly: true)
         )
 
+        // Optional cosmetic warm tint: re-applied on every load (incl. SPA new-chat) so the
+        // official pages lean toward the app's cream tone. Off → no script injected at all.
+        if UserDefaults.standard.object(forKey: "warmWebPages") as? Bool ?? true {
+            config.userContentController.addUserScript(
+                WKUserScript(source: Broadcaster.warmTintAddJS,
+                             injectionTime: .atDocumentEnd,
+                             forMainFrameOnly: true)
+            )
+        }
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
+
+        // The color WebKit paints in areas not yet covered by page content — i.e. before the
+        // first paint of a freshly-added panel, and (the real offender here) the strip exposed
+        // when a panel WIDENS after an AI is removed. Default is white, which flashed as an ugly
+        // block between cards. This is the documented knob for it (macOS 12+).
+        //
+        // Use a CONCRETE color, not the dynamic `windowBackground`: WebKit does not reliably
+        // resolve a dynamic catalog NSColor here and falls back to white. And keep the webview
+        // OPAQUE (drawsBackground stays at its default true) — turning it off made WebKit's
+        // compositor paint that strip *black*, which is worse than white.
+        if #available(macOS 12.0, *) {
+            webView.underPageBackgroundColor = ChorusTheme.windowBackgroundColor()
+        }
 
         // Route link clicks: same-site stays in panel, external links → Chrome.
         webView.navigationDelegate = LinkRoutingDelegate.shared
@@ -1143,6 +1212,98 @@ enum Broadcaster {
           }
           clog('geminiUpload: NO matching upload tile after 2 attempts');
           return 'no-item';
+        })();
+        """
+    }
+
+    // MARK: - Warm web-page tint (optional, cosmetic)
+
+    /// The cream we multiply over each page. Multiply blend means: white → this cream,
+    /// dark text/UI stays dark, mid colors warm slightly. Chosen to sit between the app's
+    /// canvas-gradient endpoints so framed pages read as part of the same warm surface.
+    private static let warmTintColor = "#f1e9d9"
+
+    /// Overlay a translucent cream layer on the page so the official sites lean toward the
+    /// app's warm tone. Implemented as a single fixed, `pointer-events:none` div with
+    /// `mix-blend-mode:multiply` — purely cosmetic (no network, no automation, zero ban
+    /// risk; the same thing DarkReader-style extensions do), and it touches no site
+    /// selectors so a redesign can't break it. A shallow observer on <body>'s direct
+    /// children re-adds the layer if an SPA route swap removes it (cheap: body's direct
+    /// children rarely churn, unlike the deep DOM during streaming).
+    static var warmTintAddJS: String {
+        return """
+        (function(){
+          var ID='chorus-warm-tint';
+          function add(){
+            if(document.getElementById(ID)) return;
+            var d=document.createElement('div');
+            d.id=ID;
+            d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:\(warmTintColor);'
+              +'mix-blend-mode:multiply;pointer-events:none;z-index:2147483647';
+            (document.body||document.documentElement).appendChild(d);
+          }
+          add();
+          if(!window.__chorusTintObs && document.body){
+            window.__chorusTintObs=new MutationObserver(function(){
+              if(!document.getElementById(ID)) add();
+            });
+            window.__chorusTintObs.observe(document.body,{childList:true});
+          }
+        })();
+        """
+    }
+
+    /// Remove the cream layer + stop its observer — used for the live toggle.
+    static var warmTintRemoveJS: String {
+        return """
+        (function(){
+          var e=document.getElementById('chorus-warm-tint'); if(e) e.remove();
+          if(window.__chorusTintObs){ window.__chorusTintObs.disconnect(); window.__chorusTintObs=null; }
+        })();
+        """
+    }
+
+    // MARK: - Live "is this AI still busy?" check
+
+    /// Returns a boolean: is a stop button visible on the page RIGHT NOW? The stop button is
+    /// present for the whole generation — INCLUDING a thinking/reasoning phase (Claude's
+    /// extended "Thinking" keeps it up) — so this is the ground-truth "still working" signal.
+    /// Used by the batch-completion safety net to avoid declaring "all done" while an AI is
+    /// still thinking (its reasoning can outlast the 75s grace, and the batch only looks
+    /// "quiet" because nothing has *completed*). A live query (not the cached streamingKeys),
+    /// so a genuinely-undetected completion still lets the net fire.
+    ///
+    /// Selectors mirror the generic catch-alls in the poll/watcher STOP_SELECTORS; keep roughly
+    /// in sync if those change. Gemini hides its stop button in shadow DOM → deep walk.
+    static func busyCheckScript() -> String {
+        return """
+        (() => {
+          const host = location.hostname;
+          const isGemini = host.includes('gemini') || host.includes('google');
+          const SEL = ['button[aria-label*="Stop" i]','button[aria-label*="Stop streaming" i]',
+                       'button[aria-label*="停止" i]','button[aria-label*="停止生成" i]',
+                       'button[aria-label*="중지" i]','button[data-testid="stop-button"]',
+                       'button[data-testid="send-button"][aria-label*="Stop" i]'];
+          const vis = (el) => {
+            if (!el || el.offsetParent === null) return false;
+            const r = el.getBoundingClientRect();
+            if (!r.width || !r.height) return false;
+            const s = getComputedStyle(el);
+            return s.visibility !== 'hidden' && s.display !== 'none';
+          };
+          const light = () => { const o=[]; for (const q of SEL){ try { document.querySelectorAll(q).forEach(e=>o.push(e)); } catch(_){} } return o; };
+          const deep = () => {
+            const o=[]; const stack=[document];
+            while (stack.length) {
+              const root = stack.pop(); if (!root) continue;
+              for (const q of SEL){ try { root.querySelectorAll?.(q)?.forEach(e=>o.push(e)); } catch(_){} }
+              const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+              for (const el of all){ if (el.shadowRoot) stack.push(el.shadowRoot); }
+            }
+            return o;
+          };
+          for (const el of (isGemini ? deep() : light())) { if (vis(el)) return true; }
+          return false;
         })();
         """
     }
