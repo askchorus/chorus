@@ -7,6 +7,7 @@ struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     let role: Role
     var text: String
+    var imageBase64: String? = nil   // PNG base64 on a user turn (vision); sent as an image_url
     var isStreaming: Bool = false
     var error: String? = nil
 }
@@ -28,16 +29,16 @@ final class APIChatStore: ObservableObject {
     func messages(for id: String) -> [ChatMessage] { conversations[id] ?? [] }
     func isStreaming(_ id: String) -> Bool { streaming.contains(id) }
 
-    /// Append the user's prompt and stream the assistant's reply. Full conversation history is
-    /// sent each time so the model keeps context, like the web panels.
-    func send(to provider: APIProvider, prompt: String) {
+    /// Append the user's prompt (optionally with an image, for vision models) and stream the
+    /// assistant's reply. Full conversation history is sent each time so the model keeps context.
+    func send(to provider: APIProvider, prompt: String, imageBase64: String? = nil) {
         let p = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !p.isEmpty else { return }
+        guard !p.isEmpty || imageBase64 != nil else { return }
 
         tasks[provider.id]?.cancel()
 
         var msgs = conversations[provider.id] ?? []
-        msgs.append(ChatMessage(role: .user, text: p))
+        msgs.append(ChatMessage(role: .user, text: p, imageBase64: imageBase64))
         let reply = ChatMessage(role: .assistant, text: "", isStreaming: true)
         msgs.append(reply)
         conversations[provider.id] = msgs
@@ -120,9 +121,22 @@ enum APIClient {
         if let key = provider.apiKey, !key.isEmpty {
             req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
+        // Build messages. A user turn with an image uses the multimodal content-array form
+        // ({type:text} + {type:image_url, data URL}); everything else is a plain string content.
+        let apiMessages: [[String: Any]] = messages.map { m in
+            let role = m.role == .user ? "user" : "assistant"
+            if m.role == .user, let b64 = m.imageBase64, !b64.isEmpty {
+                var content: [[String: Any]] = []
+                if !m.text.isEmpty { content.append(["type": "text", "text": m.text]) }
+                content.append(["type": "image_url",
+                                "image_url": ["url": "data:image/png;base64,\(b64)"]])
+                return ["role": role, "content": content]
+            }
+            return ["role": role, "content": m.text]
+        }
         let body: [String: Any] = [
             "model": provider.model,
-            "messages": messages.map { ["role": $0.role == .user ? "user" : "assistant", "content": $0.text] },
+            "messages": apiMessages,
             "stream": true,
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)

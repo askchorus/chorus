@@ -63,6 +63,7 @@ let L10nTable: [String: [String: String]] = [
     "quick.micStop": ["zh": "停止录音", "en": "Stop recording"],
     "quick.micDenied": ["zh": "麦克风/语音识别权限被拒——请到系统设置开启", "en": "Mic / speech permission denied — enable it in System Settings"],
     "quick.chipHelp": ["zh": "以「%@：」为前缀发送给所有 AI", "en": "Send to all AIs with “%@: ” prepended"],
+    "quick.pastedText": ["zh": "已粘贴长文本（%d 字）", "en": "Pasted text (%d chars)"],
 
     // MARK: Settings — sections
     "settings.section.language": ["zh": "语言", "en": "Language"],

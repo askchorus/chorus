@@ -252,6 +252,8 @@ struct QuickInputView: View {
 
     @State private var prompt: String = ""
     @State private var attachedImage: NSImage? = nil
+    @State private var pastedText: String? = nil   // large clipboard text held as an attachment
+    private let largePasteThreshold = 2000          // chars above which paste becomes a chip, not box text
     @State private var pasteMonitor: Any? = nil
     @State private var keyMonitor: Any? = nil
     @State private var commandResult: String? = nil      // inline preview (definition / help)
@@ -302,6 +304,27 @@ struct QuickInputView: View {
                     Text("Image attached")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 10)
+            }
+
+            if let pasted = pastedText {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                    Text(Lf("quick.pastedText", pasted.count))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    Button { pastedText = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                     Spacer()
                 }
                 .padding(.horizontal, 18)
@@ -518,14 +541,16 @@ struct QuickInputView: View {
     /// made it look like you "couldn't delete" pasted text). Image takes priority over text.
     private func loadClipboardIfEnabled() {
         // Never overwrite existing content — preserve the user's draft across hide/re-summon.
-        guard prompt.isEmpty, attachedImage == nil else { return }
+        guard prompt.isEmpty, attachedImage == nil, pastedText == nil else { return }
         let enabled = UserDefaults.standard.object(forKey: "autoPasteOnSummon") as? Bool ?? true
         guard enabled else { return }
         let pb = NSPasteboard.general
         if let img = NSImage(pasteboard: pb), img.size.width > 0, img.size.height > 0 {
             attachedImage = img
         } else if let str = pb.string(forType: .string), !str.isEmpty {
-            prompt = str
+            // Large text → hold it as a chip rather than dumping it into the editable field, which
+            // makes the SwiftUI TextField crawl. The full text is still broadcast on send.
+            if str.count > largePasteThreshold { pastedText = str } else { prompt = str }
         }
     }
 
@@ -546,30 +571,42 @@ struct QuickInputView: View {
                 onDismiss()
                 return
             }
-            let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = composedBroadcastText()
             guard !text.isEmpty || attachedImage != nil else { return }
             store.broadcast(text: text, image: attachedImage, source: .quickInput)
-            PromptHistory.add(text)
+            if !typed.isEmpty { PromptHistory.add(typed) }   // recall only the typed part, not pasted blobs
             historyIndex = nil
             prompt = ""
             attachedImage = nil
+            pastedText = nil
             commandResult = nil
             aiFallbackWord = nil
             onSubmitCompleted()
         }
     }
 
+    /// The text to broadcast: the typed prompt plus any large pasted-text attachment (kept out of
+    /// the editable box so it doesn't lag, but sent in full).
+    private func composedBroadcastText() -> String {
+        let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pasted = pastedText else { return typed }
+        return typed.isEmpty ? pasted : "\(typed)\n\n\(pasted)"
+    }
+
     /// Broadcast the current prompt to all AIs regardless of whether a dictionary entry is
     /// showing (plain Enter dismisses on a dict hit; the footer's "Ask all AIs" / ⌘↩ uses this
     /// so you can always send the word to the AIs).
     private func broadcastCurrent() {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = composedBroadcastText()
         guard !text.isEmpty || attachedImage != nil else { return }
         store.broadcast(text: text, image: attachedImage, source: .quickInput)
-        PromptHistory.add(text)
+        if !typed.isEmpty { PromptHistory.add(typed) }
         historyIndex = nil
         prompt = ""
         attachedImage = nil
+        pastedText = nil
         commandResult = nil
         aiFallbackWord = nil
         isAutoDictionary = false
@@ -777,6 +814,11 @@ struct QuickInputView: View {
                 Task { @MainActor in attachedImage = img }
                 let hasText = pb.canReadObject(forClasses: [NSString.self], options: nil)
                 return hasText ? event : nil
+            }
+            // Large text paste → divert to a chip instead of letting it crawl the TextField.
+            if let str = pb.string(forType: .string), str.count > largePasteThreshold {
+                Task { @MainActor in pastedText = str }
+                return nil   // swallow the paste; the chip holds the full text
             }
             return event
         }

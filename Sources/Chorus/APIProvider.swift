@@ -34,11 +34,16 @@ enum APIProviderRegistry {
         APIPreset(name: "LM Studio",  baseURL: "http://localhost:1234/v1",         model: "",                  needsKey: false),
     ]
 
-    static func all() -> [APIProvider] {
-        guard let s = UserDefaults.standard.string(forKey: storeKey),
-              let data = s.data(using: .utf8),
+    /// Decode a providers list from its stored JSON string. Views can call this with their
+    /// `@AppStorage("apiProviders")` value so SwiftUI tracks the dependency and updates live.
+    static func decode(_ raw: String) -> [APIProvider] {
+        guard let data = raw.data(using: .utf8),
               let list = try? JSONDecoder().decode([APIProvider].self, from: data) else { return [] }
         return list
+    }
+
+    static func all() -> [APIProvider] {
+        decode(UserDefaults.standard.string(forKey: storeKey) ?? "")
     }
 
     private static func save(_ list: [APIProvider]) {

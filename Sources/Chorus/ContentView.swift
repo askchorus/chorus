@@ -281,13 +281,14 @@ final class WebViewStore: ObservableObject {
             }
         }
 
-        // Fan out to the native API model panels too (text only for now — no image). Hidden
+        // Fan out to the native API model panels too (with the image, for vision models). Hidden
         // ones are skipped, mirroring the web panels.
         let apiPrompt = text
+        let apiImage = imageBase64
         let skip = hiddenKeys
         Task { @MainActor in
             for p in APIProviderRegistry.all() where !skip.contains(p.id) {
-                APIChatStore.shared.send(to: p, prompt: apiPrompt)
+                APIChatStore.shared.send(to: p, prompt: apiPrompt, imageBase64: apiImage)
             }
         }
     }
@@ -660,6 +661,9 @@ struct ContentView: View {
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
     @AppStorage("appearance") private var appearance: String = "light"
     @AppStorage("minimalMode") private var minimalMode: Bool = false
+    // Observed so the main window re-renders (and shows/removes API cards) the moment an API
+    // model is added or removed in Settings — no app restart needed. Read via APIProviderRegistry.
+    @AppStorage("apiProviders") private var apiProvidersRaw: String = ""
     @Environment(\.colorScheme) private var colorScheme
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
@@ -697,9 +701,15 @@ struct ContentView: View {
         orderedProviders.filter { !hiddenKeys.contains($0.key) }
     }
 
-    /// Configured API model providers (shown after the web cards; removed via Settings).
+    /// All configured API providers, decoded from the observed @AppStorage so the main window
+    /// updates the instant one is added/removed in Settings (no restart).
+    private var apiProviders: [APIProvider] {
+        APIProviderRegistry.decode(apiProvidersRaw)
+    }
+
+    /// Configured API model providers shown after the web cards (removed via Settings).
     private var visibleAPIProviders: [APIProvider] {
-        APIProviderRegistry.all().filter { !hiddenKeys.contains($0.id) }
+        apiProviders.filter { !hiddenKeys.contains($0.id) }
     }
 
     /// Toggle a provider's visibility. Refuses to hide the last-remaining visible panel.
@@ -1102,9 +1112,9 @@ struct ContentView: View {
 
             // Native API panels live under their own header, so they read as a distinct group
             // (and a web panel with a similar name isn't confusing) — no per-item suffix needed.
-            if !APIProviderRegistry.all().isEmpty {
+            if !apiProviders.isEmpty {
                 Section(L("settings.section.apiModels")) {
-                    ForEach(APIProviderRegistry.all()) { p in
+                    ForEach(apiProviders) { p in
                         let isVisible = !hiddenKeys.contains(p.id)
                         Button {
                             toggleHiddenAPI(p.id)

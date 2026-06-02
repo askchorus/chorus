@@ -40,7 +40,9 @@ struct SettingsView: View {
     @State private var newAPIModel: String = ""
     @State private var newAPIKey: String = ""
 
-    private var apiProviders: [APIProvider] { APIProviderRegistry.all() }
+    // Decode from the observed @AppStorage (not APIProviderRegistry.all()) so the list updates
+    // live when a provider is added/removed — reading apiProvidersRaw establishes the dependency.
+    private var apiProviders: [APIProvider] { APIProviderRegistry.decode(apiProvidersRaw) }
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
     private var allProviders: [Provider] {
