@@ -108,6 +108,10 @@ let L10nTable: [String: [String: String]] = [
     "api.panel.waiting": ["zh": "我准备好啦，随时问", "en": "Ready when you are…"],
     "api.panel.ask": ["zh": "单独问它…", "en": "Ask just this model…"],
     "api.stop": ["zh": "停止", "en": "Stop"],
+    "api.clearConfirm.title": ["zh": "清空这个对话？", "en": "Clear this conversation?"],
+    "api.clearConfirm.message": ["zh": "此操作不可撤销——API 面板没有服务器存档。", "en": "This can't be undone — API panels have no server-side history."],
+    "api.clearConfirm.clear": ["zh": "清空", "en": "Clear"],
+    "common.cancel": ["zh": "取消", "en": "Cancel"],
 
     // MARK: Settings — minimal mode
     "settings.minimalMode": ["zh": "简洁模式", "en": "Minimal mode"],

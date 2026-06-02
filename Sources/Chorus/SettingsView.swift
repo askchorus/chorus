@@ -309,6 +309,12 @@ struct SettingsView: View {
                     Toggle(p.name, isOn: requiredBinding(for: p.key))
                         .padding(.leading, 4)
                 }
+                // Native API panels can block the notification too (off by default — check the
+                // ones you want the "all done" alert to wait for).
+                ForEach(apiProviders) { p in
+                    Toggle("\(p.name)  ·  API", isOn: requiredBinding(for: p.id))
+                        .padding(.leading, 4)
+                }
 
                 hint("settings.notify.waitDesc")
             }

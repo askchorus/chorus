@@ -146,6 +146,8 @@ final class WebViewStore: ObservableObject {
     /// or thinking right now. Async; `completion` runs on the main actor. Ground truth (queries
     /// the live DOM), used by the completion safety net so it won't declare "done" mid-thought.
     func anyBusy(_ keys: Set<String>, completion: @escaping (Bool) -> Void) {
+        // A still-streaming API panel counts as busy (no webview to query for it).
+        if !keys.isDisjoint(with: apiStreamingIds) { completion(true); return }
         let webviews = keys.compactMap { cache[$0] }
         guard !webviews.isEmpty else { completion(false); return }
         let group = DispatchGroup()
@@ -236,10 +238,12 @@ final class WebViewStore: ObservableObject {
         let hiddenRaw = UserDefaults.standard.string(forKey: "hiddenProviders") ?? ""
         let hiddenKeys = Set(hiddenRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
         let visibleKeys = Set(cache.keys).subtracting(hiddenKeys)
+        let visibleAPIKeys = Set(APIProviderRegistry.all().map(\.id)).subtracting(hiddenKeys)
 
         let requiredRaw = UserDefaults.standard.string(forKey: "notifyRequiredProviders") ?? "chatgpt,claude,gemini"
         let requiredKeys = Set(requiredRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
-        let trackKeys = visibleKeys.intersection(requiredKeys)
+        // Wait on web hosts AND native API panels that the user marked required.
+        let trackKeys = visibleKeys.union(visibleAPIKeys).intersection(requiredKeys)
 
         if !trackKeys.isEmpty {
             let batchID = UUID()
@@ -348,7 +352,26 @@ final class WebViewStore: ObservableObject {
             return
         }
         streamingKeys.remove(key)  // clear the "thinking" dot
+        notePanelCompletion(key: key)
+    }
 
+    /// Native API panels track their streaming state precisely here, so the batch fallback's
+    /// "is anyone still busy?" check can see a long API reply (no webview to query).
+    private var apiStreamingIds: Set<String> = []
+    func setAPIStreaming(_ id: String, _ on: Bool) {
+        if on { apiStreamingIds.insert(id) } else { apiStreamingIds.remove(id) }
+    }
+
+    /// Called when a native API panel's reply finishes — feeds the SAME batch tracking as web
+    /// hosts, so the "all done" notification waits for API models too.
+    func handleAPICompletion(id: String) {
+        apiStreamingIds.remove(id)
+        notePanelCompletion(key: id)
+    }
+
+    /// Remove a finished provider (web host key OR API id) from every pending batch; notify when
+    /// a batch empties.
+    private func notePanelCompletion(key: String) {
         var completedBatches: [PendingBatch] = []
         for (id, var batch) in pendingBatches {
             if batch.pendingKeys.contains(key) {
@@ -364,7 +387,6 @@ final class WebViewStore: ObservableObject {
                 }
             }
         }
-
         for batch in completedBatches {
             CompletionNotifier.shared.handleBatchComplete(source: batch.source)
         }
@@ -654,6 +676,8 @@ struct ContentView: View {
     // Drives the per-panel native cream cover during a removal reflow (masks WKWebView's white
     // repaint-on-resize). Raised proactively in toggleHidden, before the reflow.
     @State private var reflowing = false
+    // Set to an API provider id when its "new chat" is tapped → shows a clear-confirmation alert.
+    @State private var clearConfirmAPIId: String? = nil
 
     @AppStorage("providerOrder") private var providerOrderRaw: String = "chatgpt,claude,gemini"
     @AppStorage("hiddenProviders") private var hiddenProvidersRaw: String = ""
@@ -783,6 +807,18 @@ struct ContentView: View {
         .onChange(of: appearance) { newValue in
             AppearanceManager.apply(newValue)
         }
+        .alert(L("api.clearConfirm.title"), isPresented: Binding(
+            get: { clearConfirmAPIId != nil },
+            set: { if !$0 { clearConfirmAPIId = nil } }
+        )) {
+            Button(L("api.clearConfirm.clear"), role: .destructive) {
+                if let id = clearConfirmAPIId { apiStore.newChat(id) }
+                clearConfirmAPIId = nil
+            }
+            Button(L("common.cancel"), role: .cancel) { clearConfirmAPIId = nil }
+        } message: {
+            Text(L("api.clearConfirm.message"))
+        }
     }
 
     /// Minimal immersive top strip — just reserves the traffic-light row so the cards don't
@@ -859,27 +895,27 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .layoutPriority(-1)   // shrink the long model name first, keep the buttons clear
             }
-            Spacer()
+            Spacer(minLength: 8)
             if apiStore.isStreaming(p.id) {
                 Button { apiStore.stop(p.id) } label: {
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
                 .help(L("api.stop"))
             }
-            if hoveredHeaderKey == p.id {
-                Button { apiStore.newChat(p.id) } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help(L("menu.newChat"))
-                .transition(.opacity)
+            // Always visible (not hover-only) so clearing an API conversation is discoverable.
+            // Confirms first — clearing an API conversation is permanent (no server-side history).
+            Button { clearConfirmAPIId = p.id } label: {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
             }
+            .buttonStyle(.plain)
+            .help(L("menu.newChat"))
         }
         .padding(.horizontal, 11)
         .frame(height: 30)

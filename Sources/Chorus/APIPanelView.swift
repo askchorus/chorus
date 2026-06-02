@@ -44,6 +44,13 @@ struct APIPanelView: View {
             .onChange(of: msgs.count) { _ in
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
+            // On first appearance (e.g. a restored conversation after relaunch) the messages are
+            // already present, so neither onChange fires — jump to the latest explicitly.
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
         }
     }
 

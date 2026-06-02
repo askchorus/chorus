@@ -26,6 +26,9 @@ final class APIChatStore: ObservableObject {
 
     private var tasks: [String: Task<Void, Never>] = [:]
 
+    private let maxContextMessages = 30   // most-recent messages sent to the model per request
+    private static let maxStoredMessages = 100   // messages persisted per provider
+
     init() { conversations = Self.loadPersisted() }   // restore last conversations on launch
 
     func messages(for id: String) -> [ChatMessage] { conversations[id] ?? [] }
@@ -45,10 +48,13 @@ final class APIChatStore: ObservableObject {
         msgs.append(reply)
         conversations[provider.id] = msgs
         streaming.insert(provider.id)
+        WebViewStore.shared.setAPIStreaming(provider.id, true)   // so the all-done net waits on us
         persist()   // keep the user turn even if the app quits before the reply lands
 
         let replyId = reply.id
-        let history = Array(msgs.dropLast())   // everything up to & including the new user turn
+        // Cap the context sent to the model (most recent turns) so long conversations don't blow
+        // up token cost or exceed the context window. The full history stays on screen.
+        let history = Array(msgs.dropLast().suffix(maxContextMessages))
 
         tasks[provider.id] = Task { [weak self] in
             do {
@@ -94,6 +100,7 @@ final class APIChatStore: ObservableObject {
     private func finish(_ providerId: String, _ messageId: UUID?, error: String?) {
         streaming.remove(providerId)
         tasks[providerId] = nil
+        WebViewStore.shared.handleAPICompletion(id: providerId)   // tell the all-done batch we're done
         guard var msgs = conversations[providerId] else { return }
         let idx = messageId.flatMap { id in msgs.firstIndex(where: { $0.id == id }) }
             ?? msgs.lastIndex(where: { $0.role == .assistant })
@@ -124,8 +131,9 @@ final class APIChatStore: ObservableObject {
         for (id, msgs) in conversations {
             let stored = msgs
                 .filter { !$0.text.isEmpty }   // skip the empty in-flight reply placeholder
+                .suffix(Self.maxStoredMessages)   // keep the file bounded
                 .map { StoredMessage(role: $0.role == .user ? "user" : "assistant", text: $0.text) }
-            if !stored.isEmpty { out[id] = stored }
+            if !stored.isEmpty { out[id] = Array(stored) }
         }
         guard let data = try? JSONEncoder().encode(out) else { return }
         try? data.write(to: url, options: .atomic)
