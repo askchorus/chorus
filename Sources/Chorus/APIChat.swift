@@ -26,6 +26,8 @@ final class APIChatStore: ObservableObject {
 
     private var tasks: [String: Task<Void, Never>] = [:]
 
+    init() { conversations = Self.loadPersisted() }   // restore last conversations on launch
+
     func messages(for id: String) -> [ChatMessage] { conversations[id] ?? [] }
     func isStreaming(_ id: String) -> Bool { streaming.contains(id) }
 
@@ -43,6 +45,7 @@ final class APIChatStore: ObservableObject {
         msgs.append(reply)
         conversations[provider.id] = msgs
         streaming.insert(provider.id)
+        persist()   // keep the user turn even if the app quits before the reply lands
 
         let replyId = reply.id
         let history = Array(msgs.dropLast())   // everything up to & including the new user turn
@@ -74,6 +77,7 @@ final class APIChatStore: ObservableObject {
         tasks[providerId] = nil
         conversations[providerId] = []
         streaming.remove(providerId)
+        persist()
     }
 
     // MARK: - Streaming callbacks (main actor)
@@ -97,6 +101,45 @@ final class APIChatStore: ObservableObject {
         msgs[i].isStreaming = false
         if let error { msgs[i].error = error }
         conversations[providerId] = msgs
+        persist()   // reply finished → save
+    }
+
+    // MARK: - Persistence (lightweight: the current conversation per provider survives a restart)
+
+    /// Text-only on-disk form. Images aren't persisted (base64 would bloat the file and slow
+    /// every save); a reloaded turn keeps its text, just not the thumbnail.
+    private struct StoredMessage: Codable { let role: String; let text: String }
+
+    private static var storageURL: URL? {
+        let fm = FileManager.default
+        guard let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let dir = support.appendingPathComponent("Chorus", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("api-conversations.json")
+    }
+
+    private func persist() {
+        guard let url = Self.storageURL else { return }
+        var out: [String: [StoredMessage]] = [:]
+        for (id, msgs) in conversations {
+            let stored = msgs
+                .filter { !$0.text.isEmpty }   // skip the empty in-flight reply placeholder
+                .map { StoredMessage(role: $0.role == .user ? "user" : "assistant", text: $0.text) }
+            if !stored.isEmpty { out[id] = stored }
+        }
+        guard let data = try? JSONEncoder().encode(out) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private static func loadPersisted() -> [String: [ChatMessage]] {
+        guard let url = storageURL,
+              let data = try? Data(contentsOf: url),
+              let stored = try? JSONDecoder().decode([String: [StoredMessage]].self, from: data) else { return [:] }
+        var convos: [String: [ChatMessage]] = [:]
+        for (id, msgs) in stored {
+            convos[id] = msgs.map { ChatMessage(role: $0.role == "user" ? .user : .assistant, text: $0.text) }
+        }
+        return convos
     }
 }
 
