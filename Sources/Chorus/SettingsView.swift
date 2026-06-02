@@ -3,6 +3,7 @@ import AppKit
 import Carbon.HIToolbox
 
 struct SettingsView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("hotkeyKeyCode") private var hotkeyKeyCode: Int = Int(kVK_ANSI_C)
     @AppStorage("hotkeyModifiers") private var hotkeyModifiers: Int = Int(cmdKey | shiftKey)
     @AppStorage("foregroundMainOnSend") private var foregroundMainOnSend: Bool = true
@@ -323,6 +324,12 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        // Light-touch theming: hide the Form's default (cold grey) scroll background and put the
+        // warm canvas behind it, so Settings reads as the same product as the main window. The
+        // grouped section cards stay system-drawn (recoloring those fights SwiftUI and risks a
+        // half-native look). Scheme-aware: cream in light, dark in dark.
+        .scrollContentBackground(.hidden)
+        .background(ChorusTheme.canvas(colorScheme).ignoresSafeArea())
         .frame(width: 520, height: 600)
         .onChange(of: appearance) { newValue in
             AppearanceManager.apply(newValue)

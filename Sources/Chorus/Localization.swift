@@ -104,6 +104,9 @@ let L10nTable: [String: [String: String]] = [
     "settings.api.remove": ["zh": "移除 %@", "en": "Remove %@"],
     "settings.api.presets": ["zh": "快速填充", "en": "Quick fill"],
     "settings.api.local": ["zh": "本地", "en": "local"],
+    "api.panel.waiting": ["zh": "我准备好啦，随时问", "en": "Ready when you are…"],
+    "api.panel.ask": ["zh": "单独问它…", "en": "Ask just this model…"],
+    "api.stop": ["zh": "停止", "en": "Stop"],
 
     // MARK: Settings — minimal mode
     "settings.minimalMode": ["zh": "简洁模式", "en": "Minimal mode"],

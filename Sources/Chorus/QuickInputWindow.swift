@@ -326,7 +326,9 @@ struct QuickInputView: View {
                 Button {
                     if dictator.isRecording {
                         dictator.stop()
+                        DictationCoordinator.shared.ended(dictator)
                     } else {
+                        DictationCoordinator.shared.begin(dictator)   // stops any other active mic
                         // Set BEFORE starting so the mic-permission dialog stealing focus
                         // doesn't auto-dismiss the panel.
                         QuickInputWindowController.shared.suppressAutoHide = true

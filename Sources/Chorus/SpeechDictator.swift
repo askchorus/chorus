@@ -2,6 +2,24 @@ import Foundation
 import AVFoundation
 import Speech
 
+/// Ensures only ONE dictation records at a time across the whole app — the main composer, the
+/// quick input, and every API panel share one microphone / recognizer. `begin` stops whoever was
+/// recording and makes the given dictator active; `ended` clears it (only if it's still active,
+/// so a late auto-stop can't clear a newer session). Identity-based via the dictator instance.
+@MainActor
+final class DictationCoordinator {
+    static let shared = DictationCoordinator()
+    private weak var active: SpeechDictator?
+
+    func begin(_ d: SpeechDictator) {
+        if active !== d { active?.stop() }
+        active = d
+    }
+    func ended(_ d: SpeechDictator) {
+        if active === d { active = nil }
+    }
+}
+
 /// On-device voice dictation for the quick input. Uses Apple's native SFSpeechRecognizer with
 /// on-device recognition when available (private, offline, free, no bundled model). Streams
 /// partial results so the text box fills live as you speak. For short prompt dictation this is

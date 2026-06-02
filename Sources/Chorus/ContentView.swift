@@ -280,6 +280,16 @@ final class WebViewStore: ObservableObject {
                 }
             }
         }
+
+        // Fan out to the native API model panels too (text only for now — no image). Hidden
+        // ones are skipped, mirroring the web panels.
+        let apiPrompt = text
+        let skip = hiddenKeys
+        Task { @MainActor in
+            for p in APIProviderRegistry.all() where !skip.contains(p.id) {
+                APIChatStore.shared.send(to: p, prompt: apiPrompt)
+            }
+        }
     }
 
     /// Feed an image into Gemini via file-open-panel interception (the native equivalent of
@@ -630,6 +640,7 @@ struct WindowConfigurator: NSViewRepresentable {
 
 struct ContentView: View {
     @EnvironmentObject private var store: WebViewStore
+    @ObservedObject private var apiStore = APIChatStore.shared   // native API model panels
     @State private var prompt: String = ""
     @State private var attachedImage: NSImage? = nil
     @FocusState private var promptFocused: Bool
@@ -686,6 +697,11 @@ struct ContentView: View {
         orderedProviders.filter { !hiddenKeys.contains($0.key) }
     }
 
+    /// Configured API model providers (shown after the web cards; removed via Settings).
+    private var visibleAPIProviders: [APIProvider] {
+        APIProviderRegistry.all().filter { !hiddenKeys.contains($0.id) }
+    }
+
     /// Toggle a provider's visibility. Refuses to hide the last-remaining visible panel.
     private func toggleHidden(_ key: String) {
         var keys = hiddenKeys
@@ -710,6 +726,14 @@ struct ContentView: View {
         }
     }
 
+    /// Show/hide a native API panel. No "last panel" guard (an API panel is an optional extra —
+    /// the web panels remain), and no reflow cover (native cards don't flash white on resize).
+    private func toggleHiddenAPI(_ id: String) {
+        var keys = hiddenKeys
+        if keys.contains(id) { keys.remove(id) } else { keys.insert(id) }
+        hiddenProvidersRaw = keys.sorted().joined(separator: ",")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             topBar
@@ -719,6 +743,11 @@ struct ContentView: View {
             HStack(spacing: ChorusTheme.gap) {
                 ForEach(visibleProviders) { p in
                     card(for: p)
+                        .frame(minWidth: 300, maxWidth: .infinity)
+                }
+                // Native API model panels, after the web cards.
+                ForEach(visibleAPIProviders) { p in
+                    apiCard(for: p)
                         .frame(minWidth: 300, maxWidth: .infinity)
                 }
             }
@@ -776,6 +805,87 @@ struct ContentView: View {
         .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
                 radius: ChorusTheme.cardShadow(colorScheme).radius,
                 x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
+    }
+
+    /// A native API model card — same chrome as a web card, but a native chat transcript instead
+    /// of a WKWebView.
+    private func apiCard(for p: APIProvider) -> some View {
+        VStack(spacing: 0) {
+            AccentBar(color: ProviderStyle.accent(key: p.id, host: ""),
+                      active: apiStore.isStreaming(p.id))
+            apiSlimHeader(for: p)
+            APIPanelView(provider: p)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
+                .strokeBorder(ChorusTheme.cardBorder(colorScheme), lineWidth: 1)
+        )
+        .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
+                radius: ChorusTheme.cardShadow(colorScheme).radius,
+                x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
+    }
+
+    /// Slim header for an API card: brand dot, name + model, a stop button while streaming, and
+    /// a "new chat" on hover. (No hide button — API panels are added/removed in Settings.)
+    private func apiSlimHeader(for p: APIProvider) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(ProviderStyle.accent(key: p.id, host: ""))
+                .frame(width: 8, height: 8)
+            Text(p.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary.opacity(0.9))
+            // Marks this as a native API panel — disambiguates from a web panel of the same name.
+            Text("API")
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
+            if !p.model.isEmpty {
+                Text(p.model)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            if apiStore.isStreaming(p.id) {
+                Button { apiStore.stop(p.id) } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L("api.stop"))
+            }
+            if hoveredHeaderKey == p.id {
+                Button { apiStore.newChat(p.id) } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L("menu.newChat"))
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 11)
+        .frame(height: 30)
+        .frame(maxWidth: .infinity)
+        .background(
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                if hoveredHeaderKey == p.id { Rectangle().fill(Color.primary.opacity(0.05)) }
+            }
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.1)) {
+                hoveredHeaderKey = hovering ? p.id : (hoveredHeaderKey == p.id ? nil : hoveredHeaderKey)
+            }
+        }
     }
 
     /// Thin neutral status strip: a "thinking" dot, the provider name, and hover actions.
@@ -897,7 +1007,9 @@ struct ContentView: View {
                 Button {
                     if dictator.isRecording {
                         dictator.stop()
+                        DictationCoordinator.shared.ended(dictator)
                     } else {
+                        DictationCoordinator.shared.begin(dictator)   // stops any other active mic
                         dictationBase = prompt.isEmpty ? "" : prompt + " "
                         dictator.start { text in prompt = dictationBase + text }
                     }
@@ -962,6 +1074,7 @@ struct ContentView: View {
         Menu {
             Button {
                 for p in visibleProviders { store.newChat(key: p.key) }
+                for p in visibleAPIProviders { apiStore.newChat(p.id) }
             } label: { Label(L("menu.newChat"), systemImage: "square.and.pencil") }
 
             Button {
@@ -984,6 +1097,25 @@ struct ContentView: View {
                         }
                     }
                     .disabled(isLastVisible)
+                }
+            }
+
+            // Native API panels live under their own header, so they read as a distinct group
+            // (and a web panel with a similar name isn't confusing) — no per-item suffix needed.
+            if !APIProviderRegistry.all().isEmpty {
+                Section(L("settings.section.apiModels")) {
+                    ForEach(APIProviderRegistry.all()) { p in
+                        let isVisible = !hiddenKeys.contains(p.id)
+                        Button {
+                            toggleHiddenAPI(p.id)
+                        } label: {
+                            if isVisible {
+                                Label(p.name, systemImage: "checkmark")
+                            } else {
+                                Text(p.name)
+                            }
+                        }
+                    }
                 }
             }
 
