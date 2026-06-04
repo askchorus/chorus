@@ -14,9 +14,14 @@ final class WebViewStore: ObservableObject {
     private var cache: [String: WKWebView] = [:]
     /// KVO tokens for each webview's `.url`, so SPA conversation switches get recorded for restore.
     private var urlObservers: [String: NSKeyValueObservation] = [:]
+    /// KVO tokens for each webview's `.isLoading`, driving the per-panel reload spinner.
+    private var loadingObservers: [String: NSKeyValueObservation] = [:]
 
     /// Provider keys currently streaming a response — drives the per-panel "thinking" dot.
     @Published private(set) var streamingKeys: Set<String> = []
+    /// Provider keys whose webview is loading a page — drives the reload spinner (so a tap on
+    /// reload visibly does something and the user doesn't click it repeatedly).
+    @Published private(set) var loadingKeys: Set<String> = []
 
     /// Favicons per provider key, fetched from each panel's real site — gives every panel
     /// (built-in AND custom) a real logo with zero bundled assets.
@@ -93,6 +98,12 @@ final class WebViewStore: ObservableObject {
         // and "reopen last chat" landed on a new chat. KVO on `.url` sees pushState too.
         urlObservers[key] = webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
             self?.recordSessionURL(for: wv)
+        }
+        // Drive the reload spinner. `.isLoading` KVO fires on the main thread, so mutating the
+        // @Published set here is safe.
+        loadingObservers[key] = webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in
+            guard let self else { return }
+            if wv.isLoading { self.loadingKeys.insert(key) } else { self.loadingKeys.remove(key) }
         }
         return webView
     }
@@ -954,17 +965,28 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary.opacity(0.9))
             Spacer()
+            // Loading spinner — always visible (not hover-gated) while the page reloads, so a
+            // reload tap visibly registers and the user waits instead of clicking again.
+            if store.loadingKeys.contains(p.key) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.65)
+                    .frame(width: 14, height: 14)
+            }
             if hoveredHeaderKey == p.key {
-                Button {
-                    store.reload(key: p.key)
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
+                // Reload hidden while loading (the spinner is there instead → can't double-tap).
+                if !store.loadingKeys.contains(p.key) {
+                    Button {
+                        store.reload(key: p.key)
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(Lf("panel.reload", p.name))
+                    .transition(.opacity)
                 }
-                .buttonStyle(.plain)
-                .help(Lf("panel.reload", p.name))
-                .transition(.opacity)
 
                 if visibleProviders.count > 1 {
                     Button {
