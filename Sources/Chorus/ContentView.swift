@@ -751,12 +751,13 @@ struct ContentView: View {
 
     /// Gather every visible AI's latest answer (web panels via DOM scrape, API panels natively),
     /// then have `provider` synthesize a comparison. Streams the result into the summary sheet.
-    private func summarizeAnswers(using provider: APIProvider) {
-        summaryTask?.cancel()
-        // Only panels that actually answered the latest broadcast (a panel sitting on a stale
-        // answer is skipped). If nothing has been broadcast this session, fall back to all.
+    /// Gather every visible AI's latest answer (web via DOM scrape, API natively).
+    /// `freshOnly` = restrict to the panels that answered the LAST broadcast (used by summarize so
+    /// stale topics don't mix); when false, take whatever each panel currently shows (used by the
+    /// share card, so you can share a previous answer too). Shared by "summarize" and "share card".
+    private func gatherAnswers(freshOnly: Bool, _ done: @escaping ([(name: String, color: Color, text: String)]) -> Void) {
         let answered = store.answeredLastBroadcast
-        let gate: (String) -> Bool = { answered.isEmpty || answered.contains($0) }
+        let gate: (String) -> Bool = { key in !freshOnly || answered.isEmpty || answered.contains(key) }
         let webProviders = visibleProviders.filter { gate($0.key) }
         var web = [String?](repeating: nil, count: webProviders.count)
         let group = DispatchGroup()
@@ -765,23 +766,45 @@ struct ContentView: View {
             store.extractAnswer(key: p.key) { web[i] = $0; group.leave() }
         }
         group.notify(queue: .main) {
-            var blocks: [(name: String, text: String)] = []
+            var blocks: [(name: String, color: Color, text: String)] = []
             for (i, p) in webProviders.enumerated() {
                 let t = (web[i] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !t.isEmpty { blocks.append((p.name, t)) }
+                if !t.isEmpty { blocks.append((p.name, ProviderStyle.accent(key: p.key, host: p.url.host ?? ""), t)) }
             }
             for p in visibleAPIProviders where gate(p.id) {
                 if let last = apiStore.messages(for: p.id).last(where: { $0.role == .assistant && !$0.text.isEmpty }) {
-                    blocks.append((p.name, last.text))
+                    blocks.append((p.name, ProviderStyle.accent(key: p.id, host: ""), last.text))
                 }
             }
+            done(blocks)
+        }
+    }
+
+    private func summarizeAnswers(using provider: APIProvider) {
+        summaryTask?.cancel()
+        gatherAnswers(freshOnly: true) { blocks in
             guard blocks.count >= 2 else {
-                summaryText = "至少需要两家答完才能对比(现在只抓到 \(blocks.count) 家)。"
+                summaryText = "至少需要两家答完才能对比（现在只抓到 \(blocks.count) 家）。"
                 summaryStreaming = false
                 showSummary = true
                 return
             }
-            runSummary(provider: provider, blocks: blocks)
+            runSummary(provider: provider, blocks: blocks.map { (name: $0.name, text: $0.text) })
+        }
+    }
+
+    // Share card.
+    @State private var showShareCard = false
+    @State private var shareCardData: ShareCardData? = nil
+
+    /// Collect the currently-displayed answers (history included) and open the share-card preview,
+    /// where the user picks a desktop or mobile size and copies/saves the rendered image.
+    private func generateShareCard() {
+        gatherAnswers(freshOnly: false) { blocks in
+            shareCardData = blocks.isEmpty ? nil
+                : ShareCardData(question: store.lastBroadcast,
+                                answers: blocks.map { ShareAnswer(name: $0.name, color: $0.color, text: $0.text) })
+            showShareCard = true
         }
     }
 
@@ -957,6 +980,9 @@ struct ContentView: View {
                 summaryTask?.cancel()
                 showSummary = false
             }
+        }
+        .sheet(isPresented: $showShareCard) {
+            ShareCardSheet(data: shareCardData) { showShareCard = false }
         }
     }
 
@@ -1309,6 +1335,10 @@ struct ContentView: View {
                 for p in visibleProviders { store.reload(key: p.key) }
             } label: { Label(L("menu.reloadAll"), systemImage: "arrow.clockwise") }
 
+            Button {
+                generateShareCard()
+            } label: { Label("生成分享卡片", systemImage: "photo") }
+
             Divider()
 
             Section(L("menu.panels")) {
@@ -1495,5 +1525,166 @@ struct ContentView: View {
         historyIndex = nil
         prompt = ""
         attachedImage = nil
+    }
+}
+
+// MARK: - Share card
+
+struct ShareAnswer { let name: String; let color: Color; let text: String }
+struct ShareCardData { let question: String; let answers: [ShareAnswer] }
+
+/// Desktop vs mobile share sizes. Mobile is narrow (reads better forwarded in WeChat/IM on a
+/// phone); desktop is wider (better for Twitter / a monitor).
+enum ShareCardWidth: CaseIterable {
+    case desktop, mobile
+    var px: CGFloat { self == .desktop ? 640 : 390 }
+    var label: String { self == .desktop ? "电脑版" : "手机版" }
+}
+
+/// A warm, branded comparison card rendered to an image: the question on top, then each AI's
+/// full answer (accent dot + name + text). Built off the same extraction that powers "summarize",
+/// so it works for both web and API panels.
+private struct ShareCardView: View {
+    let question: String
+    let answers: [ShareAnswer]
+    var width: CGFloat = 640
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if !question.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Q").font(.system(size: 15, weight: .heavy))
+                        .foregroundColor(.white)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color(red: 0.86, green: 0.5, blue: 0.26)))
+                    Text(question)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.black.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider().opacity(0.4)
+            }
+
+            ForEach(answers.indices, id: \.self) { i in
+                let a = answers[i]
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 7) {
+                        Circle().fill(a.color).frame(width: 9, height: 9)
+                        Text(a.name).font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.black.opacity(0.8))
+                    }
+                    Text(a.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.system(size: 13))
+                        .foregroundColor(.black.opacity(0.74))
+                        .lineSpacing(2.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles").font(.system(size: 11))
+                Text("Chorus · 同时问多个 AI").font(.system(size: 11, weight: .medium))
+                Spacer()
+            }
+            .foregroundColor(.black.opacity(0.4))
+            .padding(.top, 2)
+        }
+        .padding(28)
+        .frame(width: width, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [Color(red: 0.988, green: 0.972, blue: 0.937),
+                         Color(red: 0.956, green: 0.925, blue: 0.862)],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
+        )
+    }
+}
+
+/// Preview the rendered card with a desktop/mobile size toggle and copy / save actions. The image
+/// is rendered here (not upstream) so switching size re-renders without re-scraping.
+private struct ShareCardSheet: View {
+    let data: ShareCardData?
+    let onClose: () -> Void
+    @State private var size: ShareCardWidth = .desktop
+    @State private var rendered: NSImage? = nil
+    @State private var copied = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("分享卡片").font(.headline)
+                Spacer()
+                Button("关闭", action: onClose).keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            Divider()
+
+            if data == nil {
+                Spacer()
+                Text("没有可分享的内容\n先广播一个问题，等各家答完再来")
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary).padding(40)
+                Spacer()
+            } else {
+                Picker("", selection: $size) {
+                    ForEach(ShareCardWidth.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .frame(width: 220).padding(.vertical, 10)
+
+                ScrollView {
+                    if let rendered {
+                        Image(nsImage: rendered)
+                            .resizable().scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 18).padding(.bottom, 18)
+                            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                    }
+                }
+            }
+
+            Divider()
+            HStack(spacing: 10) {
+                Spacer()
+                Button {
+                    if let rendered { copy(rendered); copied = true }
+                } label: { Label(copied ? "已复制" : "复制图片", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                    .disabled(rendered == nil)
+                Button {
+                    if let rendered { save(rendered) }
+                } label: { Label("保存…", systemImage: "square.and.arrow.down") }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(rendered == nil)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        }
+        .frame(width: 700, height: 760)
+        .onAppear(perform: render)
+        .onChange(of: size) { _ in copied = false; render() }
+    }
+
+    @MainActor private func render() {
+        guard let data else { rendered = nil; return }
+        let r = ImageRenderer(content: ShareCardView(question: data.question, answers: data.answers, width: size.px))
+        r.scale = 2
+        rendered = r.nsImage
+    }
+
+    private func copy(_ img: NSImage) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([img])
+    }
+
+    private func save(_ img: NSImage) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "chorus-card.png"
+        panel.begin { resp in
+            guard resp == .OK, let url = panel.url,
+                  let tiff = img.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let png = bitmap.representation(using: .png, properties: [:]) else { return }
+            try? png.write(to: url)
+        }
     }
 }

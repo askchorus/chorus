@@ -1389,13 +1389,32 @@ enum Broadcaster {
         return """
         (() => {
           const host = location.hostname;
+          // Drop consecutive duplicate lines (Claude's thinking block renders a collapsed preview
+          // AND the full text, so innerText repeats lines).
+          const dedupe = (s) => {
+            const out = [];
+            for (const ln of s.split('\\n')) {
+              const k = ln.trim();
+              if (out.length && k && out[out.length - 1].trim() === k) continue;
+              out.push(ln);
+            }
+            return out.join('\\n').trim();
+          };
           let sels = [];
           if (host.includes('chatgpt') || host.includes('openai')) {
             sels = ['[data-message-author-role="assistant"]'];
           } else if (host.includes('claude')) {
-            // Claude marks each assistant message container with data-is-streaming → the whole
-            // reply (font-claude-message alone matched only the last paragraph).
-            sels = ['div[data-is-streaming]', 'div.font-claude-message', '[data-testid="assistant-message"]'];
+            // The data-is-streaming wrapper also contains the thinking block + a status label,
+            // which garbles/duplicates the text. Target the answer body (.font-claude-message)
+            // inside the LAST message container instead; fall back to the container only if absent.
+            const cs = document.querySelectorAll('div[data-is-streaming]');
+            const c = cs[cs.length - 1];
+            if (c) {
+              const body = c.querySelector('.font-claude-message') || c;
+              const t = (body.innerText || '').trim();
+              if (t) return dedupe(t);
+            }
+            sels = ['div.font-claude-message', '[data-testid="assistant-message"]'];
           } else if (host.includes('gemini') || host.includes('google')) {
             sels = ['message-content', '.model-response-text', 'model-response', '.markdown'];
           }
@@ -1404,7 +1423,7 @@ enum Broadcaster {
               const ns = document.querySelectorAll(s);
               const last = ns[ns.length - 1];
               const t = last && (last.innerText || '').trim();
-              if (t) return t;
+              if (t) return dedupe(t);
             } catch (_) {}
           }
           return '';
