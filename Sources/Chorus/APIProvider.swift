@@ -9,7 +9,7 @@ struct APIProvider: Identifiable, Codable, Equatable {
     var baseURL: String   // e.g. https://api.openai.com/v1  (no trailing /chat/completions)
     var model: String     // e.g. gpt-4o, deepseek-chat, llama3.2
 
-    var apiKey: String? { Keychain.get(account: "apikey_\(id)") }
+    var apiKey: String? { KeyStore.get(account: "apikey_\(id)") }
 }
 
 /// One-tap presets that prefill the add form (baseURL + a sensible default model). Local ones
@@ -67,12 +67,12 @@ enum APIProviderRegistry {
         let p = APIProvider(id: id, name: trimmedName, baseURL: url,
                             model: model.trimmingCharacters(in: .whitespacesAndNewlines))
         var list = all(); list.append(p); save(list)
-        Keychain.set(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "apikey_\(id)")
+        KeyStore.set(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "apikey_\(id)")
         return true
     }
 
     static func remove(id: String) {
         save(all().filter { $0.id != id })
-        Keychain.delete(account: "apikey_\(id)")
+        KeyStore.delete(account: "apikey_\(id)")
     }
 }

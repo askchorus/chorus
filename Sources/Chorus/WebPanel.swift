@@ -1381,4 +1381,34 @@ enum Broadcaster {
         })();
         """
     }
+
+    /// EXPERIMENT — extract the latest assistant answer's plain text from a web AI's DOM, so we
+    /// can compare/summarize answers natively. Per-site selectors (best-effort, will need upkeep);
+    /// returns "" if nothing matched so the caller can show "couldn't extract".
+    static func extractAnswerScript() -> String {
+        return """
+        (() => {
+          const host = location.hostname;
+          let sels = [];
+          if (host.includes('chatgpt') || host.includes('openai')) {
+            sels = ['[data-message-author-role="assistant"]'];
+          } else if (host.includes('claude')) {
+            // Claude marks each assistant message container with data-is-streaming → the whole
+            // reply (font-claude-message alone matched only the last paragraph).
+            sels = ['div[data-is-streaming]', 'div.font-claude-message', '[data-testid="assistant-message"]'];
+          } else if (host.includes('gemini') || host.includes('google')) {
+            sels = ['message-content', '.model-response-text', 'model-response', '.markdown'];
+          }
+          for (const s of sels) {
+            try {
+              const ns = document.querySelectorAll(s);
+              const last = ns[ns.length - 1];
+              const t = last && (last.innerText || '').trim();
+              if (t) return t;
+            } catch (_) {}
+          }
+          return '';
+        })();
+        """
+    }
 }

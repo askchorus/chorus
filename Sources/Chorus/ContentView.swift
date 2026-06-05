@@ -22,6 +22,12 @@ final class WebViewStore: ObservableObject {
     /// Provider keys whose webview is loading a page — drives the reload spinner (so a tap on
     /// reload visibly does something and the user doesn't click it repeatedly).
     @Published private(set) var loadingKeys: Set<String> = []
+    /// The most recent broadcast prompt — included as "the question" when summarizing answers.
+    @Published private(set) var lastBroadcast: String = ""
+    /// Provider keys/ids that have FINISHED answering since the last broadcast — so "summarize"
+    /// only compares fresh answers to the same question (a panel still on a stale answer is
+    /// excluded, preventing the "mixed questions" mess).
+    @Published private(set) var answeredLastBroadcast: Set<String> = []
 
     /// Favicons per provider key, fetched from each panel's real site — gives every panel
     /// (built-in AND custom) a real logo with zero bundled assets.
@@ -153,6 +159,15 @@ final class WebViewStore: ObservableObject {
         cache[key]?.reload()
     }
 
+    /// EXPERIMENT — extract a web panel's latest answer text (DOM scrape). Empty string if the
+    /// panel has no webview or nothing matched.
+    func extractAnswer(key: String, completion: @escaping (String) -> Void) {
+        guard let wv = cache[key] else { completion(""); return }
+        wv.evaluateJavaScript(Broadcaster.extractAnswerScript()) { result, _ in
+            completion((result as? String) ?? "")
+        }
+    }
+
     /// Live-checks whether ANY of `keys` still shows a stop button — i.e. is still generating
     /// or thinking right now. Async; `completion` runs on the main actor. Ground truth (queries
     /// the live DOM), used by the completion safety net so it won't declare "done" mid-thought.
@@ -232,6 +247,8 @@ final class WebViewStore: ObservableObject {
     /// Broadcast a prompt to all webviews. `source` is used by the completion notifier
     /// to decide whether to alert (e.g. only for quick-input broadcasts in default config).
     func broadcast(text: String, image: NSImage? = nil, source: BroadcastSource = .mainWindow) {
+        lastBroadcast = text          // remembered so "summarize" can include the question
+        answeredLastBroadcast = []    // new question → prior answers no longer count
         var imageBase64: String? = nil
         var pngData: Data? = nil
         if let image = image,
@@ -383,6 +400,7 @@ final class WebViewStore: ObservableObject {
     /// Remove a finished provider (web host key OR API id) from every pending batch; notify when
     /// a batch empties.
     private func notePanelCompletion(key: String) {
+        answeredLastBroadcast.insert(key)   // this panel has a fresh answer to the latest question
         var completedBatches: [PendingBatch] = []
         for (id, var batch) in pendingBatches {
             if batch.pendingKeys.contains(key) {
@@ -455,6 +473,42 @@ final class WebViewStore: ObservableObject {
         cache[key] = nil
         streamingKeys.remove(key)
         favicons.removeValue(forKey: key)
+    }
+}
+
+/// The "summarize all answers" result — streams in, then renders as markdown.
+private struct SummarySheet: View {
+    let text: String
+    let streaming: Bool
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").foregroundColor(.secondary)
+                Text("各家回答汇总").font(.headline)
+                if streaming {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                }
+                Spacer()
+                Button("关闭", action: onClose)
+            }
+            .padding()
+            Divider()
+            ScrollView {
+                Group {
+                    if streaming {
+                        Text(text).font(.system(size: 13)).lineSpacing(3)   // plain while streaming (fast)
+                    } else {
+                        MarkdownText(text: text)                            // pretty once done
+                    }
+                }
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+            }
+        }
+        .frame(width: 620, height: 560)
     }
 }
 
@@ -689,6 +743,74 @@ struct ContentView: View {
     @State private var reflowing = false
     // Set to an API provider id when its "new chat" is tapped → shows a clear-confirmation alert.
     @State private var clearConfirmAPIId: String? = nil
+    // "Summarize answers": the synthesis sheet state.
+    @State private var showSummary = false
+    @State private var summaryText = ""
+    @State private var summaryStreaming = false
+    @State private var summaryTask: Task<Void, Never>? = nil
+
+    /// Gather every visible AI's latest answer (web panels via DOM scrape, API panels natively),
+    /// then have `provider` synthesize a comparison. Streams the result into the summary sheet.
+    private func summarizeAnswers(using provider: APIProvider) {
+        summaryTask?.cancel()
+        // Only panels that actually answered the latest broadcast (a panel sitting on a stale
+        // answer is skipped). If nothing has been broadcast this session, fall back to all.
+        let answered = store.answeredLastBroadcast
+        let gate: (String) -> Bool = { answered.isEmpty || answered.contains($0) }
+        let webProviders = visibleProviders.filter { gate($0.key) }
+        var web = [String?](repeating: nil, count: webProviders.count)
+        let group = DispatchGroup()
+        for (i, p) in webProviders.enumerated() {
+            group.enter()
+            store.extractAnswer(key: p.key) { web[i] = $0; group.leave() }
+        }
+        group.notify(queue: .main) {
+            var blocks: [(name: String, text: String)] = []
+            for (i, p) in webProviders.enumerated() {
+                let t = (web[i] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty { blocks.append((p.name, t)) }
+            }
+            for p in visibleAPIProviders where gate(p.id) {
+                if let last = apiStore.messages(for: p.id).last(where: { $0.role == .assistant && !$0.text.isEmpty }) {
+                    blocks.append((p.name, last.text))
+                }
+            }
+            guard blocks.count >= 2 else {
+                summaryText = "至少需要两家答完才能对比(现在只抓到 \(blocks.count) 家)。"
+                summaryStreaming = false
+                showSummary = true
+                return
+            }
+            runSummary(provider: provider, blocks: blocks)
+        }
+    }
+
+    private func runSummary(provider: APIProvider, blocks: [(name: String, text: String)]) {
+        let q = store.lastBroadcast.trimmingCharacters(in: .whitespacesAndNewlines)
+        let joined = blocks.map { "【\($0.name)】\n\($0.text)" }.joined(separator: "\n\n———\n\n")
+        let prompt = """
+        下面是 \(blocks.count) 个 AI 对\(q.isEmpty ? "同一个问题" : "问题「\(q)」")的回答。请用中文综合对比,给我:
+        1. 共识 —— 它们都同意的点
+        2. 主要分歧 / 矛盾
+        3. 各自独特或最有价值的点
+        4. 一句话综合结论
+
+        \(joined)
+        """
+        summaryText = ""
+        summaryStreaming = true
+        showSummary = true
+        summaryTask = Task {
+            do {
+                try await APIClient.stream(provider: provider, messages: [ChatMessage(role: .user, text: prompt)]) { delta in
+                    Task { @MainActor in summaryText += delta }
+                }
+            } catch {
+                await MainActor.run { summaryText += "\n\n[出错] " + APIClient.friendly(error) }
+            }
+            await MainActor.run { summaryStreaming = false }
+        }
+    }
 
     @AppStorage("providerOrder") private var providerOrderRaw: String = "chatgpt,claude,gemini"
     @AppStorage("hiddenProviders") private var hiddenProvidersRaw: String = ""
@@ -829,6 +951,12 @@ struct ContentView: View {
             Button(L("common.cancel"), role: .cancel) { clearConfirmAPIId = nil }
         } message: {
             Text(L("api.clearConfirm.message"))
+        }
+        .sheet(isPresented: $showSummary, onDismiss: { summaryTask?.cancel() }) {
+            SummarySheet(text: summaryText, streaming: summaryStreaming) {
+                summaryTask?.cancel()
+                showSummary = false
+            }
         }
     }
 
@@ -1064,6 +1192,7 @@ struct ContentView: View {
 
             HStack(alignment: .center, spacing: 10) {
                 composerMenu
+                summarizeButton
 
                 TextField(minimalMode ? "" : L("composer.placeholder"),
                           text: $prompt, axis: .vertical)
@@ -1134,6 +1263,37 @@ struct ContentView: View {
         .onDisappear {
             removePasteMonitor()
         }
+    }
+
+    /// "Summarize all answers" — a one-click composer button (was buried in the … menu). Click
+    /// the sparkles → pick which API model synthesizes the comparison.
+    private var summarizeButton: some View {
+        Menu {
+            if apiProviders.isEmpty {
+                Text("汇总需要一个 API 模型来做综合")
+                Button("打开设置添加…") { openSettings() }
+            } else {
+                Section("选一个模型,汇总各家 AI 的回答") {
+                    ForEach(apiProviders) { p in
+                        Button("用 \(p.name) 汇总") { summarizeAnswers(using: p) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 14))
+                if !minimalMode {
+                    Text("汇总").font(.system(size: 12, weight: .medium))
+                }
+            }
+            .foregroundColor(.secondary)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("汇总各家回答：把所有 AI 的回答交给一个模型综合对比")
     }
 
     /// Global actions tucked into the composer's left edge (ChatGPT-style). Keeps the title
