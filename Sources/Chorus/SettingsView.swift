@@ -330,6 +330,22 @@ struct SettingsView: View {
                                raw: $imageChipsRaw,
                                defaults: kImageChipPrompts)
             }
+
+            Section(L("settings.section.about")) {
+                hint("settings.about.hint")
+                HStack {
+                    Text(L("settings.about.contact"))
+                    Spacer()
+                    Link("smileduck@duck.com",
+                         destination: URL(string: "mailto:smileduck@duck.com?subject=Chorus%20%E5%8F%8D%E9%A6%88")!)
+                }
+                HStack {
+                    Text(L("settings.about.version"))
+                    Spacer()
+                    Text((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "—")
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         // Light-touch theming: hide the Form's default (cold grey) scroll background and put the

@@ -71,6 +71,12 @@ let L10nTable: [String: [String: String]] = [
     "settings.section.providers": ["zh": "AI 服务", "en": "AI Providers"],
     "settings.section.quickPrompts": ["zh": "快捷提示", "en": "Quick Prompts"],
     "settings.section.notifications": ["zh": "通知", "en": "Notifications"],
+    "settings.section.about": ["zh": "关于 / 反馈", "en": "About / Feedback"],
+
+    // MARK: Settings — about
+    "settings.about.hint": ["zh": "用着有问题、有想法，欢迎邮件找我", "en": "Issues or ideas? Email me anytime"],
+    "settings.about.contact": ["zh": "联系开发者", "en": "Contact developer"],
+    "settings.about.version": ["zh": "版本", "en": "Version"],
 
     // MARK: Settings — language
     "settings.language.label": ["zh": "界面语言", "en": "Interface language"],
