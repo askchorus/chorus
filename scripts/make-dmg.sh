@@ -23,6 +23,7 @@ STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/$VOL.app"
 mkdir "$STAGE/.background"
 cp "$BG" "$STAGE/.background/bg.png"
+cp "$ROOT/scripts/AppIcon.icns" "$STAGE/.VolumeIcon.icns"   # branded mounted-volume icon
 ln -s /Applications "$STAGE/Applications"
 
 echo "==> Creating read-write DMG..."
@@ -56,12 +57,17 @@ tell application "Finder"
   end tell
 end tell
 EOF
+# Brand the mounted volume's icon (sets the custom-icon bit so .VolumeIcon.icns is used).
+swift "$ROOT/scripts/set-icon.swift" "$ROOT/scripts/AppIcon.icns" "/Volumes/$VOL" || true
 sync; sleep 1
 hdiutil detach "/Volumes/$VOL" >/dev/null || hdiutil detach "/Volumes/$VOL" -force >/dev/null
 
 echo "==> Compressing..."
 hdiutil convert "$RWDMG" -format UDZO -imagekey zlib-level=9 -o "$OUT" >/dev/null
 rm -f "$RWDMG"
+
+echo "==> Stamping the .dmg file icon..."
+swift "$ROOT/scripts/set-icon.swift" "$ROOT/scripts/AppIcon.icns" "$OUT" || true
 
 echo "✓ $OUT"
 ls -lh "$OUT"
