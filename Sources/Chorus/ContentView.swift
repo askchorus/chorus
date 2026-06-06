@@ -4,6 +4,7 @@ import AppKit
 import CoreGraphics
 import ApplicationServices
 import UniformTypeIdentifiers
+import Carbon.HIToolbox
 
 @MainActor
 final class WebViewStore: ObservableObject {
@@ -841,6 +842,8 @@ struct ContentView: View {
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
     @AppStorage("appearance") private var appearance: String = "light"
     @AppStorage("minimalMode") private var minimalMode: Bool = false
+    @AppStorage("welcomeSeen") private var welcomeSeen: Bool = false   // first-run welcome card
+    @State private var showWelcome = false
     // Observed so the main window re-renders (and shows/removes API cards) the moment an API
     // model is added or removed in Settings — no app restart needed. Read via APIProviderRegistry.
     @AppStorage("apiProviders") private var apiProvidersRaw: String = ""
@@ -959,6 +962,7 @@ struct ContentView: View {
             for p in allProviders {
                 _ = store.getOrCreate(key: p.key, url: p.url)
             }
+            if !welcomeSeen { showWelcome = true }   // first launch only
         }
         .onChange(of: appearance) { newValue in
             AppearanceManager.apply(newValue)
@@ -983,6 +987,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showShareCard) {
             ShareCardSheet(data: shareCardData) { showShareCard = false }
+        }
+        .sheet(isPresented: $showWelcome) {
+            WelcomeSheet { welcomeSeen = true; showWelcome = false }
         }
     }
 
@@ -1685,6 +1692,92 @@ private struct ShareCardSheet: View {
                   let bitmap = NSBitmapImageRep(data: tiff),
                   let png = bitmap.representation(using: .png, properties: [:]) else { return }
             try? png.write(to: url)
+        }
+    }
+}
+
+// MARK: - First-run welcome
+
+/// A single, prominent welcome card shown once on first launch. One screen, big readable text,
+/// three clear steps, warm theme — no per-panel repetition, no multi-step wizard.
+private struct WelcomeSheet: View {
+    let onStart: () -> Void
+    private let accent = Color(red: 0.86, green: 0.5, blue: 0.26)   // warm orange
+    // Read the live quick-input binding so the card always shows the real shortcut, formatted the
+    // same way Settings does (defaults match SettingsView: ⌘⇧C).
+    @AppStorage("hotkeyKeyCode") private var hotkeyKeyCode: Int = Int(kVK_ANSI_C)
+    @AppStorage("hotkeyModifiers") private var hotkeyModifiers: Int = Int(cmdKey | shiftKey)
+
+    var body: some View {
+        let hotkey = formatHotkey(keyCode: hotkeyKeyCode, modifiers: hotkeyModifiers)
+        return VStack(spacing: 0) {
+            VStack(spacing: 16) {
+                if let icon = NSApp.applicationIconImage {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 76, height: 76)
+                        .shadow(color: .black.opacity(0.18), radius: 7, y: 3)
+                }
+                VStack(spacing: 7) {
+                    Text("欢迎使用 Chorus")
+                        .font(.system(size: 27, weight: .bold))
+                        .foregroundColor(.black.opacity(0.85))
+                    Text("一句话，同时问多个 AI，回答并排看、好对比")
+                        .font(.system(size: 14.5))
+                        .foregroundColor(.black.opacity(0.55))
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding(.top, 44)
+            .padding(.bottom, 30)
+
+            VStack(alignment: .leading, spacing: 22) {
+                step("person.crop.circle.fill", "登录你的账号",
+                     "首次使用，在每个面板登录你常用的 AI（就是平时用的网页版）")
+                step("paperplane.fill", "问一次，问所有",
+                     "底部输入框打一次字，按 ⌘↩ 同时发给所有 AI")
+                step("bolt.fill", "随时快速发问",
+                     "在任何 app 里按 \(hotkey)，唤出快速输入框")
+            }
+            .padding(.horizontal, 40)
+
+            Spacer(minLength: 28)
+
+            Button(action: onStart) {
+                Text("开始使用")
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .padding(.horizontal, 40)
+            .padding(.bottom, 30)
+        }
+        .frame(width: 470, height: 560)
+        .background(
+            LinearGradient(
+                colors: [Color(red: 0.992, green: 0.978, blue: 0.948),
+                         Color(red: 0.958, green: 0.928, blue: 0.866)],
+                startPoint: .top, endPoint: .bottom)
+        )
+    }
+
+    private func step(_ icon: String, _ title: String, _ desc: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle().fill(accent.opacity(0.16)).frame(width: 40, height: 40)
+                Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundColor(accent)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 16, weight: .semibold)).foregroundColor(.black.opacity(0.82))
+                Text(desc).font(.system(size: 13.5)).foregroundColor(.black.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
         }
     }
 }
