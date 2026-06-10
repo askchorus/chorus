@@ -81,6 +81,17 @@ let L10nTable: [String: [String: String]] = [
     "settings.about.copyWechat": ["zh": "复制微信号", "en": "Copy WeChat ID"],
     "settings.about.version": ["zh": "版本", "en": "Version"],
 
+    // MARK: First-run welcome
+    "welcome.title": ["zh": "欢迎使用 Chorus", "en": "Welcome to Chorus"],
+    "welcome.subtitle": ["zh": "一句话，同时问多个 AI，回答并排看、好对比", "en": "Ask once — every AI answers, side by side"],
+    "welcome.step1.title": ["zh": "登录你的账号", "en": "Sign in to your AIs"],
+    "welcome.step1.desc": ["zh": "首次使用，在每个面板登录你常用的 AI（就是平时用的网页版）", "en": "On first use, sign in to each panel with the accounts you already use on the web"],
+    "welcome.step2.title": ["zh": "问一次，问所有", "en": "Ask once, ask them all"],
+    "welcome.step2.desc": ["zh": "底部输入框打一次字，按 ⌘↩ 同时发给所有 AI", "en": "Type once in the bottom composer, press ⌘↩ to send to every AI"],
+    "welcome.step3.title": ["zh": "随时快速发问", "en": "Ask from anywhere"],
+    "welcome.step3.desc": ["zh": "在任何 app 里按 %@，唤出快速输入框", "en": "Press %@ in any app to summon the quick input"],
+    "welcome.start": ["zh": "开始使用", "en": "Get Started"],
+
     // MARK: Settings — language
     "settings.language.label": ["zh": "界面语言", "en": "Interface language"],
     "settings.language.system": ["zh": "跟随系统", "en": "System"],

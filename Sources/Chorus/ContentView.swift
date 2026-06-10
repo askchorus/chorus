@@ -4,7 +4,6 @@ import AppKit
 import CoreGraphics
 import ApplicationServices
 import UniformTypeIdentifiers
-import Carbon.HIToolbox
 
 @MainActor
 final class WebViewStore: ObservableObject {

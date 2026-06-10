@@ -20,6 +20,7 @@ struct SettingsView: View {
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("minimalMode") private var minimalMode: Bool = false
     @State private var wechatCopied = false
+    @State private var wechatCopyGen = 0   // invalidates stale ✓-reset timers on rapid re-clicks
 
     /// A settings description caption — hidden in Minimal mode.
     @ViewBuilder private func hint(_ key: String) -> some View {
@@ -350,7 +351,11 @@ struct SettingsView: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString("346436018", forType: .string)
                         wechatCopied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { wechatCopied = false }
+                        wechatCopyGen += 1
+                        let gen = wechatCopyGen
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            if wechatCopyGen == gen { wechatCopied = false }
+                        }
                     } label: {
                         Image(systemName: wechatCopied ? "checkmark" : "doc.on.doc")
                             .foregroundColor(wechatCopied ? .green : .secondary)

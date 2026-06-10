@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 // Render the DMG window background: a warm cream gradient, the "Chorus" wordmark, a one-line
 // install hint, and an arrow pointing from the app icon slot toward the Applications slot.
 // CoreGraphics + CoreText only (AppKit drawing fails in headless `swift script` context).
+// NOTE: gradient + orange mirror ChorusTheme.cardCream / .brandOrange (Sources/Chorus/Theme.swift);
+// this script can't import the app module, so keep the values in sync by hand.
 // Usage: swift dmg-background.swift <out.png>   (defaults to /tmp/chorus-dmg-bg.png)
 
 let outPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "/tmp/chorus-dmg-bg.png"

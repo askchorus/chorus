@@ -68,7 +68,7 @@ private struct ShareCardView: View {
                     Text("Q").font(.system(size: 15, weight: .heavy))
                         .foregroundColor(.white)
                         .frame(width: 22, height: 22)
-                        .background(Circle().fill(Color(red: 0.86, green: 0.5, blue: 0.26)))
+                        .background(Circle().fill(ChorusTheme.brandOrange))
                     Text(question)
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.black.opacity(0.85))
@@ -104,10 +104,8 @@ private struct ShareCardView: View {
         .padding(28)
         .frame(width: width, alignment: .leading)
         .background(
-            LinearGradient(
-                colors: [Color(red: 0.988, green: 0.972, blue: 0.937),
-                         Color(red: 0.956, green: 0.925, blue: 0.862)],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: ChorusTheme.cardCream,
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
         )
     }
 }
@@ -207,7 +205,7 @@ struct ShareCardSheet: View {
 /// three clear steps, warm theme — no per-panel repetition, no multi-step wizard.
 struct WelcomeSheet: View {
     let onStart: () -> Void
-    private let accent = Color(red: 0.86, green: 0.5, blue: 0.26)   // warm orange
+    private let accent = ChorusTheme.brandOrange
     // Read the live quick-input binding so the card always shows the real shortcut, formatted the
     // same way Settings does (defaults match SettingsView: ⌘⇧C).
     @AppStorage("hotkeyKeyCode") private var hotkeyKeyCode: Int = Int(kVK_ANSI_C)
@@ -224,10 +222,10 @@ struct WelcomeSheet: View {
                         .shadow(color: .black.opacity(0.18), radius: 7, y: 3)
                 }
                 VStack(spacing: 7) {
-                    Text("欢迎使用 Chorus")
+                    Text(L("welcome.title"))
                         .font(.system(size: 27, weight: .bold))
                         .foregroundColor(.black.opacity(0.85))
-                    Text("一句话，同时问多个 AI，回答并排看、好对比")
+                    Text(L("welcome.subtitle"))
                         .font(.system(size: 14.5))
                         .foregroundColor(.black.opacity(0.55))
                         .multilineTextAlignment(.center)
@@ -237,19 +235,16 @@ struct WelcomeSheet: View {
             .padding(.bottom, 30)
 
             VStack(alignment: .leading, spacing: 22) {
-                step("person.crop.circle.fill", "登录你的账号",
-                     "首次使用，在每个面板登录你常用的 AI（就是平时用的网页版）")
-                step("paperplane.fill", "问一次，问所有",
-                     "底部输入框打一次字，按 ⌘↩ 同时发给所有 AI")
-                step("bolt.fill", "随时快速发问",
-                     "在任何 app 里按 \(hotkey)，唤出快速输入框")
+                step("person.crop.circle.fill", L("welcome.step1.title"), L("welcome.step1.desc"))
+                step("paperplane.fill", L("welcome.step2.title"), L("welcome.step2.desc"))
+                step("bolt.fill", L("welcome.step3.title"), Lf("welcome.step3.desc", hotkey))
             }
             .padding(.horizontal, 40)
 
             Spacer(minLength: 28)
 
             Button(action: onStart) {
-                Text("开始使用")
+                Text(L("welcome.start"))
                     .font(.system(size: 15.5, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
@@ -264,10 +259,8 @@ struct WelcomeSheet: View {
         }
         .frame(width: 470, height: 560)
         .background(
-            LinearGradient(
-                colors: [Color(red: 0.992, green: 0.978, blue: 0.948),
-                         Color(red: 0.958, green: 0.928, blue: 0.866)],
-                startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: ChorusTheme.cardCream,
+                           startPoint: .top, endPoint: .bottom)
         )
     }
 

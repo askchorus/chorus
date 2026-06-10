@@ -9,6 +9,14 @@ enum ChorusTheme {
     static let gap: CGFloat = 12
     static let margin: CGFloat = 14
 
+    /// Brand accents shared by the share card, welcome card, and future branded surfaces.
+    /// (scripts/dmg-background.swift mirrors these as CGColor — it can't import the app module,
+    /// so keep them in sync by hand.)
+    static let brandOrange = Color(red: 0.86, green: 0.5, blue: 0.26)
+    /// Light cream gradient backing branded cards (share card, welcome card).
+    static let cardCream: [Color] = [Color(red: 0.988, green: 0.972, blue: 0.937),
+                                     Color(red: 0.956, green: 0.925, blue: 0.862)]
+
     static func cardBorder(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10)
     }
