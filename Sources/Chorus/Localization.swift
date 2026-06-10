@@ -74,8 +74,11 @@ let L10nTable: [String: [String: String]] = [
     "settings.section.about": ["zh": "关于 / 反馈", "en": "About / Feedback"],
 
     // MARK: Settings — about
-    "settings.about.hint": ["zh": "用着有问题、有想法，欢迎邮件找我", "en": "Issues or ideas? Email me anytime"],
+    "settings.about.hint": ["zh": "用着有问题、有想法，欢迎邮件或微信找我", "en": "Issues or ideas? Reach me by email or WeChat"],
     "settings.about.contact": ["zh": "联系开发者", "en": "Contact developer"],
+    "settings.about.wechat": ["zh": "微信", "en": "WeChat"],
+    "settings.about.copied": ["zh": "已复制", "en": "Copied"],
+    "settings.about.copyWechat": ["zh": "复制微信号", "en": "Copy WeChat ID"],
     "settings.about.version": ["zh": "版本", "en": "Version"],
 
     // MARK: Settings — language

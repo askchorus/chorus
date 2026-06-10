@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage("warmWebPages") private var warmWebPages: Bool = true
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("minimalMode") private var minimalMode: Bool = false
+    @State private var wechatCopied = false
 
     /// A settings description caption — hidden in Minimal mode.
     @ViewBuilder private func hint(_ key: String) -> some View {
@@ -338,6 +339,24 @@ struct SettingsView: View {
                     Spacer()
                     Link("smileduck@duck.com",
                          destination: URL(string: "mailto:smileduck@duck.com?subject=Chorus%20%E5%8F%8D%E9%A6%88")!)
+                }
+                HStack {
+                    Text(L("settings.about.wechat"))
+                    Spacer()
+                    Text("346436018")
+                        .textSelection(.enabled)
+                        .foregroundColor(.secondary)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("346436018", forType: .string)
+                        wechatCopied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { wechatCopied = false }
+                    } label: {
+                        Image(systemName: wechatCopied ? "checkmark" : "doc.on.doc")
+                            .foregroundColor(wechatCopied ? .green : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(wechatCopied ? L("settings.about.copied") : L("settings.about.copyWechat"))
                 }
                 HStack {
                     Text(L("settings.about.version"))
