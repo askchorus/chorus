@@ -762,6 +762,39 @@ enum Broadcaster {
             clicked = true;
           }
 
+          // 3b) Verify the send actually TOOK. Gemini's Angular composer sometimes swallows
+          //     the synthetic click (the button looks enabled before the framework has armed
+          //     its handler), leaving the text stranded in the input — the panel then looks
+          //     like it ignored the broadcast. On every host a successful send clears the
+          //     composer immediately, so "text still in the composer" = the send didn't land.
+          //     Retry: wake the framework with a fresh input event, re-click, then fall back
+          //     to a synthesized Enter (Gemini sends on Enter).
+          if (TEXT && input) {
+            const composerText = () => {
+              try { return ((input.isContentEditable ? input.innerText : input.value) || '').trim(); }
+              catch (_) { return ''; }
+            };
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              await new Promise(r => setTimeout(r, 1500));
+              if (composerText() === '') break;   // composer cleared → send accepted
+              clog('send-verify: text still in composer after attempt ' + attempt + ' — retrying');
+              try {
+                input.focus();
+                // Nudge the framework's change detection so the send handler is really armed.
+                input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+              } catch (_) {}
+              await new Promise(r => setTimeout(r, 250));
+              const btn = pickFirst(cfg.sendSelectors);
+              if (btn && !(btn.disabled || btn.getAttribute('aria-disabled') === 'true')) {
+                fullClick(btn);
+              } else {
+                const kOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+                input.dispatchEvent(new KeyboardEvent('keydown', kOpts));
+                input.dispatchEvent(new KeyboardEvent('keyup', kOpts));
+              }
+            }
+          }
+
           // 4) Async completion poll. We detect "currently streaming" via EITHER:
           //    (a) a stop/cancel button is present in the composer area, OR
           //    (b) the send button is present but disabled.
