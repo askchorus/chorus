@@ -140,9 +140,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateStatusIcon() {
-        let busy = !WebViewStore.shared.streamingKeys.isEmpty
-        let name = busy ? "ellipsis.bubble" : "bubble.left.and.bubble.right"
-        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "Chorus")
+        // The brand glyph (app-icon circle character). Busy state is conveyed by the menu's status
+        // line + the in-app streaming dots, so the menu-bar mark stays constant and recognizable.
+        let img = ChorusGlyph.circle(size: 18, filled: true)
+        img.accessibilityDescription = "Chorus"
+        statusItem?.button?.image = img
     }
 
     // Refresh the dynamic status line each time the menu opens.

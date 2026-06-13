@@ -783,12 +783,17 @@ struct QuickInputView: View {
     /// circle / square / triangle trio — instead of a generic SF Symbol, so the
     /// quick input feels like the same product. Contextual modes (help, dictionary)
     /// keep their meaningful SF Symbol.
-    // NOTE (future): replace ✨ with a purpose-made monochrome brand mark (circle/square/
-    // triangle) that also doubles as the menu-bar icon. The hand-drawn cluster + the shrunk
-    // app icon both looked off; this needs a real designed glyph (vector/PNG) before swapping in.
+    // In broadcast mode show the Chorus brand glyph (the app-icon circle character, also the
+    // menu-bar mark); contextual modes (help, dictionary) keep their meaningful SF Symbol.
     @ViewBuilder private var leadingIcon: some View {
-        Image(systemName: iconForCurrentInput())
-            .font(.system(size: 19))
+        if iconForCurrentInput() == "sparkles" {
+            Image(nsImage: ChorusGlyph.circle(size: 21, filled: true))
+                .renderingMode(.template)
+                .foregroundColor(.secondary)
+        } else {
+            Image(systemName: iconForCurrentInput())
+                .font(.system(size: 19))
+        }
     }
 
 
