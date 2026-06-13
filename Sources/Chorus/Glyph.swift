@@ -22,10 +22,11 @@ enum ChorusGlyph {
         let s = box.width
         let black = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
 
-        // Raise the body to leave room for three little feet at the bottom (matching the app icon).
+        // Raise the body to leave room for the feet, but keep the body+feet group vertically
+        // centered in the box (top margin ≈ bottom margin) so the menu bar doesn't render it high.
         let d = s * 0.66
         let cx = box.midX
-        let body = CGRect(x: cx - d / 2, y: box.maxY - s * 0.07 - d, width: d, height: d)
+        let body = CGRect(x: cx - d / 2, y: box.maxY - s * 0.11 - d, width: d, height: d)
 
         let eyeR = s * 0.05
         let eyeY = body.midY + s * 0.045
