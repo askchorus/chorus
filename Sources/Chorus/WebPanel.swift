@@ -534,7 +534,19 @@ enum Broadcaster {
             return [...new Set(results)];
           };
 
-          const input = pickFirst(cfg.inputSelectors);
+          // Wait for the composer input to exist before giving up. A broadcast can fire while the
+          // page is still settling (fresh chat, post-reload hydration, a React re-render of the
+          // composer), and a single-shot lookup would bail and leave the panel blank while the
+          // others answer. Poll up to 8s.
+          let input = pickFirst(cfg.inputSelectors);
+          if (!input && (TEXT || IMAGE_B64)) {
+            const inputDeadline = Date.now() + 8000;
+            while (Date.now() < inputDeadline) {
+              await new Promise(r => setTimeout(r, 200));
+              input = pickFirst(cfg.inputSelectors);
+              if (input) break;
+            }
+          }
           if (!input && (TEXT || IMAGE_B64)) return 'input not found';
 
           // 1) Attach image FIRST (if any)
