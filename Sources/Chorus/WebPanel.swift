@@ -458,8 +458,11 @@ enum Broadcaster {
                 'div[contenteditable="true"]'
               ],
               sendSelectors: [
-                'button[aria-label*="Send message" i]',
                 'button.send-button',
+                'button[data-test-id="send-button"]',
+                'button[mattooltip*="Send" i]',
+                'button[aria-label*="发送"]',            // localized: a Chinese Gemini hides the
+                'button[aria-label*="Send message" i]',  // English-only selectors entirely
                 'button[aria-label*="Send" i]'
               ],
               // Gemini's image upload goes through the native runOpenPanel path
@@ -703,6 +706,14 @@ enum Broadcaster {
               r.collapse(false);  // collapse to END — don't wipe existing nodes
               sel.addRange(r);
               document.execCommand('insertText', false, TEXT);
+              // Arm rich editors (Gemini's Quill / Angular) whose send button only ENABLES on a
+              // real input event — execCommand alone may not fire one in WKWebView, so the button
+              // stays aria-disabled and the prompt strands in the composer.
+              try {
+                input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: TEXT }));
+              } catch (_) {
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+              }
             } else {
               const proto = input instanceof HTMLTextAreaElement
                 ? HTMLTextAreaElement.prototype
@@ -786,9 +797,22 @@ enum Broadcaster {
               try { return ((input.isContentEditable ? input.innerText : input.value) || '').trim(); }
               catch (_) { return ''; }
             };
+            // A successful send EITHER clears the composer OR makes a stop button appear (streaming
+            // started). Checking both prevents a re-send — and a double-posted message — when an AI
+            // begins generating without clearing its editor.
+            const stopVisible = () => {
+              for (const s of ['button[aria-label*="Stop" i]', 'button[aria-label*="停止"]', 'button[mattooltip*="Stop" i]']) {
+                for (const el of document.querySelectorAll(s)) {
+                  const rc = el.getBoundingClientRect();
+                  if (rc.width > 0 && rc.height > 0) return true;
+                }
+              }
+              return false;
+            };
+            const sent = () => composerText() === '' || stopVisible();
             for (let attempt = 1; attempt <= 3; attempt++) {
               await new Promise(r => setTimeout(r, 1500));
-              if (composerText() === '') break;   // composer cleared → send accepted
+              if (sent()) break;   // composer cleared or streaming started → send accepted
               clog('send-verify: text still in composer after attempt ' + attempt + ' — retrying');
               try {
                 input.focus();
