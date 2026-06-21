@@ -302,7 +302,7 @@ struct StatsSheet: View {
     }
 
     private func rows() -> [Row] {
-        let votes = VoteStore.shared.allVotes()
+        let votes = VoteStore.shared.votesForStats()
         let cutoff = range.days.flatMap { Calendar.current.date(byAdding: .day, value: -$0, to: Date()) }
         let iso = ISO8601DateFormatter()
         var wins: [String: Int] = [:], shown: [String: Int] = [:], names: [String: String] = [:]

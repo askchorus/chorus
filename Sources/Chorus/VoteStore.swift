@@ -63,6 +63,14 @@ final class VoteStore: ObservableObject {
 
     // MARK: Read
 
+    /// Votes for the stats view: persisted rows PLUS the current round's in-memory pick, so a
+    /// just-cast vote shows up immediately (it's only written to disk on the next broadcast / quit).
+    func votesForStats() -> [RoundVote] {
+        var list = allVotes()
+        if let p = pending, p.winner != nil { list.append(p) }
+        return list
+    }
+
     func allVotes() -> [RoundVote] {
         guard let url = Self.url, let data = try? Data(contentsOf: url),
               let text = String(data: data, encoding: .utf8) else { return [] }
