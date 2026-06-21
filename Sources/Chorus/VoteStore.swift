@@ -23,10 +23,10 @@ final class VoteStore: ObservableObject {
         let ts: String                 // ISO-8601 with timezone
         let broadcastId: String
         let question: String
-        let contenders: [String]       // stable provider keys that answered this round
+        var contenders: [String]       // stable provider keys that answered this round
         var winner: String?            // provider key, or nil if skipped/undecided
         var skipped: Bool
-        let names: [String: String]    // key → display name at vote time (readable exports)
+        var names: [String: String]    // key → display name at vote time (readable exports)
     }
 
     // MARK: Capture
@@ -44,6 +44,11 @@ final class VoteStore: ObservableObject {
             pending = RoundVote(id: UUID().uuidString, ts: Self.now(), broadcastId: broadcastId,
                                 question: String(question.prefix(2000)), contenders: contenders,
                                 winner: nil, skipped: false, names: names)
+        } else {
+            // Same round, but more panels may have finished since the first pick — refresh the
+            // contender set (and names) so the winner is always among the recorded contenders.
+            pending?.contenders = contenders
+            for (k, n) in names { pending?.names[k] = n }
         }
         if pending?.winner == key {
             pending?.winner = nil
