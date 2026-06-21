@@ -279,3 +279,100 @@ struct WelcomeSheet: View {
         }
     }
 }
+
+// MARK: - Win-rate stats
+
+/// "Which AI do I like most" dashboard. Computes WIN RATE (wins ÷ rounds where the panel was a
+/// contender) live from votes.jsonl — never raw win counts (which favor whoever appears most).
+/// Sample-size gated: a leaderboard that screams a winner at n=5 is the real failure mode.
+struct StatsSheet: View {
+    let onClose: () -> Void
+    @State private var range: StatRange = .all
+
+    enum StatRange: CaseIterable {
+        case week, month, all
+        var label: String { self == .week ? "7天" : self == .month ? "30天" : "全部" }
+        var days: Int? { self == .week ? 7 : self == .month ? 30 : nil }
+    }
+
+    private struct Row: Identifiable {
+        let id: String, name: String
+        let wins: Int, shown: Int
+        var rate: Double { shown == 0 ? 0 : Double(wins) / Double(shown) }
+    }
+
+    private func rows() -> [Row] {
+        let votes = VoteStore.shared.allVotes()
+        let cutoff = range.days.flatMap { Calendar.current.date(byAdding: .day, value: -$0, to: Date()) }
+        let iso = ISO8601DateFormatter()
+        var wins: [String: Int] = [:], shown: [String: Int] = [:], names: [String: String] = [:]
+        for v in votes {
+            if let c = cutoff, let t = iso.date(from: v.ts), t < c { continue }
+            guard let w = v.winner else { continue }
+            for k in v.contenders { shown[k, default: 0] += 1; if let n = v.names[k] { names[k] = n } }
+            wins[w, default: 0] += 1
+        }
+        return shown.keys.map { Row(id: $0, name: names[$0] ?? $0, wins: wins[$0] ?? 0, shown: shown[$0] ?? 0) }
+            .sorted { ($0.rate, $0.shown) > ($1.rate, $1.shown) }
+    }
+
+    var body: some View {
+        let data = rows()
+        VStack(spacing: 0) {
+            HStack {
+                Text("胜率统计").font(.headline)
+                Spacer()
+                Button("关闭", action: onClose).keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            Divider()
+
+            Picker("", selection: $range) {
+                ForEach(StatRange.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 220).padding(.vertical, 10)
+
+            if data.isEmpty {
+                Spacer()
+                Text("还没有投票记录。\n广播一个问题，等各家答完，点面板标题栏的 ☆ 选出这轮最佳。")
+                    .multilineTextAlignment(.center).foregroundColor(.secondary).padding(40)
+                Spacer()
+            } else {
+                ScrollView {
+                    VStack(spacing: 14) {
+                        ForEach(data) { r in
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 6) {
+                                    Text(r.name).font(.system(size: 13, weight: .semibold))
+                                    if r.shown < 30 {
+                                        Text("样本少").font(.system(size: 10)).foregroundColor(.secondary)
+                                            .padding(.horizontal, 5).padding(.vertical, 1)
+                                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                                    }
+                                    Spacer()
+                                    Text("\(Int((r.rate * 100).rounded()))%").font(.system(size: 13, weight: .bold))
+                                    Text("· \(r.wins)/\(r.shown)").font(.system(size: 11)).foregroundColor(.secondary)
+                                }
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        Capsule().fill(Color.primary.opacity(0.08)).frame(height: 8)
+                                        Capsule().fill(ProviderStyle.accent(key: r.id, host: ""))
+                                            .frame(width: max(4, geo.size.width * r.rate), height: 8)
+                                    }
+                                }
+                                .frame(height: 8)
+                            }
+                        }
+                    }
+                    .padding(18)
+                }
+                Divider()
+                Text("这是「你的口味」随时间的记录，不是模型客观评测；样本太少时别当真。")
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: 460, height: 560)
+    }
+}

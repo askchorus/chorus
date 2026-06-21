@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Backstop: persist each panel's current conversation URL so we can reopen it next launch.
         WebViewStore.shared.saveAllSessionURLs()
+        VoteStore.shared.commitPending()   // flush the current round's pick before quitting
     }
 
     // MARK: - Menu bar

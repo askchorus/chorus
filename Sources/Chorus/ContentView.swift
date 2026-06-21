@@ -28,6 +28,8 @@ final class WebViewStore: ObservableObject {
     /// only compares fresh answers to the same question (a panel still on a stale answer is
     /// excluded, preventing the "mixed questions" mess).
     @Published private(set) var answeredLastBroadcast: Set<String> = []
+    /// Unique id per broadcast — groups the panels racing the same prompt for vote stats.
+    @Published private(set) var currentBroadcastId: String = ""
 
     /// Favicons per provider key, fetched from each panel's real site — gives every panel
     /// (built-in AND custom) a real logo with zero bundled assets.
@@ -249,6 +251,8 @@ final class WebViewStore: ObservableObject {
     func broadcast(text: String, image: NSImage? = nil, source: BroadcastSource = .mainWindow) {
         lastBroadcast = text          // remembered so "summarize" can include the question
         answeredLastBroadcast = []    // new question → prior answers no longer count
+        currentBroadcastId = UUID().uuidString
+        VoteStore.shared.newRound()   // commit the previous round's pick, reset the star state
         var imageBase64: String? = nil
         var pngData: Data? = nil
         if let image = image,
@@ -479,6 +483,8 @@ final class WebViewStore: ObservableObject {
 struct ContentView: View {
     @EnvironmentObject private var store: WebViewStore
     @ObservedObject private var apiStore = APIChatStore.shared   // native API model panels
+    @ObservedObject private var voteStore = VoteStore.shared     // per-round "best answer" votes
+    @State private var showStats = false
     @State private var prompt: String = ""
     @State private var attachedImage: NSImage? = nil
     @FocusState private var promptFocused: Bool
@@ -737,6 +743,9 @@ struct ContentView: View {
         .sheet(isPresented: $showShareCard) {
             ShareCardSheet(data: shareCardData) { showShareCard = false }
         }
+        .sheet(isPresented: $showStats) {
+            StatsSheet { showStats = false }
+        }
         .sheet(isPresented: $showWelcome) {
             WelcomeSheet { welcomeSeen = true; showWelcome = false }
         }
@@ -819,6 +828,7 @@ struct ContentView: View {
                     .layoutPriority(-1)   // shrink the long model name first, keep the buttons clear
             }
             Spacer(minLength: 8)
+            winnerStar(key: p.id, accentHost: "", name: p.name)
             if apiStore.isStreaming(p.id) {
                 Button { apiStore.stop(p.id) } label: {
                     Image(systemName: "stop.fill")
@@ -857,6 +867,37 @@ struct ContentView: View {
 
     /// Thin neutral status strip: a "thinking" dot, the provider name, and hover actions.
     /// Kept minimal so it doesn't compete with each site's own header below it.
+    /// "Crown this answer the best of the round" star. Shown only once the round is votable
+    /// (this panel answered AND ≥2 panels answered — a 1-panel vote is meaningless). Single-select:
+    /// clicking a different panel moves the crown; clicking the current winner clears it.
+    @ViewBuilder private func winnerStar(key: String, accentHost: String, name: String) -> some View {
+        if store.answeredLastBroadcast.contains(key) && store.answeredLastBroadcast.count >= 2 {
+            let isWinner = voteStore.currentWinner == key
+            Button {
+                pickWinner(key)
+            } label: {
+                Image(systemName: isWinner ? "star.fill" : "star")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(isWinner ? ProviderStyle.accent(key: key, host: accentHost) : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isWinner ? "已选「\(name)」为这轮最佳（再点取消）" : "选「\(name)」为这轮最佳")
+        }
+    }
+
+    /// Snapshot the round context and record the pick (held in memory, written on the next round).
+    private func pickWinner(_ key: String) {
+        let contenders = Array(store.answeredLastBroadcast)
+        var names: [String: String] = [:]
+        for k in contenders {
+            if let p = allProviders.first(where: { $0.key == k }) { names[k] = p.name }
+            else if let p = apiProviders.first(where: { $0.id == k }) { names[k] = p.name }
+            else { names[k] = k }
+        }
+        voteStore.pick(winner: key, broadcastId: store.currentBroadcastId,
+                       question: store.lastBroadcast, contenders: contenders, names: names)
+    }
+
     private func slimHeader(for p: Provider) -> some View {
         HStack(spacing: 7) {
             if let icon = store.favicons[p.key] {
@@ -875,6 +916,7 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary.opacity(0.9))
             Spacer()
+            winnerStar(key: p.key, accentHost: p.url.host ?? "", name: p.name)
             // Loading spinner — always visible (not hover-gated) while the page reloads, so a
             // reload tap visibly registers and the user waits instead of clicking again.
             if store.loadingKeys.contains(p.key) {
@@ -1094,6 +1136,10 @@ struct ContentView: View {
             Button {
                 generateShareCard()
             } label: { Label("生成分享卡片", systemImage: "photo") }
+
+            Button {
+                showStats = true
+            } label: { Label("胜率统计", systemImage: "chart.bar") }
 
             Divider()
 
