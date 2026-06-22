@@ -901,6 +901,29 @@ enum Broadcaster {
                 }
               });
             };
+            // Aggressive repaint for when Gemini FINISHES but leaves the answer unpainted (you see
+            // the action toolbar but no text until a manual scroll). The gentle 1px nudge above
+            // isn't enough: jiggle the LARGEST scrollable container by a real amount and force a
+            // reflow so the virtualized renderer commits the final paint.
+            const geminiForceRepaint = () => {
+              try {
+                window.dispatchEvent(new Event('resize'));
+                let best = null, bestArea = 0;
+                document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
+                  if (el.scrollHeight <= el.clientHeight + 20) return;
+                  const oy = getComputedStyle(el).overflowY;
+                  if (oy !== 'auto' && oy !== 'scroll') return;
+                  const area = el.clientWidth * el.clientHeight;
+                  if (area > bestArea) { bestArea = area; best = el; }
+                });
+                if (best) {
+                  const t = best.scrollTop;
+                  best.scrollTop = Math.max(0, t - 80); best.scrollTop = t + 80; best.scrollTop = t;
+                  void best.offsetHeight;   // force reflow → paint
+                }
+                void document.body.offsetHeight;
+              } catch (_) {}
+            };
 
             // Force-paint nudge for occluded windows. Some sites (Gemini in particular) use
             // IntersectionObserver / Polymer lazy rendering — when our window is occluded,
@@ -1042,7 +1065,7 @@ enum Broadcaster {
                 if (idleTicks >= 2) {
                   clearInterval(interval); window.__chorusPoll = null;
                   // Response finished — land at the start of the latest answer (fallback: bottom).
-                  if (!isGemini) scrollOnComplete();
+                  if (isGemini) { geminiForceRepaint(); setTimeout(geminiForceRepaint, 250); setTimeout(geminiForceRepaint, 700); setTimeout(geminiForceRepaint, 1500); } else { scrollOnComplete(); }
                   try {
                     window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
                       host: location.hostname
@@ -1228,7 +1251,7 @@ enum Broadcaster {
                   confirm = null;
                   if (!window.__chorusPoll && !streaming()) {
                     was = false;
-                    if (!isGemini) scrollOnComplete();   // land at the start of the finished answer
+                    if (isGemini) { geminiForceRepaint(); setTimeout(geminiForceRepaint, 250); setTimeout(geminiForceRepaint, 700); setTimeout(geminiForceRepaint, 1500); } else { scrollOnComplete(); }   // land at the start of the finished answer
                     post({ host: location.hostname });
                   }
                 }, 700);
