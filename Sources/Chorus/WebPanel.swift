@@ -703,7 +703,11 @@ enum Broadcaster {
               sel.removeAllRanges();
               const r = document.createRange();
               r.selectNodeContents(input);
-              r.collapse(false);  // collapse to END — don't wipe existing nodes
+              // No image: keep the FULL selection so insertText REPLACES any stale, unsent text —
+              // otherwise a Gemini send that failed leaves its prompt in the composer and the next
+              // broadcast piles a second question on top of it. With an image, collapse to the end
+              // so we append after the attachment node instead of wiping it.
+              if (IMAGE_B64 || WAIT_UPLOAD) { r.collapse(false); }
               sel.addRange(r);
               document.execCommand('insertText', false, TEXT);
               // Arm rich editors (Gemini's Quill / Angular) whose send button only ENABLES on a
@@ -820,11 +824,20 @@ enum Broadcaster {
                 input.dispatchEvent(new InputEvent('input', { bubbles: true }));
               } catch (_) {}
               await new Promise(r => setTimeout(r, 250));
-              const btn = pickFirst(cfg.sendSelectors);
-              if (btn && !(btn.disabled || btn.getAttribute('aria-disabled') === 'true')) {
-                fullClick(btn);
+              // The click keeps getting swallowed by Gemini's Angular handler, so ESCALATE through a
+              // different send path on each retry (one per attempt, so a method that DID work can't
+              // double-post): re-click → full synthetic Enter sequence → submit the enclosing form.
+              const kOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+              input.focus();
+              if (attempt === 1) {
+                const btn = pickFirst(cfg.sendSelectors);
+                if (btn) fullClick(btn);
+              } else if (attempt === 2) {
+                input.dispatchEvent(new KeyboardEvent('keydown', kOpts));
+                input.dispatchEvent(new KeyboardEvent('keypress', kOpts));
+                input.dispatchEvent(new KeyboardEvent('keyup', kOpts));
               } else {
-                const kOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+                try { input.closest('form')?.requestSubmit?.(); } catch (_) {}
                 input.dispatchEvent(new KeyboardEvent('keydown', kOpts));
                 input.dispatchEvent(new KeyboardEvent('keyup', kOpts));
               }
