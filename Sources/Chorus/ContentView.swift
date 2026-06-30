@@ -248,19 +248,19 @@ final class WebViewStore: ObservableObject {
 
     /// Broadcast a prompt to all webviews. `source` is used by the completion notifier
     /// to decide whether to alert (e.g. only for quick-input broadcasts in default config).
-    func broadcast(text: String, image: NSImage? = nil, source: BroadcastSource = .mainWindow) {
+    func broadcast(text: String, images: [NSImage] = [], source: BroadcastSource = .mainWindow) {
         lastBroadcast = text          // remembered so "summarize" can include the question
         answeredLastBroadcast = []    // new question → prior answers no longer count
         currentBroadcastId = UUID().uuidString
         VoteStore.shared.newRound()   // commit the previous round's pick, reset the star state
-        var imageBase64: String? = nil
-        var pngData: Data? = nil
-        if let image = image,
-           let tiff = image.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
-            pngData = png
-            imageBase64 = png.base64EncodedString()
+        var imagesBase64: [String] = []
+        var pngDatas: [Data] = []
+        for image in images {
+            guard let tiff = image.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let png = bitmap.representation(using: .png, properties: [:]) else { continue }
+            pngDatas.append(png)
+            imagesBase64.append(png.base64EncodedString())
         }
 
         // Build the "wait for" set for the completion notification:
@@ -294,23 +294,23 @@ final class WebViewStore: ObservableObject {
             clog("broadcast skipped completion tracking — no providers to wait for (visible=\(visibleKeys), required=\(requiredKeys))")
         }
 
-        let jsWithImage = Broadcaster.injectionScript(text: text, imageBase64: imageBase64)
+        let jsWithImages = Broadcaster.injectionScript(text: text, imagesBase64: imagesBase64)
         // Gemini send script: attaches no image itself, but waits for the panel-uploaded
-        // image to finish appearing before typing + sending.
-        let jsGeminiSend = Broadcaster.injectionScript(text: text, imageBase64: nil, waitForGeminiUpload: true)
+        // image(s) to finish appearing before typing + sending.
+        let jsGeminiSend = Broadcaster.injectionScript(text: text, imagesBase64: [], waitForGeminiUpload: !pngDatas.isEmpty)
         for (key, webView) in cache {
             // Don't broadcast to hidden panels — hiding a panel excludes it from sends.
             if hiddenKeys.contains(key) { continue }
 
             // Gemini blocks synthetic JS image attachment: it renders no static <input type=file>
             // and ignores synthetic paste/drop (isTrusted=false). Instead we intercept its
-            // file-open panel: arm runOpenPanel with a temp image file, then drive Gemini's
-            // "Upload files" menu so WebKit calls the panel — which we answer silently.
-            if key == "gemini", let png = pngData {
-                geminiUploadViaPanel(into: webView, pngData: png, thenRun: jsGeminiSend)
+            // file-open panel: arm runOpenPanel with the temp image file(s), then drive Gemini's
+            // "Upload files" menu so WebKit calls the panel — which we answer silently with all N.
+            if key == "gemini", !pngDatas.isEmpty {
+                geminiUploadViaPanel(into: webView, pngDatas: pngDatas, thenRun: jsGeminiSend)
                 continue
             }
-            webView.evaluateJavaScript(jsWithImage) { result, error in
+            webView.evaluateJavaScript(jsWithImages) { result, error in
                 if let error = error {
                     print("[\(key)] error: \(error.localizedDescription)")
                 }
@@ -320,11 +320,11 @@ final class WebViewStore: ObservableObject {
         // Fan out to the native API model panels too (with the image, for vision models). Hidden
         // ones are skipped, mirroring the web panels.
         let apiPrompt = text
-        let apiImage = imageBase64
+        let apiImages = imagesBase64
         let skip = hiddenKeys
         Task { @MainActor in
             for p in APIProviderRegistry.all() where !skip.contains(p.id) {
-                APIChatStore.shared.send(to: p, prompt: apiPrompt, imageBase64: apiImage)
+                APIChatStore.shared.send(to: p, prompt: apiPrompt, imagesBase64: apiImages)
             }
         }
     }
@@ -334,20 +334,22 @@ final class WebViewStore: ObservableObject {
     /// runOpenPanel auto-answer, then drive Gemini's "Upload files" menu. When Gemini fires
     /// its lazy <input type=file>, WebKit calls our delegate, which returns the file silently
     /// (no dialog). Finally set the text and send.
-    private func geminiUploadViaPanel(into webView: WKWebView, pngData: Data, thenRun js: String) {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("chorus-upload-\(UUID().uuidString).png")
-        do {
-            try pngData.write(to: tmp)
-        } catch {
-            chorusLog.notice("[Chorus.Gemini] temp file write failed: \(error.localizedDescription, privacy: .public)")
+    private func geminiUploadViaPanel(into webView: WKWebView, pngDatas: [Data], thenRun js: String) {
+        var tmps: [URL] = []
+        for png in pngDatas {
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("chorus-upload-\(UUID().uuidString).png")
+            do { try png.write(to: tmp); tmps.append(tmp) }
+            catch { chorusLog.notice("[Chorus.Gemini] temp file write failed: \(error.localizedDescription, privacy: .public)") }
+        }
+        guard !tmps.isEmpty else {
             webView.evaluateJavaScript(js) { _, _ in }  // still send the text
             return
         }
 
-        // Arm the open-panel auto-answer (single-shot, consumed by runOpenPanel).
-        LinkRoutingDelegate.shared.pendingUpload = tmp
-        chorusLog.notice("[Chorus.Gemini] armed pendingUpload=\(tmp.lastPathComponent, privacy: .public)")
+        // Arm the open-panel auto-answer (single-shot, consumed by runOpenPanel — returns ALL N).
+        LinkRoutingDelegate.shared.pendingUploads = tmps
+        chorusLog.notice("[Chorus.Gemini] armed pendingUploads=\(tmps.count)")
 
         // Bring Chorus forward — some user-activation-gated paths only fire for the active app.
         NSApp.activate(ignoringOtherApps: true)
@@ -367,9 +369,9 @@ final class WebViewStore: ObservableObject {
         // Safety: if the menu nav never triggers the panel, don't leave a stale armed upload
         // that would hijack the user's next manual file pick. Clear it after 10s.
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-            if LinkRoutingDelegate.shared.pendingUpload == tmp {
-                LinkRoutingDelegate.shared.pendingUpload = nil
-                chorusLog.notice("[Chorus.Gemini] cleared stale pendingUpload (panel never fired)")
+            if LinkRoutingDelegate.shared.pendingUploads == tmps {
+                LinkRoutingDelegate.shared.pendingUploads = []
+                chorusLog.notice("[Chorus.Gemini] cleared stale pendingUploads (panel never fired)")
             }
         }
     }
@@ -486,7 +488,7 @@ struct ContentView: View {
     @ObservedObject private var voteStore = VoteStore.shared     // per-round "best answer" votes
     @State private var showStats = false
     @State private var prompt: String = ""
-    @State private var attachedImage: NSImage? = nil
+    @State private var attachedImages: [NSImage] = []
     @FocusState private var promptFocused: Bool
 
     // Voice input (on-device dictation) for the main composer.
@@ -1013,8 +1015,8 @@ struct ContentView: View {
 
     private var composer: some View {
         VStack(spacing: 8) {
-            if let image = attachedImage {
-                imagePreviewRow(image)
+            if !attachedImages.isEmpty {
+                imagePreviewRow()
             }
 
             HStack(alignment: .center, spacing: 10) {
@@ -1206,40 +1208,39 @@ struct ContentView: View {
         .help(L("menu.actions"))
     }
 
-    private func imagePreviewRow(_ image: NSImage) -> some View {
+    private func imagePreviewRow() -> some View {
         HStack(spacing: 8) {
-            ZStack(alignment: .topTrailing) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 52, height: 52)
-                    .clipped()
-                    .cornerRadius(8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.white.opacity(0.12))
-                    )
-                Button {
-                    attachedImage = nil
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                        .background(Circle().fill(.background))
+            ForEach(attachedImages.indices, id: \.self) { i in
+                ZStack(alignment: .topTrailing) {
+                    Image(nsImage: attachedImages[i])
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 52, height: 52)
+                        .clipped()
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.white.opacity(0.12))
+                        )
+                    Button {
+                        if attachedImages.indices.contains(i) { attachedImages.remove(at: i) }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                            .background(Circle().fill(.background))
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 6, y: -6)
+                    .help(L("composer.removeImage"))
                 }
-                .buttonStyle(.plain)
-                .offset(x: 6, y: -6)
-                .help(L("composer.removeImage"))
             }
-            Text(L("composer.imageAttached"))
-                .font(.caption)
-                .foregroundColor(.secondary)
             Spacer()
         }
     }
 
     private var canSend: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil
+        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedImages.isEmpty
     }
 
     /// Local NSEvent monitor that handles two things when our prompt field has focus:
@@ -1305,7 +1306,7 @@ struct ContentView: View {
                event.charactersIgnoringModifiers?.lowercased() == "v" {
                 let pb = NSPasteboard.general
                 if let img = NSImage(pasteboard: pb), img.size.width > 0, img.size.height > 0 {
-                    Task { @MainActor in self.attachedImage = img }
+                    Task { @MainActor in self.attachedImages.append(img) }
                     let hasText = pb.canReadObject(forClasses: [NSString.self], options: nil)
                     return hasText ? event : nil
                 }
@@ -1325,11 +1326,11 @@ struct ContentView: View {
         dictator.stop()  // end any in-progress dictation
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
-        store.broadcast(text: text, image: attachedImage, source: .mainWindow)
+        store.broadcast(text: text, images: attachedImages, source: .mainWindow)
         PromptHistory.add(text)
         historyIndex = nil
         prompt = ""
-        attachedImage = nil
+        attachedImages = []
     }
 }
 

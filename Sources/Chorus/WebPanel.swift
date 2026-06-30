@@ -93,8 +93,9 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// an image into Gemini, which renders no static file input and ignores synthetic
     /// paste/drop. The broadcaster writes the image to a temp file, sets this, then drives
     /// Gemini's "Upload files" menu — WebKit calls runOpenPanel, we supply the file silently.
-    /// Single-shot: cleared as soon as it's consumed.
-    var pendingUpload: URL?
+    /// Single-shot: cleared as soon as it's consumed. Array so a multi-image broadcast can answer
+    /// Gemini's file panel with all N files at once.
+    var pendingUploads: [URL] = []
 
     /// Last auto-reload time per webview — guards against reloading in a tight crash loop.
     private var lastReloadAt: [ObjectIdentifier: Date] = [:]
@@ -173,14 +174,15 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
             // panel (or a stray panel) from consuming the armed image during its brief window.
             let host = webView.url?.host ?? ""
             let isGemini = host.contains("gemini.google.com") || host.contains("gemini")
-            if let pending = self.pendingUpload, isGemini {
-                self.pendingUpload = nil  // single-shot
-                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — auto-supplying \(pending.lastPathComponent, privacy: .public) (no dialog)")
-                completionHandler([pending])
+            if !self.pendingUploads.isEmpty, isGemini {
+                let pending = self.pendingUploads
+                self.pendingUploads = []  // single-shot
+                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — auto-supplying \(pending.count) file(s) (no dialog)")
+                completionHandler(pending)
             } else {
                 // Either no pending upload, or a non-Gemini panel — show the real dialog and
                 // leave any armed Gemini upload intact for when Gemini's own panel fires.
-                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — showing NSOpenPanel (pending=\(self.pendingUpload != nil))")
+                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — showing NSOpenPanel (pending=\(!self.pendingUploads.isEmpty))")
                 let panel = NSOpenPanel()
                 panel.canChooseFiles = true
                 panel.canChooseDirectories = false
@@ -386,7 +388,7 @@ enum Broadcaster {
     ///   - waitForGeminiUpload: when true, the script attaches NO image itself but first waits
     ///     for an externally-supplied image (Gemini's runOpenPanel upload) to finish appearing
     ///     in the composer before typing + sending. Avoids firing send on a half-uploaded image.
-    static func injectionScript(text: String, imageBase64: String? = nil, imageMime: String = "image/png", waitForGeminiUpload: Bool = false) -> String {
+    static func injectionScript(text: String, imagesBase64: [String] = [], imageMime: String = "image/png", waitForGeminiUpload: Bool = false) -> String {
         let escapedText = text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -394,14 +396,14 @@ enum Broadcaster {
             .replacingOccurrences(of: "\r", with: "\\r")
             .replacingOccurrences(of: "\t", with: "\\t")
 
-        let imageJS = imageBase64.map { "\"\($0)\"" } ?? "null"
+        let imagesJS = "[" + imagesBase64.map { "\"\($0)\"" }.joined(separator: ",") + "]"
         let mimeJS = "\"\(imageMime)\""
         let waitUploadJS = waitForGeminiUpload ? "true" : "false"
 
         return """
         (async () => {
           const TEXT = "\(escapedText)";
-          const IMAGE_B64 = \(imageJS);
+          const IMAGES_B64 = \(imagesJS);   // array of base64 PNGs (may be empty)
           const IMAGE_MIME = \(mimeJS);
           const WAIT_UPLOAD = \(waitUploadJS);
 
@@ -424,7 +426,7 @@ enum Broadcaster {
                 'button[data-testid="composer-send-button"]',
                 'button[aria-label*="Send" i]'
               ],
-              uploadMethod: 'paste',
+              uploadMethod: 'fileInput',   // multiple-capable <input>; paste only carries ONE image
               fileInputSelectors: [
                 'input[type="file"][multiple][accept]',
                 'input[type="file"][accept*="image"]',
@@ -443,7 +445,7 @@ enum Broadcaster {
                 'button[aria-label="Send message"]',
                 'button[aria-label*="Send" i]'
               ],
-              uploadMethod: 'paste',
+              uploadMethod: 'fileInput',   // ProseMirror paste reads files[0] only → use the input
               fileInputSelectors: [
                 'input[type="file"][accept*="image"]',
                 'input[data-testid*="file"]',
@@ -542,7 +544,7 @@ enum Broadcaster {
           // composer), and a single-shot lookup would bail and leave the panel blank while the
           // others answer. Poll up to 8s.
           let input = pickFirst(cfg.inputSelectors);
-          if (!input && (TEXT || IMAGE_B64)) {
+          if (!input && (TEXT || IMAGES_B64.length)) {
             const inputDeadline = Date.now() + 8000;
             while (Date.now() < inputDeadline) {
               await new Promise(r => setTimeout(r, 200));
@@ -550,58 +552,49 @@ enum Broadcaster {
               if (input) break;
             }
           }
-          if (!input && (TEXT || IMAGE_B64)) return 'input not found';
+          if (!input && (TEXT || IMAGES_B64.length)) return 'input not found';
 
           // 1) Attach image FIRST (if any)
           // Reason: some composers (Claude) clear the input on paste-with-file.
           // Doing image first means the file attaches to a separate attachment slot,
           // and text inserted afterwards lands cleanly in the empty editor.
           let imageAttached = false;
-          if (IMAGE_B64) {
-            // Decode base64 → File
-            const byteString = atob(IMAGE_B64);
-            const bytes = new Uint8Array(byteString.length);
-            for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+          if (IMAGES_B64.length) {
+            // Decode each base64 → File.
             const ext = IMAGE_MIME.split('/')[1] || 'png';
-            const file = new File([new Blob([bytes], { type: IMAGE_MIME })], `pasted.${ext}`, { type: IMAGE_MIME });
+            const files = IMAGES_B64.map((b64, i) => {
+              const byteString = atob(b64);
+              const bytes = new Uint8Array(byteString.length);
+              for (let j = 0; j < byteString.length; j++) bytes[j] = byteString.charCodeAt(j);
+              return new File([new Blob([bytes], { type: IMAGE_MIME })], `pasted-${i}.${ext}`, { type: IMAGE_MIME });
+            });
 
             const method = cfg.uploadMethod || 'paste';
 
+            // Each strategy builds ONE DataTransfer carrying ALL files and fires its event ONCE —
+            // never one event per file (sequential single-file attaches race React's state-commit
+            // and usually leave only the LAST image, the classic "only the last one attached" bug).
             const tryPaste = () => {
               if (!input) return false;
               try {
                 const dt = new DataTransfer();
-                dt.items.add(file);
-                const pasteEvent = new ClipboardEvent('paste', {
-                  clipboardData: dt,
-                  bubbles: true,
-                  cancelable: true,
-                });
+                for (const f of files) dt.items.add(f);
                 input.focus();
-                input.dispatchEvent(pasteEvent);
+                input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
                 return true;
-              } catch (e) {
-                console.warn('paste event failed', e);
-                return false;
-              }
+              } catch (e) { return false; }
             };
 
             const tryDrop = () => {
               const targets = (cfg.dropTargetSelectors || cfg.inputSelectors)
-                .flatMap(sel => Array.from(document.querySelectorAll(sel)))
-                .filter(Boolean);
+                .flatMap(sel => Array.from(document.querySelectorAll(sel))).filter(Boolean);
               if (targets.length === 0) return false;
               for (const target of targets) {
                 try {
                   const dt = new DataTransfer();
-                  dt.items.add(file);
-                  ['dragenter', 'dragover', 'drop'].forEach(type => {
-                    target.dispatchEvent(new DragEvent(type, {
-                      dataTransfer: dt,
-                      bubbles: true,
-                      cancelable: true,
-                    }));
-                  });
+                  for (const f of files) dt.items.add(f);
+                  ['dragenter', 'dragover', 'drop'].forEach(type =>
+                    target.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true })));
                   return true;
                 } catch (e) { /* try next target */ }
               }
@@ -610,32 +603,27 @@ enum Broadcaster {
 
             const tryFileInput = () => {
               const fileInputs = deepQueryAll(cfg.fileInputSelectors || ['input[type="file"]']);
-              clog('tryFileInput: deep-found ' + fileInputs.length + ' file inputs');
+              clog('tryFileInput: deep-found ' + fileInputs.length + ' inputs, attaching ' + files.length + ' file(s)');
               if (fileInputs.length === 0) return false;
               for (const fi of fileInputs) {
                 try {
                   const dt = new DataTransfer();
-                  dt.items.add(file);
-                  fi.files = dt.files;
+                  for (const f of files) dt.items.add(f);
+                  fi.files = dt.files;   // .files has a real native setter; inputs are uncontrolled
                   fi.dispatchEvent(new Event('change', { bubbles: true }));
-                  clog('tryFileInput: set files on ' + (fi.outerHTML || '?').slice(0, 120));
+                  clog('tryFileInput: set ' + dt.files.length + ' file(s) on ' + (fi.outerHTML || '?').slice(0, 100));
                   return true;
-                } catch (e) {
-                  clog('tryFileInput: setting files threw — ' + e);
-                }
+                } catch (e) { clog('tryFileInput: threw — ' + e); }
               }
               return false;
             };
 
-            // Run primary strategy; on failure walk through remaining methods.
             const order = method === 'drop'
               ? [['drop', tryDrop], ['fileInput', tryFileInput], ['paste', tryPaste]]
               : method === 'fileInput'
                 ? [['fileInput', tryFileInput], ['paste', tryPaste], ['drop', tryDrop]]
                 : [['paste', tryPaste], ['fileInput', tryFileInput], ['drop', tryDrop]];
 
-            // `await` is safe on sync returns (just resolves immediately) — keeps
-            // the loop compatible with both sync and async strategy functions.
             for (const [name, fn] of order) {
               let ok = false;
               try { ok = await fn(); } catch (e) { clog(name + ' threw: ' + e); }
@@ -643,10 +631,25 @@ enum Broadcaster {
               if (ok) { imageAttached = true; break; }
             }
 
-            // Wait for the upload to register in the UI (composer shows attached file).
-            // Bumped from 800ms to 1500ms because Claude's React state sometimes hadn't
-            // committed the attachment yet at 800ms, causing send-before-image races.
-            await new Promise(r => setTimeout(r, 1500));
+            // Wait for the attachments to register before sending — poll the composer's
+            // thumbnail / remove-button count up to files.length so a multi-image set isn't sent
+            // half-attached, with a generous cap so a miscount can't hang the send.
+            const attachmentCount = () => {
+              try {
+                const imgs = deepQueryAll(['img[src^="blob:"]', 'img[src^="data:image"]']).length;
+                const rms = deepQueryAll(['button[aria-label*="remove" i]', 'button[aria-label*="delete" i]',
+                                          'button[aria-label*="移除" i]', 'button[aria-label*="删除" i]']).length;
+                return Math.max(imgs, rms);
+              } catch (_) { return 0; }
+            };
+            const need = files.length;
+            const waitStart = Date.now();
+            while (Date.now() - waitStart < 15000) {
+              if (attachmentCount() >= need) break;
+              await new Promise(r => setTimeout(r, 300));
+            }
+            await new Promise(r => setTimeout(r, 600));   // settle after they appear
+            clog('multi-image: ' + attachmentCount() + '/' + need + ' attached after ' + (Date.now() - waitStart) + 'ms');
           }
 
           // 1b) Gemini panel-upload path: the image is uploaded out-of-band (native
@@ -707,7 +710,7 @@ enum Broadcaster {
               // otherwise a Gemini send that failed leaves its prompt in the composer and the next
               // broadcast piles a second question on top of it. With an image, collapse to the end
               // so we append after the attachment node instead of wiping it.
-              if (IMAGE_B64 || WAIT_UPLOAD) { r.collapse(false); }
+              if (IMAGES_B64.length || WAIT_UPLOAD) { r.collapse(false); }
               sel.addRange(r);
               document.execCommand('insertText', false, TEXT);
               // Arm rich editors (Gemini's Quill / Angular) whose send button only ENABLES on a
@@ -735,7 +738,7 @@ enum Broadcaster {
           //    then trigger send. Try a real click first; if button stays disabled past the
           //    deadline, click it anyway as a last-ditch attempt; finally fall back to a
           //    synthesized Enter on the input (some sites send via key event not button).
-          const sendDeadline = Date.now() + ((IMAGE_B64 || WAIT_UPLOAD) ? 25000 : 3000);
+          const sendDeadline = Date.now() + ((IMAGES_B64.length || WAIT_UPLOAD) ? 25000 : 3000);
           let lastBtn = null;
           let clicked = false;
 

@@ -138,7 +138,7 @@ struct APIPanelView: View {
         let t = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty || attachedImage != nil else { return }
         dictator.stop()
-        store.send(to: provider, prompt: t, imageBase64: attachedImage.flatMap(Self.pngBase64))
+        store.send(to: provider, prompt: t, imagesBase64: attachedImage.flatMap(Self.pngBase64).map { [$0] } ?? [])
         input = ""
         attachedImage = nil
     }
@@ -201,12 +201,14 @@ private struct MessageRow: View {
             HStack {
                 Spacer(minLength: 36)
                 VStack(alignment: .trailing, spacing: 6) {
-                    if let img = message.imageBase64.flatMap(Self.decode) {
-                        Image(nsImage: img)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: 220, maxHeight: 220)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    ForEach(message.imagesBase64.indices, id: \.self) { i in
+                        if let img = Self.decode(message.imagesBase64[i]) {
+                            Image(nsImage: img)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 220, maxHeight: 220)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
                     }
                     if !message.text.isEmpty {
                         Text(message.text)
