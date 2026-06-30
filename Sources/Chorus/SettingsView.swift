@@ -41,6 +41,7 @@ struct SettingsView: View {
     @State private var newAPIBase: String = ""
     @State private var newAPIModel: String = ""
     @State private var newAPIKey: String = ""
+    @State private var editingAPIId: String? = nil   // non-nil → the add form is editing this provider
 
     // Decode from the observed @AppStorage (not APIProviderRegistry.all()) so the list updates
     // live when a provider is added/removed — reading apiProvidersRaw establishes the dependency.
@@ -221,7 +222,17 @@ struct SettingsView: View {
                             .font(.caption).foregroundColor(.secondary).lineLimit(1)
                         Spacer()
                         Button {
+                            editingAPIId = p.id
+                            newAPIName = p.name
+                            newAPIBase = p.baseURL
+                            newAPIModel = p.model
+                            newAPIKey = ""   // blank = keep the existing key
+                        } label: { Image(systemName: "pencil").foregroundColor(.secondary) }
+                            .buttonStyle(.plain)
+                            .help(Lf("settings.api.edit", p.name))
+                        Button {
                             APIProviderRegistry.remove(id: p.id)
+                            if editingAPIId == p.id { editingAPIId = nil; newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = "" }
                             apiProvidersRaw = UserDefaults.standard.string(forKey: "apiProviders") ?? ""
                         } label: { Image(systemName: "trash").foregroundColor(.secondary) }
                             .buttonStyle(.plain)
@@ -266,11 +277,25 @@ struct SettingsView: View {
                 TextField(text: $newAPIBase, prompt: Text("https://api.openai.com/v1")) { EmptyView() }
                     .labelsHidden().textFieldStyle(.roundedBorder)
                 HStack(spacing: 8) {
-                    SecureField(text: $newAPIKey, prompt: Text(L("settings.api.key"))) { EmptyView() }
+                    SecureField(text: $newAPIKey,
+                                prompt: Text(editingAPIId == nil ? L("settings.api.key") : L("settings.api.keyEdit"))) { EmptyView() }
                         .labelsHidden().textFieldStyle(.roundedBorder)
-                    Button(L("settings.api.add")) {
-                        if APIProviderRegistry.add(name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey) {
+                    if editingAPIId != nil {
+                        Button(L("settings.api.cancel")) {
+                            editingAPIId = nil
                             newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""
+                        }
+                    }
+                    Button(editingAPIId == nil ? L("settings.api.add") : L("settings.api.save")) {
+                        let ok: Bool
+                        if let id = editingAPIId {
+                            ok = APIProviderRegistry.update(id: id, name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey)
+                        } else {
+                            ok = APIProviderRegistry.add(name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey)
+                        }
+                        if ok {
+                            newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""
+                            editingAPIId = nil
                             apiProvidersRaw = UserDefaults.standard.string(forKey: "apiProviders") ?? ""
                         }
                     }

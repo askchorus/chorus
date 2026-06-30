@@ -71,6 +71,25 @@ enum APIProviderRegistry {
         return true
     }
 
+    /// Edit an existing provider in place (keeps its id, so chat history + visibility persist).
+    /// The key is replaced ONLY if `apiKey` is non-empty — blank means "keep the current key".
+    @discardableResult
+    static func update(id: String, name: String, baseURL: String, model: String, apiKey: String) -> Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.hasSuffix("/") { url.removeLast() }
+        guard !trimmedName.isEmpty, !url.isEmpty, URL(string: url) != nil else { return false }
+        var list = all()
+        guard let idx = list.firstIndex(where: { $0.id == id }) else { return false }
+        list[idx].name = trimmedName
+        list[idx].baseURL = url
+        list[idx].model = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        save(list)
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty { KeyStore.set(key, account: "apikey_\(id)") }
+        return true
+    }
+
     static func remove(id: String) {
         save(all().filter { $0.id != id })
         KeyStore.delete(account: "apikey_\(id)")
