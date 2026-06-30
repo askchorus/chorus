@@ -23,16 +23,29 @@ struct SummarySheet: View {
             .padding()
             Divider()
             ScrollView {
-                Group {
-                    if streaming {
-                        Text(text).font(.system(size: 13)).lineSpacing(3)   // plain while streaming (fast)
-                    } else {
-                        MarkdownText(text: text)                            // pretty once done
+                if streaming && text.isEmpty {
+                    // The model is thinking — with a reasoner model nothing streams for 10-30s
+                    // (the thinking isn't surfaced, only the final answer). Show a clear working
+                    // state so the empty sheet doesn't read as "stuck / crashed".
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("正在综合各家回答…（模型思考中，可能要十几秒）")
+                            .font(.system(size: 13)).foregroundColor(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                } else {
+                    Group {
+                        if streaming {
+                            Text(text).font(.system(size: 13)).lineSpacing(3)   // plain while streaming (fast)
+                        } else {
+                            MarkdownText(text: text)                            // pretty once done
+                        }
+                    }
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
                 }
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
             }
         }
         .frame(width: 620, height: 560)
