@@ -624,16 +624,8 @@ enum Broadcaster {
                 ? [['fileInput', tryFileInput], ['paste', tryPaste], ['drop', tryDrop]]
                 : [['paste', tryPaste], ['fileInput', tryFileInput], ['drop', tryDrop]];
 
-            for (const [name, fn] of order) {
-              let ok = false;
-              try { ok = await fn(); } catch (e) { clog(name + ' threw: ' + e); }
-              clog('strategy ' + name + ' returned ' + ok);
-              if (ok) { imageAttached = true; break; }
-            }
-
-            // Wait for the attachments to register before sending — poll the composer's
-            // thumbnail / remove-button count up to files.length so a multi-image set isn't sent
-            // half-attached, with a generous cap so a miscount can't hang the send.
+            // Count attachment previews / remove-buttons BEFORE attaching, so images already in
+            // the conversation don't inflate the gate and make it pass before the NEW ones commit.
             const attachmentCount = () => {
               try {
                 const imgs = deepQueryAll(['img[src^="blob:"]', 'img[src^="data:image"]']).length;
@@ -642,14 +634,28 @@ enum Broadcaster {
                 return Math.max(imgs, rms);
               } catch (_) { return 0; }
             };
-            const need = files.length;
-            const waitStart = Date.now();
-            while (Date.now() - waitStart < 15000) {
-              if (attachmentCount() >= need) break;
-              await new Promise(r => setTimeout(r, 300));
+            const baseline = attachmentCount();
+
+            for (const [name, fn] of order) {
+              let ok = false;
+              try { ok = await fn(); } catch (e) { clog(name + ' threw: ' + e); }
+              clog('strategy ' + name + ' returned ' + ok);
+              if (ok) { imageAttached = true; break; }
             }
-            await new Promise(r => setTimeout(r, 600));   // settle after they appear
-            clog('multi-image: ' + attachmentCount() + '/' + need + ' attached after ' + (Date.now() - waitStart) + 'ms');
+
+            // Only wait if something actually attached (else we'd burn the timeout for nothing).
+            // Wait for the NEW attachments (delta over baseline) so a multi-image set isn't sent
+            // half-attached; cap 8s so a selector miss can't stall the send too long.
+            if (imageAttached) {
+              const need = files.length;
+              const waitStart = Date.now();
+              while (Date.now() - waitStart < 8000) {
+                if (attachmentCount() >= baseline + need) break;
+                await new Promise(r => setTimeout(r, 300));
+              }
+              await new Promise(r => setTimeout(r, 500));   // settle
+              clog('multi-image: ' + (attachmentCount() - baseline) + '/' + need + ' new after ' + (Date.now() - waitStart) + 'ms');
+            }
           }
 
           // 1b) Gemini panel-upload path: the image is uploaded out-of-band (native

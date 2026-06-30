@@ -374,6 +374,13 @@ final class WebViewStore: ObservableObject {
                 chorusLog.notice("[Chorus.Gemini] cleared stale pendingUploads (panel never fired)")
             }
         }
+
+        // Delete the temp PNGs once Gemini has read them (done well within a minute) — otherwise
+        // they pile up in the temp dir, N per broadcast, forever.
+        let toClean = tmps
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            for url in toClean { try? FileManager.default.removeItem(at: url) }
+        }
     }
 
     /// Called when a single host finishes streaming (via WKScriptMessageHandler bridge).
@@ -482,13 +489,20 @@ final class WebViewStore: ObservableObject {
     }
 }
 
+/// A composer-attached image with a stable id, so the preview ForEach can key on identity and a
+/// remove-by-tap can't hit the macOS-13 ForEach(indices) out-of-range crash.
+private struct AttachedImage: Identifiable {
+    let id = UUID()
+    let image: NSImage
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: WebViewStore
     @ObservedObject private var apiStore = APIChatStore.shared   // native API model panels
     @ObservedObject private var voteStore = VoteStore.shared     // per-round "best answer" votes
     @State private var showStats = false
     @State private var prompt: String = ""
-    @State private var attachedImages: [NSImage] = []
+    @State private var attachedImages: [AttachedImage] = []
     @FocusState private var promptFocused: Bool
 
     // Voice input (on-device dictation) for the main composer.
@@ -575,6 +589,8 @@ struct ContentView: View {
         2. 主要分歧 / 矛盾
         3. 各自独特或最有价值的点
         4. 一句话综合结论
+
+        格式要求:用小标题和要点列表(- 开头)。**不要用 markdown 表格**(竖线 | 那种),展示窗口不支持表格,会显示成乱码。分歧对比也请用"每个维度一段、各家观点用要点列出"的方式,不要排成表格。
 
         \(joined)
         """
@@ -1210,9 +1226,9 @@ struct ContentView: View {
 
     private func imagePreviewRow() -> some View {
         HStack(spacing: 8) {
-            ForEach(attachedImages.indices, id: \.self) { i in
+            ForEach(attachedImages) { item in
                 ZStack(alignment: .topTrailing) {
-                    Image(nsImage: attachedImages[i])
+                    Image(nsImage: item.image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 52, height: 52)
@@ -1223,7 +1239,7 @@ struct ContentView: View {
                                 .strokeBorder(Color.white.opacity(0.12))
                         )
                     Button {
-                        if attachedImages.indices.contains(i) { attachedImages.remove(at: i) }
+                        attachedImages.removeAll { $0.id == item.id }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 16))
@@ -1306,7 +1322,7 @@ struct ContentView: View {
                event.charactersIgnoringModifiers?.lowercased() == "v" {
                 let pb = NSPasteboard.general
                 if let img = NSImage(pasteboard: pb), img.size.width > 0, img.size.height > 0 {
-                    Task { @MainActor in self.attachedImages.append(img) }
+                    Task { @MainActor in self.attachedImages.append(AttachedImage(image: img)) }
                     let hasText = pb.canReadObject(forClasses: [NSString.self], options: nil)
                     return hasText ? event : nil
                 }
@@ -1326,7 +1342,7 @@ struct ContentView: View {
         dictator.stop()  // end any in-progress dictation
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
-        store.broadcast(text: text, images: attachedImages, source: .mainWindow)
+        store.broadcast(text: text, images: attachedImages.map(\.image), source: .mainWindow)
         PromptHistory.add(text)
         historyIndex = nil
         prompt = ""
