@@ -806,9 +806,16 @@ enum Broadcaster {
           //     Retry: wake the framework with a fresh input event, re-click, then fall back
           //     to a synthesized Enter (Gemini sends on Enter).
           if (TEXT && input) {
+            // Re-resolve the composer on EVERY check/retry. Angular/React re-render the composer
+            // (Gemini especially), detaching the node we captured at the start — reading a detached
+            // node can fake an empty composer ("send succeeded"), and dispatching focus/Enter/click
+            // events at it is a silent no-op, which made all three retries fire into the void.
+            const liveInput = () => pickFirst(cfg.inputSelectors) || input;
             const composerText = () => {
-              try { return ((input.isContentEditable ? input.innerText : input.value) || '').trim(); }
-              catch (_) { return ''; }
+              try {
+                const el = liveInput();
+                return ((el.isContentEditable ? el.innerText : el.value) || '').trim();
+              } catch (_) { return ''; }
             };
             // A successful send EITHER clears the composer OR makes a stop button appear (streaming
             // started). Checking both prevents a re-send — and a double-posted message — when an AI
@@ -827,28 +834,29 @@ enum Broadcaster {
               await new Promise(r => setTimeout(r, 1500));
               if (sent()) break;   // composer cleared or streaming started → send accepted
               clog('send-verify: text still in composer after attempt ' + attempt + ' — retrying');
+              const el = liveInput();   // the CURRENT composer, not the possibly-detached original
               try {
-                input.focus();
+                el.focus();
                 // Nudge the framework's change detection so the send handler is really armed.
-                input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+                el.dispatchEvent(new InputEvent('input', { bubbles: true }));
               } catch (_) {}
               await new Promise(r => setTimeout(r, 250));
               // The click keeps getting swallowed by Gemini's Angular handler, so ESCALATE through a
               // different send path on each retry (one per attempt, so a method that DID work can't
               // double-post): re-click → full synthetic Enter sequence → submit the enclosing form.
               const kOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-              input.focus();
+              el.focus();
               if (attempt === 1) {
                 const btn = pickFirst(cfg.sendSelectors);
                 if (btn) fullClick(btn);
               } else if (attempt === 2) {
-                input.dispatchEvent(new KeyboardEvent('keydown', kOpts));
-                input.dispatchEvent(new KeyboardEvent('keypress', kOpts));
-                input.dispatchEvent(new KeyboardEvent('keyup', kOpts));
+                el.dispatchEvent(new KeyboardEvent('keydown', kOpts));
+                el.dispatchEvent(new KeyboardEvent('keypress', kOpts));
+                el.dispatchEvent(new KeyboardEvent('keyup', kOpts));
               } else {
-                try { input.closest('form')?.requestSubmit?.(); } catch (_) {}
-                input.dispatchEvent(new KeyboardEvent('keydown', kOpts));
-                input.dispatchEvent(new KeyboardEvent('keyup', kOpts));
+                try { el.closest('form')?.requestSubmit?.(); } catch (_) {}
+                el.dispatchEvent(new KeyboardEvent('keydown', kOpts));
+                el.dispatchEvent(new KeyboardEvent('keyup', kOpts));
               }
             }
           }
