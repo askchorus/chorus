@@ -379,6 +379,214 @@ enum WebViewFactory {
 }
 
 enum Broadcaster {
+    /// Shared JS helpers, installed as `window.__chorusLib`. Every generated script embeds this
+    /// at its top (assignment is idempotent — latest evaluation wins), so there is exactly ONE
+    /// source for the stop-button selector list, the shadow-DOM walker, and the scroll/repaint
+    /// helpers that used to be copy-pasted per script and drifted apart (the watcher once called
+    /// a helper that only the broadcast poll defined — a silent ReferenceError).
+    ///
+    /// PERF (Gemini): `isStreaming` caches the stop button it finds — while streaming, each call
+    /// is one isConnected + visibility check. The whole-tree shadow walk (querySelectorAll('*'))
+    /// only runs when there's no cached hit, throttled to every 2.5s except right after the cache
+    /// is lost (state transition) or when `force` is passed (busy re-checks, send-verify).
+    static func libScript() -> String {
+        return """
+        window.__chorusLib = (() => {
+          const isGemini = location.hostname.includes('gemini');
+
+          const STOP_SELECTORS = [
+            // ChatGPT
+            'button[data-testid="stop-button"]',
+            'button[data-testid="composer-stop-button"]',
+            // Claude (current UI)
+            'button[aria-label="Stop response"]',
+            'button[aria-label="Stop Response"]',
+            // Gemini (Material Design / mat-icon)
+            'button[aria-label*="Stop generating" i]',
+            'button[aria-label*="Stop response" i]',
+            'button[mattooltip*="Stop" i]',
+            'button.send-button[aria-label*="Stop" i]',
+            // Generic catch-alls
+            'button[data-testid="send-button"][aria-label*="Stop" i]',
+            'button[aria-label*="Stop streaming" i]',
+            'button[aria-label*="Stop" i]',
+            'button[aria-label*="停止" i]',
+            'button[aria-label*="중지" i]',
+            'button[aria-label*="停止生成" i]',
+          ];
+
+          // Query light DOM + every shadow root (Polymer/Lit sites like Gemini hide the composer
+          // file input and stop button inside web components). Returns a deduped array.
+          const deepQueryAll = (selectors) => {
+            const results = [];
+            const stack = [document];
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root) continue;
+              for (const sel of selectors) {
+                try {
+                  const found = root.querySelectorAll?.(sel);
+                  if (found) for (const el of found) results.push(el);
+                } catch (_) {}
+              }
+              let all; try { all = root.querySelectorAll('*'); } catch (_) { all = []; }
+              for (const el of all) if (el.shadowRoot) stack.push(el.shadowRoot);
+            }
+            return [...new Set(results)];
+          };
+
+          // "Really visible": offsetParent alone is too permissive — Gemini's per-message stop
+          // affordances pass it while having zero height until their message is hovered.
+          const isReallyVisible = (el) => {
+            if (!el || el.offsetParent === null) return false;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return false;
+            const style = window.getComputedStyle(el);
+            return style.visibility !== 'hidden' && style.display !== 'none';
+          };
+
+          const lightScan = () => {
+            for (const sel of STOP_SELECTORS) {
+              try { for (const el of document.querySelectorAll(sel)) if (isReallyVisible(el)) return el; }
+              catch (_) {}
+            }
+            return null;
+          };
+          // Shadow-aware scan, short-circuits on the first visible match.
+          const deepScan = () => {
+            const stack = [document];
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root) continue;
+              for (const sel of STOP_SELECTORS) {
+                try { for (const el of root.querySelectorAll(sel)) if (isReallyVisible(el)) return el; }
+                catch (_) {}
+              }
+              let all; try { all = root.querySelectorAll('*'); } catch (_) { all = []; }
+              for (const el of all) if (el.shadowRoot) stack.push(el.shadowRoot);
+            }
+            return null;
+          };
+
+          let stopEl = null;       // cached visible stop button
+          let lastDeepWalk = 0;    // throttle for Gemini's expensive whole-tree walk
+          const isStreaming = (force) => {
+            if (stopEl && stopEl.isConnected && isReallyVisible(stopEl)) return true;
+            const hadCache = !!stopEl;
+            stopEl = null;
+            const light = lightScan();
+            if (light) { stopEl = light; return true; }
+            if (!isGemini) return false;
+            // Deep walk: skip if throttled — unless forced, or the cache was JUST lost (a real
+            // state transition deserves an immediate confirm so "done" isn't declared late/early).
+            const now = Date.now();
+            if (!force && !hadCache && now - lastDeepWalk < 2500) return false;
+            lastDeepWalk = now;
+            stopEl = deepScan();
+            return !!stopEl;
+          };
+
+          // Keep the view pinned to the streaming response — only when already near the bottom,
+          // so reading history isn't disturbed. (Claude doesn't auto-follow its own stream.)
+          const followBottom = (thresh) => {
+            const limit = thresh || 140;
+            document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
+              if (el.scrollHeight > el.clientHeight + 4 &&
+                  el.scrollHeight - el.clientHeight - el.scrollTop < limit) {
+                el.scrollTop = el.scrollHeight;
+              }
+            });
+          };
+          // Robust jump-to-end: class-name matching misses Claude's obfuscated classes, so pin
+          // the LARGEST genuinely-scrollable element.
+          const scrollToEnd = () => {
+            try {
+              let best = null, bestArea = 0;
+              document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
+                if (el.scrollHeight <= el.clientHeight + 40) return;
+                const oy = getComputedStyle(el).overflowY;
+                if (oy !== 'auto' && oy !== 'scroll') return;
+                const area = el.clientWidth * el.clientHeight;
+                if (area > bestArea) { bestArea = area; best = el; }
+              });
+              if (best) best.scrollTop = best.scrollHeight;
+              const se = document.scrollingElement || document.body;
+              if (se) window.scrollTo(0, se.scrollHeight);
+            } catch (_) {}
+          };
+          // On completion, prefer landing at the START of the latest answer (read from the top).
+          const scrollLatestAnswerTop = () => {
+            try {
+              const ums = document.querySelectorAll('[data-message-author-role="user"], [data-testid="user-message"], [data-testid="human-turn"]');
+              const last = ums[ums.length - 1];
+              if (last) { last.scrollIntoView({ block: 'start', behavior: 'auto' }); return true; }
+            } catch (_) {}
+            return false;
+          };
+          const scrollOnComplete = () => {
+            const go = () => { if (!scrollLatestAnswerTop()) scrollToEnd(); };
+            go(); setTimeout(go, 300); setTimeout(go, 800);   // retries catch post-stream re-render
+          };
+          // Gentle repaint for Gemini's virtualized renderer during streaming.
+          const geminiRepaint = () => {
+            try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+            document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
+              if (el.scrollHeight > el.clientHeight + 4) {
+                const nearBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 140;
+                if (nearBottom) { el.scrollTop = el.scrollHeight; }
+                else { const t = el.scrollTop; el.scrollTop = t + 1; el.scrollTop = t; }
+              }
+            });
+          };
+          // Aggressive repaint for when Gemini FINISHES but leaves the answer unpainted: jiggle
+          // the largest scroller by a real amount + force a reflow so the final paint commits.
+          const geminiForceRepaint = () => {
+            try {
+              window.dispatchEvent(new Event('resize'));
+              let best = null, bestArea = 0;
+              document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
+                if (el.scrollHeight <= el.clientHeight + 20) return;
+                const oy = getComputedStyle(el).overflowY;
+                if (oy !== 'auto' && oy !== 'scroll') return;
+                const area = el.clientWidth * el.clientHeight;
+                if (area > bestArea) { bestArea = area; best = el; }
+              });
+              if (best) {
+                const t = best.scrollTop;
+                best.scrollTop = Math.max(0, t - 80); best.scrollTop = t + 80; best.scrollTop = t;
+                void best.offsetHeight;   // force reflow → paint
+              }
+              void document.body.offsetHeight;
+            } catch (_) {}
+          };
+          // Per-tick nudge for occluded windows (IntersectionObserver lazy rendering skips
+          // offscreen content until a scroll pokes it). Net-zero scroll, harmless.
+          const paintNudge = () => {
+            try {
+              const sx = window.scrollX, sy = window.scrollY;
+              window.scrollTo(sx, sy + 0.1);
+              window.scrollTo(sx, sy);
+              if (isGemini) geminiRepaint(); else followBottom();
+            } catch (_) {}
+          };
+          // The completion combo both trackers use: Gemini gets the aggressive repaint burst
+          // (its stalled final paint), everyone else lands at the start of the finished answer.
+          const finishPaint = () => {
+            if (isGemini) {
+              geminiForceRepaint();
+              setTimeout(geminiForceRepaint, 250); setTimeout(geminiForceRepaint, 700); setTimeout(geminiForceRepaint, 1500);
+            } else {
+              scrollOnComplete();
+            }
+          };
+
+          return { isGemini, STOP_SELECTORS, deepQueryAll, isReallyVisible, isStreaming,
+                   followBottom, scrollToEnd, scrollLatestAnswerTop, scrollOnComplete,
+                   geminiRepaint, geminiForceRepaint, paintNudge, finishPaint };
+        })();
+        """
+    }
+
     /// Builds the JS payload that injects text and (optionally) an image into the AI site,
     /// then clicks send once the send button becomes enabled.
     /// - Parameters:
@@ -401,6 +609,7 @@ enum Broadcaster {
         let waitUploadJS = waitForGeminiUpload ? "true" : "false"
 
         return """
+        \(libScript())
         (async () => {
           const TEXT = "\(escapedText)";
           const IMAGES_B64 = \(imagesJS);   // array of base64 PNGs (may be empty)
@@ -516,28 +725,9 @@ enum Broadcaster {
             return [...new Set(results)];
           };
 
-          // Like pickAll but walks every shadow root too — required for Polymer/Lit
-          // sites like Gemini where the composer's file input lives inside a Web
-          // Component's shadowRoot that a flat document.querySelectorAll can't reach.
-          const deepQueryAll = (selectors) => {
-            const results = [];
-            const stack = [document];
-            while (stack.length) {
-              const root = stack.pop();
-              if (!root) continue;
-              for (const sel of selectors) {
-                try {
-                  const found = root.querySelectorAll?.(sel);
-                  if (found) for (const el of found) results.push(el);
-                } catch (_) {}
-              }
-              const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
-              for (const el of all) {
-                if (el.shadowRoot) stack.push(el.shadowRoot);
-              }
-            }
-            return [...new Set(results)];
-          };
+          // Shadow-root-aware query (Gemini's composer file input hides in a web component) —
+          // shared implementation from the lib.
+          const deepQueryAll = window.__chorusLib.deepQueryAll;
 
           // Wait for the composer input to exist before giving up. A broadcast can fire while the
           // page is still settling (fresh chat, post-reload hydration, a React re-render of the
@@ -819,17 +1009,9 @@ enum Broadcaster {
             };
             // A successful send EITHER clears the composer OR makes a stop button appear (streaming
             // started). Checking both prevents a re-send — and a double-posted message — when an AI
-            // begins generating without clearing its editor.
-            const stopVisible = () => {
-              for (const s of ['button[aria-label*="Stop" i]', 'button[aria-label*="停止"]', 'button[mattooltip*="Stop" i]']) {
-                for (const el of document.querySelectorAll(s)) {
-                  const rc = el.getBoundingClientRect();
-                  if (rc.width > 0 && rc.height > 0) return true;
-                }
-              }
-              return false;
-            };
-            const sent = () => composerText() === '' || stopVisible();
+            // begins generating without clearing its editor. force=true bypasses the Gemini deep-walk
+            // throttle: these ≤3 checks decide whether to re-send, so accuracy beats the walk cost.
+            const sent = () => composerText() === '' || window.__chorusLib.isStreaming(true);
             for (let attempt = 1; attempt <= 3; attempt++) {
               await new Promise(r => setTimeout(r, 1500));
               if (sent()) break;   // composer cleared or streaming started → send accepted
@@ -868,189 +1050,9 @@ enum Broadcaster {
           //    is the primary signal. We also keep (b) as a backup for sites that just
           //    disable the send button. Transition "streaming → not streaming" = done.
           (() => {
-            const isGemini = location.hostname.includes('gemini');
-
-            // Stronger repaint for Gemini's virtualized / IntersectionObserver renderer, which
-            // otherwise generates a response but never PAINTS it (you see nothing until a manual
-            // refresh). A net-zero 0.1px scroll wasn't enough; this also fires a resize event
-            // (makes the virtual list re-evaluate visibility) and, when the user is already near
-            // the bottom, scrolls fully down so the latest message renders into view.
-            // Keep the view pinned to the streaming response — but only if the user is already
-            // near the bottom, so we never yank them while they scroll up to read history. Fixes
-            // panels (Claude especially) that don't auto-follow their own stream in WKWebView.
-            const followBottom = (thresh) => {
-              const limit = thresh || 140;   // generous limit at completion catches a chunky stream
-              document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
-                if (el.scrollHeight > el.clientHeight + 4 &&
-                    el.scrollHeight - el.clientHeight - el.scrollTop < limit) {
-                  el.scrollTop = el.scrollHeight;
-                }
-              });
-            };
-            // Robust "jump to the very end", used at completion. Class-name matching misses
-            // Claude (obfuscated classes), so find the LARGEST genuinely-scrollable element and
-            // pin it to the bottom. Run a few times because Claude keeps rendering markdown for
-            // a beat after the stop button disappears (so the height is still growing).
-            const scrollToEnd = () => {
-              try {
-                let best = null, bestArea = 0;
-                document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
-                  if (el.scrollHeight <= el.clientHeight + 40) return;
-                  const oy = getComputedStyle(el).overflowY;
-                  if (oy !== 'auto' && oy !== 'scroll') return;
-                  const area = el.clientWidth * el.clientHeight;
-                  if (area > bestArea) { bestArea = area; best = el; }
-                });
-                if (best) best.scrollTop = best.scrollHeight;
-                const se = document.scrollingElement || document.body;
-                if (se) window.scrollTo(0, se.scrollHeight);
-              } catch (_) {}
-            };
-            const scrollToEndRepeated = () => { scrollToEnd(); setTimeout(scrollToEnd, 250); setTimeout(scrollToEnd, 700); };
-            // On completion, prefer landing at the START of the latest answer (read it from the
-            // top) over the very bottom: put the user's last message at the top, answer below it.
-            const scrollLatestAnswerTop = () => {
-              try {
-                const ums = document.querySelectorAll('[data-message-author-role="user"], [data-testid="user-message"], [data-testid="human-turn"]');
-                const last = ums[ums.length - 1];
-                if (last) { last.scrollIntoView({ block: 'start', behavior: 'auto' }); return true; }
-              } catch (_) {}
-              return false;   // couldn't locate the turn → caller falls back to bottom
-            };
-            const scrollOnComplete = () => {
-              const go = () => { if (!scrollLatestAnswerTop()) scrollToEnd(); };
-              go(); setTimeout(go, 300); setTimeout(go, 800);   // retries catch post-stream re-render
-            };
-            const geminiRepaint = () => {
-              try { window.dispatchEvent(new Event('resize')); } catch (_) {}
-              document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
-                if (el.scrollHeight > el.clientHeight + 4) {
-                  const nearBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 140;
-                  if (nearBottom) { el.scrollTop = el.scrollHeight; }   // keep latest message painted
-                  else { const t = el.scrollTop; el.scrollTop = t + 1; el.scrollTop = t; }
-                }
-              });
-            };
-            // Aggressive repaint for when Gemini FINISHES but leaves the answer unpainted (you see
-            // the action toolbar but no text until a manual scroll). The gentle 1px nudge above
-            // isn't enough: jiggle the LARGEST scrollable container by a real amount and force a
-            // reflow so the virtualized renderer commits the final paint.
-            const geminiForceRepaint = () => {
-              try {
-                window.dispatchEvent(new Event('resize'));
-                let best = null, bestArea = 0;
-                document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
-                  if (el.scrollHeight <= el.clientHeight + 20) return;
-                  const oy = getComputedStyle(el).overflowY;
-                  if (oy !== 'auto' && oy !== 'scroll') return;
-                  const area = el.clientWidth * el.clientHeight;
-                  if (area > bestArea) { bestArea = area; best = el; }
-                });
-                if (best) {
-                  const t = best.scrollTop;
-                  best.scrollTop = Math.max(0, t - 80); best.scrollTop = t + 80; best.scrollTop = t;
-                  void best.offsetHeight;   // force reflow → paint
-                }
-                void document.body.offsetHeight;
-              } catch (_) {}
-            };
-
-            // Force-paint nudge for occluded windows. Some sites (Gemini in particular) use
-            // IntersectionObserver / Polymer lazy rendering — when our window is occluded,
-            // the page reports the message container as "not visible" and skips rendering
-            // new content. A tiny scroll nudge causes the observer to re-evaluate visibility
-            // and the layer to repaint. Net-zero scroll position, harmless side effect.
-            const paintNudge = () => {
-              try {
-                const sx = window.scrollX, sy = window.scrollY;
-                window.scrollTo(sx, sy + 0.1);
-                window.scrollTo(sx, sy);
-                if (isGemini) geminiRepaint(); else followBottom();
-              } catch (_) {}
-            };
-
-            // Stop-button selectors per host. Some sites (Gemini) put the stop button inside
-            // shadow roots of Web Components, so we walk the whole DOM tree including shadowRoots.
-            const STOP_SELECTORS = [
-              // ChatGPT
-              'button[data-testid="stop-button"]',
-              'button[data-testid="composer-stop-button"]',
-              // Claude (current UI)
-              'button[aria-label="Stop response"]',
-              'button[aria-label="Stop Response"]',
-              'button[data-testid="stop-button"]',
-              // Gemini (Material Design / mat-icon)
-              'button[aria-label*="Stop generating" i]',
-              'button[aria-label*="Stop response" i]',
-              'button[mattooltip*="Stop" i]',
-              'button.send-button[aria-label*="Stop" i]',
-              // Generic catch-alls
-              'button[aria-label*="Stop streaming" i]',
-              'button[aria-label*="Stop" i]',
-              'button[aria-label*="停止" i]',
-              'button[aria-label*="중지" i]',
-              'button[aria-label*="停止生成" i]',
-            ];
-
-            // Walk DOM + all shadow roots recursively. Gemini's Polymer/Lit components hide
-            // the stop button inside shadowRoot of <chat-input>, <message-actions>, etc.
-            const deepQuery = (selectors) => {
-              const out = [];
-              const stack = [document];
-              while (stack.length) {
-                const root = stack.pop();
-                if (!root) continue;
-                for (const sel of selectors) {
-                  try {
-                    const found = root.querySelectorAll?.(sel);
-                    if (found) for (const el of found) out.push(el);
-                  } catch (_) {}
-                }
-                const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
-                for (const el of all) {
-                  if (el.shadowRoot) stack.push(el.shadowRoot);
-                }
-              }
-              return out;
-            };
-
-            // Element is "really visible" if it's not display:none, has non-zero size,
-            // and isn't visibility:hidden. offsetParent alone is too permissive — Gemini's
-            // per-message "Stop response" affordances pass offsetParent but have 0 height
-            // until the user hovers their parent message.
-            const isReallyVisible = (el) => {
-              if (!el || el.offsetParent === null) return false;
-              const rect = el.getBoundingClientRect();
-              if (rect.width === 0 || rect.height === 0) return false;
-              const style = window.getComputedStyle(el);
-              if (style.visibility === 'hidden' || style.display === 'none') return false;
-              return true;
-            };
-
-            // PERF: only Gemini hides its stop button inside Web Component shadow roots, so
-            // only Gemini needs the expensive deepQuery (which does querySelectorAll('*') over
-            // the whole tree). ChatGPT/Claude expose it in the light DOM — a plain
-            // querySelectorAll is far cheaper and avoids freezing their long-thread pages.
-            const findStops = isGemini
-              ? () => deepQuery(STOP_SELECTORS)
-              : () => {
-                  const out = [];
-                  for (const sel of STOP_SELECTORS) {
-                    try { document.querySelectorAll(sel).forEach(e => out.push(e)); } catch (_) {}
-                  }
-                  return out;
-                };
-
-            const isCurrentlyStreaming = () => {
-              // ONLY use stop-button presence as the streaming signal. We previously also
-              // treated "send button disabled" as streaming, but Claude/Gemini disable the
-              // send button whenever the input is empty (which it is right after we send).
-              // That gave a false positive that lasted forever.
-              for (const el of findStops()) {
-                if (isReallyVisible(el)) return true;
-              }
-              return false;
-            };
+            // Streaming detection + repaint helpers come from the shared lib (single source of
+            // truth; the Gemini deep-walk is cached + throttled there).
+            const { isStreaming, paintNudge, finishPaint } = window.__chorusLib;
 
             // Only ONE completion poll per page at a time. A new broadcast cancels the prior
             // poll — otherwise every send spun up its own 5-minute interval and they stacked,
@@ -1075,7 +1077,7 @@ enum Broadcaster {
                 } catch (_) {}
                 return;
               }
-              const streaming = isCurrentlyStreaming();
+              const streaming = isStreaming();
               if (streaming) {
                 idleTicks = 0;
                 if (!wasStreaming) {
@@ -1094,8 +1096,9 @@ enum Broadcaster {
                 idleTicks++;
                 if (idleTicks >= 2) {
                   clearInterval(interval); window.__chorusPoll = null;
-                  // Response finished — land at the start of the latest answer (fallback: bottom).
-                  if (isGemini) { geminiForceRepaint(); setTimeout(geminiForceRepaint, 250); setTimeout(geminiForceRepaint, 700); setTimeout(geminiForceRepaint, 1500); } else { scrollOnComplete(); }
+                  // Response finished — repaint/land per host (Gemini force-repaint burst, others
+                  // scroll to the start of the finished answer).
+                  finishPaint();
                   try {
                     window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
                       host: location.hostname
@@ -1128,111 +1131,18 @@ enum Broadcaster {
     /// pulse; manual sends never notify because they aren't part of a broadcast batch.
     static func streamingWatcherScript() -> String {
         return """
+        \(libScript())
         (() => {
           if (window.__chorusWatcher) return;
           window.__chorusWatcher = true;
 
-          const isGemini = location.hostname.includes('gemini');
-          const STOP = [
-            'button[data-testid="stop-button"]',
-            'button[data-testid="composer-stop-button"]',
-            'button[aria-label="Stop response"]',
-            'button[aria-label="Stop Response"]',
-            'button[aria-label*="Stop generating" i]',
-            'button[aria-label*="Stop streaming" i]',
-            'button[aria-label*="Stop" i]',
-            'button[aria-label*="停止" i]',
-          ];
-          const visible = (el) => {
-            if (!el || el.offsetParent === null) return false;
-            const r = el.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) return false;
-            const s = getComputedStyle(el);
-            return s.visibility !== 'hidden' && s.display !== 'none';
-          };
-          const lightHit = () => {
-            for (const sel of STOP) {
-              try { for (const el of document.querySelectorAll(sel)) if (visible(el)) return true; }
-              catch (_) {}
-            }
-            return false;
-          };
-          // Shadow-aware, short-circuits on first visible match (for Gemini's web components).
-          const deepHit = () => {
-            const stack = [document];
-            while (stack.length) {
-              const root = stack.pop();
-              if (!root) continue;
-              for (const sel of STOP) {
-                try { for (const el of root.querySelectorAll(sel)) if (visible(el)) return true; }
-                catch (_) {}
-              }
-              let all; try { all = root.querySelectorAll('*'); } catch (_) { all = []; }
-              for (const el of all) if (el.shadowRoot) stack.push(el.shadowRoot);
-            }
-            return false;
-          };
-          const streaming = isGemini ? deepHit : lightHit;
-
-          // Keep the view pinned to the streaming response (only when already near the bottom,
-          // so scrolling up to read history isn't disturbed). Fixes panels like Claude that
-          // don't auto-follow their own stream in WKWebView.
-          const followBottom = (thresh) => {
-            const limit = thresh || 140;   // generous limit at completion catches a chunky stream
-            document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
-              if (el.scrollHeight > el.clientHeight + 4 &&
-                  el.scrollHeight - el.clientHeight - el.scrollTop < limit) {
-                el.scrollTop = el.scrollHeight;
-              }
-            });
-          };
-          // Robust jump-to-end for completion (Claude's scroll container has obfuscated classes,
-          // so find the largest genuinely-scrollable element); repeated to catch post-stream render.
-          const scrollToEnd = () => {
-            try {
-              let best = null, bestArea = 0;
-              document.querySelectorAll('div, main, section, [role="main"], [class*="scroll" i]').forEach(el => {
-                if (el.scrollHeight <= el.clientHeight + 40) return;
-                const oy = getComputedStyle(el).overflowY;
-                if (oy !== 'auto' && oy !== 'scroll') return;
-                const area = el.clientWidth * el.clientHeight;
-                if (area > bestArea) { bestArea = area; best = el; }
-              });
-              if (best) best.scrollTop = best.scrollHeight;
-              const se = document.scrollingElement || document.body;
-              if (se) window.scrollTo(0, se.scrollHeight);
-            } catch (_) {}
-          };
-          const scrollToEndRepeated = () => { scrollToEnd(); setTimeout(scrollToEnd, 250); setTimeout(scrollToEnd, 700); };
-          // On completion, prefer landing at the START of the latest answer over the bottom.
-          const scrollLatestAnswerTop = () => {
-            try {
-              const ums = document.querySelectorAll('[data-message-author-role="user"], [data-testid="user-message"], [data-testid="human-turn"]');
-              const last = ums[ums.length - 1];
-              if (last) { last.scrollIntoView({ block: 'start', behavior: 'auto' }); return true; }
-            } catch (_) {}
-            return false;
-          };
-          const scrollOnComplete = () => {
-            const go = () => { if (!scrollLatestAnswerTop()) scrollToEnd(); };
-            go(); setTimeout(go, 300); setTimeout(go, 800);
-          };
-
-          // Gemini generates responses but sometimes never PAINTS them (virtualized /
-          // IntersectionObserver renderer stalls) — you see nothing until a manual refresh.
-          // Force a repaint: fire resize + (if near the bottom) scroll fully down so the latest
-          // message renders. Runs during streaming and for a few seconds after (the tail render).
+          // Streaming detection + scroll/repaint helpers come from the shared lib. (A previous
+          // copy-paste drift here referenced a helper only the broadcast poll defined — the
+          // resulting ReferenceError silently swallowed Gemini completion signals.)
+          const L = window.__chorusLib;
+          const isGemini = L.isGemini;
+          const streaming = () => L.isStreaming();
           let paintUntil = 0;
-          const geminiRepaint = () => {
-            try { window.dispatchEvent(new Event('resize')); } catch (_) {}
-            document.querySelectorAll('[class*="scroll" i], main, [role="main"]').forEach(el => {
-              if (el.scrollHeight > el.clientHeight + 4) {
-                const nearBottom = el.scrollHeight - el.clientHeight - el.scrollTop < 140;
-                if (nearBottom) { el.scrollTop = el.scrollHeight; }
-                else { const t = el.scrollTop; el.scrollTop = t + 1; el.scrollTop = t; }
-              }
-            });
-          };
 
           // ChatGPT frequently shows "Something went wrong while generating the response" in
           // WKWebView under a proxy (WebKit's QUIC/h2 handling is weaker than Chromium's, and
@@ -1271,7 +1181,7 @@ enum Broadcaster {
             const now = streaming();
             if (now) {
               if (isGemini) paintUntil = Date.now() + 6000;  // keep repainting through the stream
-              else followBottom();                            // other panels: just follow the stream
+              else L.followBottom();                          // other panels: just follow the stream
               if (confirm) { clearTimeout(confirm); confirm = null; }
               if (!was) { was = true; post({ host: location.hostname, diagnostic: 'streaming-started' }); }
             } else {
@@ -1281,7 +1191,7 @@ enum Broadcaster {
                   confirm = null;
                   if (!window.__chorusPoll && !streaming()) {
                     was = false;
-                    if (isGemini) { geminiForceRepaint(); setTimeout(geminiForceRepaint, 250); setTimeout(geminiForceRepaint, 700); setTimeout(geminiForceRepaint, 1500); } else { scrollOnComplete(); }   // land at the start of the finished answer
+                    L.finishPaint();   // Gemini force-repaint burst / others land at the answer start
                     post({ host: location.hostname });
                   }
                 }, 700);
@@ -1289,7 +1199,7 @@ enum Broadcaster {
               maybeAutoRetry();  // errors appear after streaming stops — only scan when idle
             }
             // Repaint Gemini during the stream and for ~6s after (catches the stalled tail render).
-            if (isGemini && Date.now() < paintUntil) geminiRepaint();
+            if (isGemini && Date.now() < paintUntil) L.geminiRepaint();
           };
           const schedule = () => { if (!scheduled) { scheduled = true; setTimeout(check, 350); } };
 
@@ -1311,24 +1221,12 @@ enum Broadcaster {
     /// synthetic clicks don't carry enough user-activation to open the picker).
     static func geminiUploadTriggerScript() -> String {
         return """
+        \(libScript())
         (async () => {
           const clog = (msg) => {
             try { window.webkit?.messageHandlers?.chorusJSLog?.postMessage(location.hostname + ': ' + msg); } catch (_) {}
           };
-          const deepQueryAll = (selectors) => {
-            const results = [];
-            const stack = [document];
-            while (stack.length) {
-              const root = stack.pop();
-              if (!root) continue;
-              for (const sel of selectors) {
-                try { const f = root.querySelectorAll?.(sel); if (f) for (const el of f) results.push(el); } catch (_) {}
-              }
-              const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
-              for (const el of all) { if (el.shadowRoot) stack.push(el.shadowRoot); }
-            }
-            return [...new Set(results)];
-          };
+          const deepQueryAll = window.__chorusLib.deepQueryAll;
           const fullClick = (el) => {
             const r = el.getBoundingClientRect();
             const o = { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, button: 0, view: window };
@@ -1472,35 +1370,11 @@ enum Broadcaster {
     /// Selectors mirror the generic catch-alls in the poll/watcher STOP_SELECTORS; keep roughly
     /// in sync if those change. Gemini hides its stop button in shadow DOM → deep walk.
     static func busyCheckScript() -> String {
+        // force=true: this is the batch-fallback's "still busy?" double-check — it runs rarely
+        // and its answer decides whether to notify, so accuracy beats the deep-walk cost.
         return """
-        (() => {
-          const host = location.hostname;
-          const isGemini = host.includes('gemini') || host.includes('google');
-          const SEL = ['button[aria-label*="Stop" i]','button[aria-label*="Stop streaming" i]',
-                       'button[aria-label*="停止" i]','button[aria-label*="停止生成" i]',
-                       'button[aria-label*="중지" i]','button[data-testid="stop-button"]',
-                       'button[data-testid="send-button"][aria-label*="Stop" i]'];
-          const vis = (el) => {
-            if (!el || el.offsetParent === null) return false;
-            const r = el.getBoundingClientRect();
-            if (!r.width || !r.height) return false;
-            const s = getComputedStyle(el);
-            return s.visibility !== 'hidden' && s.display !== 'none';
-          };
-          const light = () => { const o=[]; for (const q of SEL){ try { document.querySelectorAll(q).forEach(e=>o.push(e)); } catch(_){} } return o; };
-          const deep = () => {
-            const o=[]; const stack=[document];
-            while (stack.length) {
-              const root = stack.pop(); if (!root) continue;
-              for (const q of SEL){ try { root.querySelectorAll?.(q)?.forEach(e=>o.push(e)); } catch(_){} }
-              const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
-              for (const el of all){ if (el.shadowRoot) stack.push(el.shadowRoot); }
-            }
-            return o;
-          };
-          for (const el of (isGemini ? deep() : light())) { if (vis(el)) return true; }
-          return false;
-        })();
+        \(libScript())
+        window.__chorusLib.isStreaming(true);
         """
     }
 
