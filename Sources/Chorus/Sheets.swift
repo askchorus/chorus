@@ -8,6 +8,7 @@ struct SummarySheet: View {
     let text: String
     let streaming: Bool
     let onClose: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,19 +23,23 @@ struct SummarySheet: View {
             }
             .padding()
             Divider()
-            ScrollView {
-                if streaming && text.isEmpty {
-                    // The model is thinking — with a reasoner model nothing streams for 10-30s
-                    // (the thinking isn't surfaced, only the final answer). Show a clear working
-                    // state so the empty sheet doesn't read as "stuck / crashed".
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text("正在综合各家回答…（模型思考中，可能要十几秒）")
-                            .font(.system(size: 13)).foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-                } else {
+            if streaming && text.isEmpty {
+                // The model is thinking — with a reasoner model nothing streams for 10-30s (the
+                // thinking isn't surfaced, only the final answer). A small top-left spinner still
+                // read as a blank/stuck sheet, so make the working state CENTERED and unmissable.
+                VStack(spacing: 14) {
+                    Spacer()
+                    ProgressView().scaleEffect(1.3)
+                    Text("正在综合各家回答…")
+                        .font(.system(size: 15, weight: .medium))
+                    Text("模型思考中，通常需要十几秒")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
                     Group {
                         if streaming {
                             Text(text).font(.system(size: 13)).lineSpacing(3)   // plain while streaming (fast)
@@ -49,6 +54,9 @@ struct SummarySheet: View {
             }
         }
         .frame(width: 620, height: 560)
+        // Warm canvas instead of the stark default sheet white — half the "blank screen" feel
+        // was the color itself.
+        .background(ChorusTheme.canvas(colorScheme))
     }
 }
 
