@@ -987,6 +987,8 @@ enum Broadcaster {
             }));
             clicked = true;
           }
+          clog('send: clicked=' + clicked + ', btnFound=' + !!lastBtn +
+               (lastBtn ? ', btn="' + (lastBtn.getAttribute('aria-label') || (lastBtn.outerHTML || '').slice(0, 80)) + '"' : ' (fell back to Enter)'));
 
           // 3b) Verify the send actually TOOK. Gemini's Angular composer sometimes swallows
           //     the synthetic click (the button looks enabled before the framework has armed
@@ -1011,11 +1013,19 @@ enum Broadcaster {
             // started). Checking both prevents a re-send — and a double-posted message — when an AI
             // begins generating without clearing its editor. force=true bypasses the Gemini deep-walk
             // throttle: these ≤3 checks decide whether to re-send, so accuracy beats the walk cost.
-            const sent = () => composerText() === '' || window.__chorusLib.isStreaming(true);
+            const sent = () => {
+              const empty = composerText() === '';
+              const stop = window.__chorusLib.isStreaming(true);
+              if (empty || stop) {
+                clog('send-verify: accepted (composerEmpty=' + empty + ', stopVisible=' + stop + ')');
+                return true;
+              }
+              return false;
+            };
             for (let attempt = 1; attempt <= 3; attempt++) {
               await new Promise(r => setTimeout(r, 1500));
               if (sent()) break;   // composer cleared or streaming started → send accepted
-              clog('send-verify: text still in composer after attempt ' + attempt + ' — retrying');
+              clog('send-verify: still stranded (len=' + composerText().length + ') after wait ' + attempt + ' — retrying');
               const el = liveInput();   // the CURRENT composer, not the possibly-detached original
               try {
                 el.focus();
@@ -1040,6 +1050,9 @@ enum Broadcaster {
                 el.dispatchEvent(new KeyboardEvent('keydown', kOpts));
                 el.dispatchEvent(new KeyboardEvent('keyup', kOpts));
               }
+            }
+            if (composerText() !== '' && !window.__chorusLib.isStreaming(true)) {
+              clog('send-verify: GAVE UP — text still stranded after 3 escalation retries');
             }
           }
 
