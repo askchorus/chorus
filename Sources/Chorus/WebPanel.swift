@@ -1075,7 +1075,7 @@ enum Broadcaster {
             let wasStreaming = false;
             let idleTicks = 0;
             const start = Date.now();
-            const maxWait = 5 * 60 * 1000;
+            const maxWait = 15 * 60 * 1000;   // thinking models (Claude Extra) can run past 5 min
             const pollMs = 800;  // was 500 — halving the tick rate roughly halves poll overhead
             const interval = setInterval(() => {
               paintNudge();

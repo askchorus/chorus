@@ -287,7 +287,10 @@ final class WebViewStore: ObservableObject {
             )
             clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (visible=\(visibleKeys), required=\(requiredKeys))")
             scheduleBatchFallback(batchID: batchID)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 300) { [weak self] in
+            // Keep the batch alive through long thinking runs (Claude Extra exceeded the old 300s,
+            // so its completion arrived after the batch was already nuked — no notification/star).
+            // Mirrors the JS poll's 15-minute maxWait.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 900) { [weak self] in
                 self?.pendingBatches.removeValue(forKey: batchID)
             }
         } else {
