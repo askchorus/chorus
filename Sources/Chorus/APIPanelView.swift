@@ -296,11 +296,15 @@ struct MarkdownText: View {
     }
 
     static func inline(_ s: String) -> AttributedString {
+        // Neutralize tildes before parsing: the parser reads ~…~ as strikethrough, but in Chinese
+        // content tildes are almost always ranges (150万~450万、2~3小时) — and because we parse
+        // whole segments, one stray pair struck out entire paragraphs of a summary.
+        let safe = s.replacingOccurrences(of: "~", with: "\\~")
         let opts = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible)
-        return (try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s)
+        return (try? AttributedString(markdown: safe, options: opts)) ?? AttributedString(s)
     }
 }
 
