@@ -557,11 +557,16 @@ struct ContentView: View {
 
     private func summarizeAnswers(using provider: APIProvider) {
         summaryTask?.cancel()
+        // Open the sheet IMMEDIATELY in its working state. Extraction queues on each panel's JS
+        // thread and can take seconds when a page is busy — opening the sheet only afterwards
+        // left a dead, no-feedback gap between the click and anything appearing.
+        summaryText = ""
+        summaryStreaming = true
+        showSummary = true
         gatherAnswers(freshOnly: true) { blocks in
             guard blocks.count >= 2 else {
                 summaryText = "至少需要两家答完才能对比（现在只抓到 \(blocks.count) 家）。"
                 summaryStreaming = false
-                showSummary = true
                 return
             }
             runSummary(provider: provider, blocks: blocks.map { (name: $0.name, text: $0.text) })

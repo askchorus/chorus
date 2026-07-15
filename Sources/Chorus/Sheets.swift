@@ -32,7 +32,7 @@ struct SummarySheet: View {
                     ProgressView().scaleEffect(1.3)
                     Text("正在综合各家回答…")
                         .font(.system(size: 15, weight: .medium))
-                    Text("模型思考中，通常需要十几秒")
+                    Text("收集各家回答并交给模型综合，通常需要十几秒")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
