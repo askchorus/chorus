@@ -684,9 +684,11 @@ struct ContentView: View {
             keys.remove(key)
             hiddenProvidersRaw = keys.sorted().joined(separator: ",")
         } else {
-            // Don't allow hiding if it would leave 0 visible panels
-            let remainingVisible = orderedProviders.count - keys.count - 1
-            guard remainingVisible >= 1 else { return }
+            // Don't allow hiding the last visible web panel. Count VISIBLE panels directly —
+            // hiddenKeys also carries hidden API-panel ids, so the old arithmetic
+            // (orderedProviders.count - keys.count - 1) went negative once several customs/API
+            // panels were hidden, silently blocking ALL web-panel hiding.
+            guard visibleProviders.count > 1 else { return }
             keys.insert(key)
             let newRaw = keys.sorted().joined(separator: ",")
             // Hiding makes survivors WIDEN → WKWebView paints that strip white for a beat. Raise
