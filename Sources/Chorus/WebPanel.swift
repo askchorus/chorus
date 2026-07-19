@@ -1413,19 +1413,47 @@ enum Broadcaster {
           if (host.includes('chatgpt') || host.includes('openai')) {
             sels = ['[data-message-author-role="assistant"]'];
           } else if (host.includes('claude')) {
-            // The data-is-streaming wrapper also contains the thinking block + a status label,
-            // which garbles/duplicates the text. Target the answer body (.font-claude-message)
-            // inside the LAST message container instead; fall back to the container only if absent.
+            // The data-is-streaming wrapper also holds an sr-only "Claude responded:" <h2> and the
+            // extended-thinking status button, which the container-level innerText swallows. The
+            // clean prose is the LAST .standard-markdown inside the answer body. (The body class
+            // was renamed .font-claude-message -> .font-claude-response; keep both as fallback.)
             const cs = document.querySelectorAll('div[data-is-streaming]');
             const c = cs[cs.length - 1];
             if (c) {
-              const body = c.querySelector('.font-claude-message') || c;
-              const t = (body.innerText || '').trim();
+              const resp = c.querySelector('.font-claude-response') || c.querySelector('.font-claude-message') || c;
+              const mds = resp.querySelectorAll('.standard-markdown');
+              if (mds.length) {
+                const t = (mds[mds.length - 1].innerText || '').trim();
+                if (t) return dedupe(t);
+              }
+              // No .standard-markdown → strip known noise nodes from a clone, then read.
+              const clone = resp.cloneNode(true);
+              clone.querySelectorAll('.sr-only, [class*="group/status"]').forEach(n => n.remove());
+              const t = (clone.innerText || '').trim();
               if (t) return dedupe(t);
             }
-            sels = ['div.font-claude-message', '[data-testid="assistant-message"]'];
+            sels = ['.standard-markdown', 'div.font-claude-response', 'div.font-claude-message'];
           } else if (host.includes('gemini') || host.includes('google')) {
             sels = ['message-content', '.model-response-text', 'model-response', '.markdown'];
+          } else if (host.includes('kimi') || host.includes('moonshot')) {
+            // Kimi renders reasoning + tool calls inline (.thinking-container / .toolcall-container)
+            // inside the same assistant segment as the answer. Strip them from a clone, then join
+            // the remaining .markdown blocks (an answer can span several).
+            const segs = document.querySelectorAll('.segment.segment-assistant, .segment-assistant');
+            const seg = segs[segs.length - 1];
+            if (seg) {
+              const clone = seg.cloneNode(true);
+              clone.querySelectorAll('.thinking-container, .toolcall-container, [class*="thinking-container"], [class*="toolcall"]').forEach(n => n.remove());
+              const mds = clone.querySelectorAll('.markdown');
+              const t = (mds.length ? [...mds].map(m => (m.innerText || '').trim()).filter(Boolean).join('\\n\\n') : (clone.innerText || '')).trim();
+              if (t) return dedupe(t);
+            }
+            sels = ['.segment-assistant .markdown', '.markdown'];
+          } else {
+            // Best-effort for other web AIs (Grok / 豆包 / DeepSeek web / 千问 / customs): the last
+            // markdown-ish block. Not verified per-site — may miss or over-capture; precise
+            // selectors get added when a specific site is reported wrong.
+            sels = ['.ds-markdown', '.markdown', '[class*="markdown"]'];
           }
           for (const s of sels) {
             try {
