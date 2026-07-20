@@ -287,6 +287,7 @@ final class WebViewStore: ObservableObject {
             )
             clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (visible=\(visibleKeys), required=\(requiredKeys))")
             scheduleBatchFallback(batchID: batchID)
+            startDiagTimerIfNeeded()   // TEMP DIAG: probe background-hide freeze
             // Keep the batch alive through long thinking runs (Claude Extra exceeded the old 300s,
             // so its completion arrived after the batch was already nuked — no notification/star).
             // Mirrors the JS poll's 15-minute maxWait.
@@ -466,6 +467,41 @@ final class WebViewStore: ObservableObject {
                 clog("batch \(batchID.uuidString.prefix(8)) fallback-fired — undetected completion for \(batch.pendingKeys)")
                 CompletionNotifier.shared.handleBatchComplete(source: batch.source)
             }
+        }
+    }
+
+    // MARK: - TEMP DIAG (remove after diagnosing background-hide notifications)
+    // Every 2s while a batch is pending: log a native tick (proves the main-thread timer keeps
+    // firing when hidden) plus the JS-side visibilityState + Date.now() fetched via
+    // evaluateJavaScript on a pending webview. Comparing across an app-hide reveals (a) whether page
+    // JS freezes, and (b) whether native→JS evaluate still penetrates a hidden window — which
+    // decides whether a native poll can fix it or the WebContent suspension must be prevented.
+    private var diagTimer: Timer?
+    private var diagTick = 0
+    private func startDiagTimerIfNeeded() {
+        guard diagTimer == nil else { return }
+        let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.diagPoll() }
+        }
+        RunLoop.main.add(t, forMode: .common)   // .common so it fires during window ops too
+        diagTimer = t
+    }
+    private func diagPoll() {
+        guard !pendingBatches.isEmpty else {
+            diagTimer?.invalidate(); diagTimer = nil   // idle → stop until next batch
+            return
+        }
+        diagTick += 1
+        let n = diagTick
+        let hidden = NSApp.isHidden
+        let keys = Array(Set(pendingBatches.values.flatMap { $0.pendingKeys }))
+        guard let key = keys.first(where: { cache[$0] != nil }), let wv = cache[key] else {
+            clog("DIAG tick=\(n) appHidden=\(hidden) — native alive; pending=\(keys), no webview")
+            return
+        }
+        wv.evaluateJavaScript("document.visibilityState + '|' + Date.now()") { result, err in
+            let js = (result as? String) ?? "nil(\(err.map { String(describing: $0) } ?? "?"))"
+            clog("DIAG tick=\(n) appHidden=\(hidden) — native alive; probe=\(key); js=\(js)")
         }
     }
 
