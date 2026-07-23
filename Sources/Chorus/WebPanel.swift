@@ -297,6 +297,21 @@ enum WebViewFactory {
         // Install diagnostic log bridge so JS `[Chorus]` logs reach unified logging.
         config.userContentController.add(JSLogHandler.shared, name: "chorusJSLog")
 
+        // Keep-alive shims, installed BEFORE any page code runs. The WKPreferences knobs unfreeze
+        // page TIMERS for a minimized window, but rendering-tied APIs stay engine-suspended and
+        // sites also self-pause when they see the page hidden. Live logs: Kimi (timer-driven)
+        // streamed fine while minimized; Claude (rAF-driven pipeline) sat frozen mid-generation
+        // until APP didUnhide, then completed within ~1s. Two shims:
+        //  - requestAnimationFrame falls back to a 16ms setTimeout whenever the page is hidden
+        //    (timers run thanks to the knobs), so rAF-gated stream rendering keeps flowing.
+        //  - document.visibilityState/hidden report "visible" and visibilitychange is swallowed,
+        //    so sites' own "pause while hidden" logic never engages.
+        config.userContentController.addUserScript(
+            WKUserScript(source: Broadcaster.keepAliveScript(),
+                         injectionTime: .atDocumentStart,
+                         forMainFrameOnly: true)
+        )
+
         // Persistent streaming watcher (auto-runs on every page load): a lightweight,
         // event-driven MutationObserver that reports streaming start/finish even for messages
         // the user sends manually inside a panel (not just our broadcasts). Drives the menu-bar
@@ -420,6 +435,72 @@ enum Broadcaster {
     /// is one isConnected + visibility check. The whole-tree shadow walk (querySelectorAll('*'))
     /// only runs when there's no cached hit, throttled to every 2.5s except right after the cache
     /// is lost (state transition) or when `force` is passed (busy re-checks, send-verify).
+    /// Injected at documentStart on every panel. Keeps site code running while the window is
+    /// minimized/hidden: masks page visibility (sites self-pause when they see "hidden") and
+    /// backs requestAnimationFrame with a timer so rAF-gated pipelines (Claude's stream
+    /// rendering) keep flowing — the engine suspends native rAF for non-visible pages, but the
+    /// WKPreferences knobs keep TIMERS alive. Idempotent; runs before any page script.
+    static func keepAliveScript() -> String {
+        return """
+        (() => {
+          if (window.__chorusKeepAlive) return;
+          window.__chorusKeepAlive = true;
+
+          // REAL hidden state (prototype getter, captured before masking the instance) — the rAF
+          // shim needs the truth even though page code sees "visible".
+          const protoHidden = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+          const realHidden = () => {
+            try { return protoHidden && protoHidden.get ? !!protoHidden.get.call(document) : false; }
+            catch (_) { return false; }
+          };
+
+          // Mask visibility on the instance (prototype stays intact for realHidden()).
+          try {
+            Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+            Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+          } catch (_) {}
+          // Swallow visibilitychange before site handlers (we're registered first at documentStart).
+          const swallow = (e) => { try { e.stopImmediatePropagation(); } catch (_) {} };
+          document.addEventListener('visibilitychange', swallow, true);
+          window.addEventListener('visibilitychange', swallow, true);
+
+          // rAF dual-drive: schedule the native callback AND a timer backup; first to fire wins.
+          // Visible → native wins at vsync (backup no-ops). Hidden → native is suspended, the
+          // 16ms timer drives the chain. Transition frames can't stall: the pending pair's backup
+          // fires within 100ms and the next request re-evaluates hiddenness.
+          const nativeRAF = window.requestAnimationFrame.bind(window);
+          const nativeCAF = window.cancelAnimationFrame.bind(window);
+          let seq = 1;
+          const pending = new Map();   // shimId → {n: nativeId, t: timerId}
+          window.requestAnimationFrame = (cb) => {
+            const id = -(seq++);   // negative: never collides with native ids
+            let done = false;
+            const fire = (ts) => {
+              if (done) return;
+              done = true;
+              const p = pending.get(id);
+              pending.delete(id);
+              if (p) { try { nativeCAF(p.n); } catch (_) {} clearTimeout(p.t); }
+              try { cb(ts); } catch (_) {}
+            };
+            const n = nativeRAF((ts) => fire(ts));
+            const t = setTimeout(() => fire(performance.now()), realHidden() ? 16 : 100);
+            pending.set(id, { n, t });
+            return id;
+          };
+          window.cancelAnimationFrame = (id) => {
+            if (typeof id === 'number' && id < 0) {
+              const p = pending.get(id);
+              pending.delete(id);
+              if (p) { try { nativeCAF(p.n); } catch (_) {} clearTimeout(p.t); }
+              return;
+            }
+            nativeCAF(id);
+          };
+        })();
+        """
+    }
+
     static func libScript() -> String {
         return """
         window.__chorusLib = (() => {
