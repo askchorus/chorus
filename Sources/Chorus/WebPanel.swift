@@ -497,6 +497,39 @@ enum Broadcaster {
             }
             nativeCAF(id);
           };
+
+          // requestIdleCallback is suspended for hidden pages the same way rAF is — back it with
+          // a timer so idle-scheduled work (React scheduler et al.) keeps draining while hidden.
+          if (typeof window.requestIdleCallback === 'function') {
+            const nativeRIC = window.requestIdleCallback.bind(window);
+            const nativeCIC = (window.cancelIdleCallback || (() => {})).bind(window);
+            const ricPending = new Map();
+            window.requestIdleCallback = (cb, opts) => {
+              const id = -(seq++);
+              let done = false;
+              const fire = (deadline) => {
+                if (done) return;
+                done = true;
+                const p = ricPending.get(id);
+                ricPending.delete(id);
+                if (p) { try { nativeCIC(p.n); } catch (_) {} clearTimeout(p.t); }
+                try { cb(deadline || { didTimeout: true, timeRemaining: () => 50 }); } catch (_) {}
+              };
+              const n = nativeRIC((d) => fire(d), opts);
+              const t = setTimeout(() => fire(null), realHidden() ? 50 : 400);
+              ricPending.set(id, { n, t });
+              return id;
+            };
+            window.cancelIdleCallback = (id) => {
+              if (typeof id === 'number' && id < 0) {
+                const p = ricPending.get(id);
+                ricPending.delete(id);
+                if (p) { try { nativeCIC(p.n); } catch (_) {} clearTimeout(p.t); }
+                return;
+              }
+              nativeCIC(id);
+            };
+          }
         })();
         """
     }
@@ -1597,6 +1630,16 @@ enum Broadcaster {
         return """
         \(libScript())
         window.__chorusLib.isStreaming(true);
+        """
+    }
+
+    /// Watchdog probe: busy state + answer-text length in one evaluate, as a JSON string.
+    /// The length delta across ticks distinguishes "genuinely frozen mid-stream" from "text
+    /// still growing" and from "finished but the stop button is stuck" while the app is hidden.
+    static func watchdogProbeScript() -> String {
+        return """
+        \(libScript())
+        JSON.stringify([window.__chorusLib.isStreaming(true), window.__chorusLib.activityLen()]);
         """
     }
 

@@ -482,6 +482,7 @@ final class WebViewStore: ObservableObject {
     private var completionWatchdog: Timer?
     private var watchdogWasBusy: [String: Bool] = [:]
     private var watchdogIdleTicks: [String: Int] = [:]
+    private var watchdogLastLen: [String: Int] = [:]
     private var watchdogTickCount = 0
     private func startCompletionWatchdogIfNeeded() {
         guard completionWatchdog == nil else { return }
@@ -502,18 +503,34 @@ final class WebViewStore: ObservableObject {
         }
         watchdogTickCount += 1
         let keys = Set(pendingBatches.values.flatMap { $0.pendingKeys })
-        if watchdogTickCount % 15 == 1 {   // heartbeat every ~30s so a silent stall is visible
+        let heartbeat = watchdogTickCount % 15 == 1   // every ~30s
+        if heartbeat {
             clog("watchdog alive tick=\(watchdogTickCount) pending=\(keys.sorted())")
         }
         for key in keys {
             guard let wv = cache[key] else { continue }   // API panels already complete natively
-            wv.evaluateJavaScript(Broadcaster.busyCheckScript()) { [weak self] result, err in
+            wv.evaluateJavaScript(Broadcaster.watchdogProbeScript()) { [weak self] result, err in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     if let err { clog("watchdog: \(key) evaluate error — \(err.localizedDescription)") }
-                    let busy = (result as? Bool) == true
+                    // Probe returns JSON "[busy, len]" — len tracks the answer text so the logs can
+                    // distinguish frozen-mid-stream / still-growing / done-but-button-stuck.
+                    var busy = false
+                    var len = -1
+                    if let s = result as? String, let data = s.data(using: .utf8),
+                       let arr = try? JSONSerialization.jsonObject(with: data) as? [Any], arr.count == 2 {
+                        busy = (arr[0] as? Bool) ?? ((arr[0] as? Int) == 1)
+                        len = (arr[1] as? Int) ?? -1
+                    }
                     if busy {
-                        if self.watchdogWasBusy[key] != true { clog("watchdog: \(key) → busy") }
+                        let prev = self.watchdogLastLen[key]
+                        if self.watchdogWasBusy[key] != true {
+                            clog("watchdog: \(key) → busy (len=\(len))")
+                        } else if heartbeat {
+                            let delta = prev.map { len - $0 } ?? 0
+                            clog("watchdog: \(key) still busy len=\(len) (Δ\(delta) over 30s)\(delta == 0 ? " — FROZEN?" : "")")
+                        }
+                        if heartbeat || prev == nil { self.watchdogLastLen[key] = len }
                         self.watchdogWasBusy[key] = true
                         self.watchdogIdleTicks[key] = 0
                     } else if self.watchdogWasBusy[key] == true {
