@@ -699,6 +699,26 @@ enum Broadcaster {
               // Gemini's image upload goes through the native runOpenPanel path
               // (geminiUploadViaPanel), not this script — so no upload selectors here.
             },
+            {
+              // Verified against the live DOM 2026-07-23. Kimi's send control is a DIV (never
+              // matched the button-only generic selectors → every send burned the full deadline
+              // before the Enter fallback), its disabled state is a CSS class, there is no
+              // <input type=file> at rest (created lazily), synthetic paste is ignored but a
+              // synthetic DROP on the editor attaches properly, and attachment previews are
+              // .image-thumbnail chips (no blob:/data: <img>, so the generic attachment gate
+              // never saw them and always waited its full 8s).
+              host: 'kimi.com',
+              inputSelectors: [
+                'div[contenteditable="true"].chat-input-editor',
+                'div[contenteditable="true"]'
+              ],
+              // Click the inner SVG (deepest child) so the events bubble up THROUGH the container —
+              // dispatching on the container would never reach a listener on the icon.
+              sendSelectors: ['.send-button-container svg', '.send-button-container'],
+              uploadMethod: 'drop',
+              dropTargetSelectors: ['div[contenteditable="true"].chat-input-editor'],
+              attachmentSelectors: ['.chat-editor-attachment-area .image-thumbnail'],
+            },
           ];
 
           let cfg = HOSTS.find(c =>
@@ -838,6 +858,12 @@ enum Broadcaster {
             // the conversation don't inflate the gate and make it pass before the NEW ones commit.
             const attachmentCount = () => {
               try {
+                // Site-tuned preview selector wins (Kimi's chips are divs with no blob <img> and
+                // no aria-labeled remove button, invisible to the heuristics below).
+                if (cfg.attachmentSelectors) {
+                  const tuned = deepQueryAll(cfg.attachmentSelectors).length;
+                  if (tuned > 0) return tuned;
+                }
                 const imgs = deepQueryAll(['img[src^="blob:"]', 'img[src^="data:image"]']).length;
                 const rms = deepQueryAll(['button[aria-label*="remove" i]', 'button[aria-label*="delete" i]',
                                           'button[aria-label*="移除" i]', 'button[aria-label*="删除" i]']).length;
@@ -974,19 +1000,31 @@ enum Broadcaster {
             el.dispatchEvent(new MouseEvent('mousedown', opts));
             try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (_) {}
             el.dispatchEvent(new MouseEvent('mouseup', opts));
-            try { el.click(); } catch (_) {}
+            // SVG elements have no .click() — fall back to ONE synthetic click event (never both,
+            // which would double-send on sites whose handler listens for 'click').
+            try { el.click(); } catch (_) { el.dispatchEvent(new MouseEvent('click', opts)); }
           };
 
+          const sendLoopStart = Date.now();
           while (Date.now() < sendDeadline) {
             const btn = pickFirst(cfg.sendSelectors);
             if (btn) {
               lastBtn = btn;
-              const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+              // Disabled = attribute (real <button>s) OR a 'disabled' CSS class on the element or
+              // an ancestor — Kimi's send control is <div class="send-button-container disabled">
+              // with neither attribute, and we click its inner svg (class lives on the parent).
+              const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true'
+                || !!(btn.closest && btn.closest('.disabled'));
               if (!isDisabled) {
                 fullClick(btn);
                 clicked = true;
                 break;
               }
+            } else if (Date.now() - sendLoopStart > 5000) {
+              // No element has EVER matched the send selectors — more waiting can't help (the
+              // long image deadline exists to wait for a FOUND button to enable during upload).
+              // Bail to the Enter fallback instead of burning up to 25s on generic sites.
+              break;
             }
             await new Promise(r => setTimeout(r, 200));
           }
