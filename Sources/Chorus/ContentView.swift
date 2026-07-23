@@ -598,7 +598,12 @@ struct ContentView: View {
         // left a dead, no-feedback gap between the click and anything appearing.
         summaryText = ""
         summaryStreaming = true
-        showSummary = true
+        // Present on the NEXT runloop, not in the same transaction as the state reset: macOS
+        // builds a first-presented sheet's content from the PRE-transaction snapshot (streaming=
+        // false, empty text → the blank branch) and nothing re-triggers evaluation until the first
+        // streamed token seconds later. Deferring one turn makes the sheet see the committed
+        // working state, so the spinner shows from the first frame on the FIRST click too.
+        DispatchQueue.main.async { showSummary = true }
         gatherAnswers(freshOnly: true) { blocks in
             guard blocks.count >= 2 else {
                 summaryText = "至少需要两家答完才能对比（现在只抓到 \(blocks.count) 家）。"
