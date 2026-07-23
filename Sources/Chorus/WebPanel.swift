@@ -580,7 +580,27 @@ enum Broadcaster {
             }
           };
 
-          return { isGemini, STOP_SELECTORS, deepQueryAll, isReallyVisible, isStreaming,
+          // Total text length of the LAST assistant turn — deliberately INCLUDING thinking and
+          // tool-call blocks, so a model that pauses mid-answer (Kimi's agentic searches) still
+          // reads as active. Feeds the poll's text-settle completion fallback for sites whose stop
+          // button doesn't match STOP_SELECTORS. Returns -1 when it can't measure.
+          const activityLen = () => {
+            try {
+              const h = location.hostname;
+              let el = null;
+              if (h.includes('kimi') || h.includes('moonshot')) {
+                const segs = document.querySelectorAll('.segment.segment-assistant, .segment-assistant');
+                el = segs[segs.length - 1];
+              } else {
+                const ns = document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"]');
+                el = ns[ns.length - 1];
+              }
+              if (!el) return -1;
+              return (el.innerText || '').length;
+            } catch (_) { return -1; }
+          };
+
+          return { isGemini, STOP_SELECTORS, deepQueryAll, isReallyVisible, isStreaming, activityLen,
                    followBottom, scrollToEnd, scrollLatestAnswerTop, scrollOnComplete,
                    geminiRepaint, geminiForceRepaint, paintNudge, finishPaint };
         })();
@@ -1065,7 +1085,7 @@ enum Broadcaster {
           (() => {
             // Streaming detection + repaint helpers come from the shared lib (single source of
             // truth; the Gemini deep-walk is cached + throttled there).
-            const { isStreaming, paintNudge, finishPaint } = window.__chorusLib;
+            const { isStreaming, paintNudge, finishPaint, activityLen } = window.__chorusLib;
 
             // Only ONE completion poll per page at a time. A new broadcast cancels the prior
             // poll — otherwise every send spun up its own 5-minute interval and they stacked,
@@ -1074,6 +1094,9 @@ enum Broadcaster {
 
             let wasStreaming = false;
             let idleTicks = 0;
+            // Text-settle fallback state (only used when the stop button never matches).
+            let lastLen = -1, grewOnce = false, settleTicks = 0;
+            const SETTLE_TICKS = 15;   // 15 * 800ms = 12s quiet — long enough to ride out tool-call pauses
             const start = Date.now();
             const maxWait = 15 * 60 * 1000;   // thinking models (Claude Extra) can run past 5 min
             const pollMs = 800;  // was 500 — halving the tick rate roughly halves poll overhead
@@ -1117,6 +1140,42 @@ enum Broadcaster {
                       host: location.hostname
                     });
                   } catch (_) {}
+                }
+              } else {
+                // Stop button never matched STOP_SELECTORS (Kimi / Grok / 豆包 / 千问 / customs) —
+                // infer completion from the answer text going quiet. Only reachable while
+                // wasStreaming is false, so the reliable stop-button path above is untouched.
+                const len = activityLen();
+                if (len >= 0) {
+                  if (lastLen < 0) {
+                    lastLen = len;
+                  } else if (len > lastLen) {
+                    if (!grewOnce) {
+                      grewOnce = true;
+                      // One-shot: dump the visible buttons while it IS generating, so a precise
+                      // stop selector can be added for this site later.
+                      try {
+                        const btns = [...document.querySelectorAll('button')]
+                          .filter(b => b.offsetParent !== null)
+                          .map(b => (b.getAttribute('aria-label') || b.getAttribute('title') || b.className || '').toString().slice(0, 40))
+                          .filter(Boolean).slice(-14);
+                        clog('no stop button matched — generating; candidate buttons: ' + JSON.stringify(btns));
+                      } catch (_) {}
+                    }
+                    lastLen = len; settleTicks = 0;
+                  } else if (grewOnce) {
+                    settleTicks++;
+                    if (settleTicks >= SETTLE_TICKS) {
+                      clearInterval(interval); window.__chorusPoll = null;
+                      finishPaint();
+                      clog('completion inferred by text-settle (' + Math.round(SETTLE_TICKS * pollMs / 1000) + 's quiet, len=' + len + ')');
+                      try {
+                        window.webkit?.messageHandlers?.chorusCompletion?.postMessage({
+                          host: location.hostname
+                        });
+                      } catch (_) {}
+                    }
+                  }
                 }
               }
             }, pollMs);
