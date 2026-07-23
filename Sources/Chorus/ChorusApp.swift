@@ -46,6 +46,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Touch the store once so its init() wires up the completion script handler bridge
         _ = WebViewStore.shared
 
+        // Keeper triggers for the two window-level paths that hide pages WITHOUT hiding the app:
+        // minimize (yellow button) and close (red button, app stays in the menu bar). Restore is
+        // driven by applicationDidBecomeActive/didUnhide + windowDidDeminiaturize below.
+        NotificationCenter.default.addObserver(forName: NSWindow.didMiniaturizeNotification,
+                                               object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard let w = note.object as? NSWindow, WebViewStore.shared.windowHostsPanels(w) else { return }
+                clog("APP window miniaturized")
+                WebViewStore.shared.adoptIntoKeeper()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didDeminiaturizeNotification,
+                                               object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard note.object is NSWindow else { return }
+                clog("APP window deminiaturized")
+                WebViewStore.shared.restoreFromKeeper()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+                                               object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard let w = note.object as? NSWindow, WebViewStore.shared.windowHostsPanels(w) else { return }
+                clog("APP main window closing — adopting panels into keeper")
+                WebViewStore.shared.adoptIntoKeeper()
+            }
+        }
+
         // Request notification permission (system dialog shown once on first launch)
         CompletionNotifier.shared.requestAuthorizationIfNeeded()
 
@@ -65,11 +93,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // Timestamp app active-state transitions — cheap, and lining them up against completion logs
-    // is how the minimize-freeze was proven. Kept as permanent diagnostics.
+    // is how the minimize-freeze was proven. Kept as permanent diagnostics. Hide/unhide also
+    // drive the keep-alive keeper window (see WebViewStore.adoptIntoKeeper).
     func applicationDidResignActive(_ n: Notification)  { clog("APP resignActive (another app frontmost)") }
-    func applicationDidBecomeActive(_ n: Notification)   { clog("APP becomeActive (Chorus frontmost)") }
-    func applicationDidHide(_ n: Notification)           { clog("APP didHide (⌘H — windows ordered out)") }
-    func applicationDidUnhide(_ n: Notification)         { clog("APP didUnhide") }
+    func applicationDidBecomeActive(_ n: Notification) {
+        clog("APP becomeActive (Chorus frontmost)")
+        WebViewStore.shared.restoreFromKeeper()   // covers unhide, deminiaturize and reopen paths
+    }
+    func applicationDidHide(_ n: Notification) {
+        clog("APP didHide (⌘H — windows ordered out)")
+        WebViewStore.shared.adoptIntoKeeper()
+    }
+    func applicationDidUnhide(_ n: Notification) {
+        clog("APP didUnhide")
+        WebViewStore.shared.restoreFromKeeper()
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // When the menu-bar icon is shown, keep running there after the window closes (so the

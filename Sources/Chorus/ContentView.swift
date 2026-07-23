@@ -470,6 +470,97 @@ final class WebViewStore: ObservableObject {
         }
     }
 
+    // MARK: - Keep-alive keeper window
+    // The endgame fix for the minimized/hidden freeze. All JS shims (rAF/rIC/postTask backup
+    // timers, visibility masking, WKPreferences knobs) unfroze ChatGPT and Kimi, but Claude's
+    // stream stayed byte-frozen for 15+ minutes while hidden (watchdog len Δ0) — some engine-
+    // level suspension we can't reach from JS. So don't let the pages become hidden at all:
+    // while the main window is hidden/minimized/closed, reparent every webview into a tiny
+    // (2×2 px, alpha 0.01, corner, mouse-transparent) always-on-screen window. WebKit then
+    // treats the pages as visible and everything — streams, rendering, timers — keeps running.
+    private var keeperWindow: NSWindow?
+    private var keeperHomes: [String: WeakViewBox] = [:]
+    private(set) var keeperActive = false
+    final class WeakViewBox { weak var view: NSView?; init(_ v: NSView?) { view = v } }
+
+    /// True while the keeper holds this webview — WebPanel.updateNSView must not re-embed it.
+    func isKept(_ webView: WKWebView) -> Bool {
+        keeperActive && webView.window === keeperWindow
+    }
+
+    /// Does this window host any of our panels? (Used by the miniaturize/close observers.)
+    func windowHostsPanels(_ window: NSWindow) -> Bool {
+        cache.values.contains { $0.window === window }
+    }
+
+    func adoptIntoKeeper() {
+        let win: NSWindow
+        if let w = keeperWindow {
+            win = w
+        } else {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 2, height: 2),
+                             styleMask: .borderless, backing: .buffered, defer: false)
+            w.isOpaque = false
+            w.backgroundColor = .clear
+            w.alphaValue = 0.01                    // 0.0 could count as not-visible; 0.01 doesn't
+            w.ignoresMouseEvents = true
+            w.level = .normal
+            w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            w.isExcludedFromWindowsMenu = true
+            w.isReleasedWhenClosed = false
+            if let screen = NSScreen.main {
+                w.setFrameOrigin(NSPoint(x: screen.frame.minX, y: screen.frame.minY))
+            }
+            keeperWindow = w
+            win = w
+        }
+        guard let content = win.contentView else { return }
+        var moved = 0
+        for (key, wv) in cache where wv.window !== win {
+            keeperHomes[key] = WeakViewBox(wv.superview)
+            // Keep the current size so the page doesn't reflow (subviews may exceed the tiny
+            // window's bounds — AppKit just clips them).
+            let sz = wv.bounds.width > 50 ? wv.bounds.size : NSSize(width: 1100, height: 750)
+            wv.removeFromSuperview()               // releases the old container's constraints
+            wv.translatesAutoresizingMaskIntoConstraints = true
+            wv.frame = NSRect(origin: .zero, size: sz)
+            content.addSubview(wv)
+            moved += 1
+        }
+        keeperActive = true
+        win.orderFrontRegardless()
+        clog("keeper: adopted \(moved) webviews (main window hidden/minimized)")
+    }
+
+    func restoreFromKeeper() {
+        guard keeperActive else { return }
+        var restored = 0, stillKept = 0
+        for (key, wv) in cache where wv.window === keeperWindow {
+            // Only restore into a container whose window is actually usable — if the main window
+            // is STILL miniaturized (app activated via Dock click without restoring the window),
+            // moving back would re-freeze the page; leave it in the keeper.
+            guard let home = keeperHomes[key]?.view, let hw = home.window,
+                  hw.isVisible, !hw.isMiniaturized else { stillKept += 1; continue }
+            wv.removeFromSuperview()
+            wv.translatesAutoresizingMaskIntoConstraints = true
+            wv.frame = home.bounds
+            wv.autoresizingMask = [.width, .height]
+            // Below the cream cover (containers keep the cover as their topmost subview).
+            home.addSubview(wv, positioned: .below, relativeTo: nil)
+            keeperHomes.removeValue(forKey: key)
+            restored += 1
+        }
+        keeperActive = stillKept > 0
+        if !keeperActive {
+            keeperHomes = [:]
+            keeperWindow?.orderOut(nil)
+        }
+        // Stale homes (panel rebuilt while hidden) reattach via WebPanel.updateNSView on the
+        // render this triggers — isKept() is false for restored views now.
+        objectWillChange.send()
+        clog("keeper: restored \(restored), still kept \(stillKept)")
+    }
+
     // MARK: - Native completion watchdog
     // The page-side completion poll runs on the page's OWN timers, which WebKit freezes when the
     // window is miniaturized/hidden — live logs showed Claude's stream frozen mid-generation for

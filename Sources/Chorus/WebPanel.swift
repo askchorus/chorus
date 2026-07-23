@@ -41,7 +41,10 @@ struct WebPanel: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
-        if webView.superview !== container {
+        // Don't steal the webview back while the keeper window holds it (app hidden/minimized —
+        // a SwiftUI render during that state would re-embed it into an invisible window and
+        // re-freeze the page). It returns via restoreFromKeeper() on unhide.
+        if webView.superview !== container && !WebViewStore.shared.isKept(webView) {
             embed(webView, in: container)
         }
         guard let cover = context.coordinator.cover else { return }
@@ -528,6 +531,19 @@ enum Broadcaster {
                 return;
               }
               nativeCIC(id);
+            };
+          }
+
+          // scheduler.postTask (Prioritized Task Scheduling — React's scheduler uses it where
+          // available) is another hidden-page-suspended queue. While really hidden, run tasks on
+          // a plain timeout instead; while visible, defer to the native implementation.
+          if (window.scheduler && typeof window.scheduler.postTask === 'function') {
+            const nativePost = window.scheduler.postTask.bind(window.scheduler);
+            window.scheduler.postTask = (cb, opts) => {
+              if (!realHidden()) return nativePost(cb, opts);
+              return new Promise((resolve, reject) => {
+                setTimeout(() => { try { resolve(cb()); } catch (e) { reject(e); } }, 10);
+              });
             };
           }
         })();
