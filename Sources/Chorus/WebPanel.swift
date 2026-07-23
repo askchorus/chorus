@@ -345,6 +345,13 @@ enum WebViewFactory {
         // Private API; raises no warning at compile time; only safe outside Mac App Store.
         disableWindowOcclusionDetection(webView)
 
+        // Occlusion is only ONE suspension path. MINIATURIZING the window (or ⌘H) marks the page
+        // "not visible", which suppresses the WebContent process and clamps page timers — live
+        // logs showed Claude's stream frozen mid-generation for the whole minimized stretch and
+        // completing 1.7s after unhide (while native evaluateJavaScript kept answering fine).
+        // These WKPreferences SPIs turn that visibility-based suppression off.
+        disableBackgroundThrottling(config)
+
         // EVERYONE gets the real Safari UA now, including Google. A Chrome UA on the WebKit
         // engine is a fingerprint MISMATCH (claims AppleWebKit/537.36 + Chrome but the engine is
         // WebKit 605): Cloudflare flags it as a bot (ChatGPT "verify you are human" loop) and —
@@ -360,6 +367,30 @@ enum WebViewFactory {
 
         webView.load(URLRequest(url: url))
         return webView
+    }
+
+    /// Turns off WebKit's page-visibility-based suppression via WKPreferences SPI setters:
+    /// process suppression (freezes the WebContent process for hidden pages) and hidden-page DOM
+    /// timer throttling (clamps/aligns page timers — what froze the completion poll while
+    /// minimized). Each setter is feature-checked and no-ops gracefully if the SPI disappears.
+    private static func disableBackgroundThrottling(_ config: WKWebViewConfiguration) {
+        let prefs = config.preferences
+        let knobs: [(selector: String, label: String)] = [
+            ("_setPageVisibilityBasedProcessSuppressionEnabled:", "visibility-based process suppression"),
+            ("_setHiddenPageDOMTimerThrottlingEnabled:", "hidden-page DOM timer throttling"),
+            ("_setHiddenPageDOMTimerThrottlingAutoIncreases:", "hidden-page timer throttling auto-increase"),
+        ]
+        for knob in knobs {
+            let sel = NSSelectorFromString(knob.selector)
+            guard prefs.responds(to: sel) else {
+                chorusLog.notice("[Chorus.WebKit] SPI missing: \(knob.label, privacy: .public)")
+                continue
+            }
+            typealias SetterIMP = @convention(c) (AnyObject, Selector, ObjCBool) -> Void
+            let setter = unsafeBitCast(prefs.method(for: sel), to: SetterIMP.self)
+            setter(prefs, sel, ObjCBool(false))
+            chorusLog.notice("[Chorus.WebKit] disabled \(knob.label, privacy: .public)")
+        }
     }
 
     /// Invokes the private SPI `-[WKWebView _setWindowOcclusionDetectionEnabled:]`

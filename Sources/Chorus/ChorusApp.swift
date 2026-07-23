@@ -64,8 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .store(in: &cancellables)
     }
 
-    // TEMP DIAG: timestamp app active-state transitions so background-hide notification timing can
-    // be lined up against completion + DIAG-tick logs. Remove once the freeze path is understood.
+    // Timestamp app active-state transitions — cheap, and lining them up against completion logs
+    // is how the minimize-freeze was proven. Kept as permanent diagnostics.
     func applicationDidResignActive(_ n: Notification)  { clog("APP resignActive (another app frontmost)") }
     func applicationDidBecomeActive(_ n: Notification)   { clog("APP becomeActive (Chorus frontmost)") }
     func applicationDidHide(_ n: Notification)           { clog("APP didHide (⌘H — windows ordered out)") }
