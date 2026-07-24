@@ -276,6 +276,22 @@ struct ChorusApp: App {
             CommandGroup(after: .appInfo) {
                 Button(L("menu.checkUpdates")) { UpdateManager.shared.checkForUpdates() }
             }
+            // ⌘H: a REAL app-hide (NSApp.hide) suspends WebKit at the APPLICATION level — pages
+            // freeze even inside the canHide=false keeper window (watchdog logged Δ0 for the whole
+            // hidden stretch), so completions/notifications stalled until unhide. Minimizing goes
+            // through the window-level path the keeper provably survives, and looks the same to
+            // the user. (Dock-menu Hide still performs a real hide — rare path, keeper adopts as
+            // a best effort there.)
+            CommandGroup(replacing: .appVisibility) {
+                Button(L("menu.hide")) {
+                    for w in NSApp.windows where w.canBecomeMain && !(w is NSPanel) {
+                        w.miniaturize(nil)
+                    }
+                }
+                .keyboardShortcut("h", modifiers: .command)
+                Button(L("menu.hideOthers")) { NSApp.hideOtherApplications(nil) }
+                    .keyboardShortcut("h", modifiers: [.command, .option])
+            }
         }
 
         Settings {
