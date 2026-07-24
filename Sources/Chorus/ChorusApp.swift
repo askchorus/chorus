@@ -109,6 +109,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         WebViewStore.shared.restoreFromKeeper()
     }
 
+    // Dock-icon click. The 2px keeper counts as a "visible window", which turns AppKit's default
+    // reopen behavior (deminiaturize/unhide the main window) into a NO-OP — after minimizing, the
+    // window looked permanently gone. Handle reopen ourselves and tell AppKit to stand down.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        clog("APP reopen (Dock click) — restoring main window manually")
+        for w in NSApp.windows where w.isMiniaturized { w.deminiaturize(nil) }
+        if let win = NSApp.windows.first(where: { $0.canBecomeMain && !($0 is NSPanel) }) {
+            win.makeKeyAndOrderFront(nil)
+        } else {
+            // Window was closed (menu-bar mode) — reopen via the app itself so SwiftUI recreates it.
+            NSWorkspace.shared.open(Bundle.main.bundleURL)
+        }
+        WebViewStore.shared.restoreFromKeeper()
+        return false
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // When the menu-bar icon is shown, keep running there after the window closes (so the
         // status icon + global hotkey stay usable). Otherwise quit on last window close.

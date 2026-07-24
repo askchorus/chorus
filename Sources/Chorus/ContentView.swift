@@ -534,31 +534,40 @@ final class WebViewStore: ObservableObject {
 
     func restoreFromKeeper() {
         guard keeperActive else { return }
-        var restored = 0, stillKept = 0
+        var restored = 0, stillKept = 0, released = 0
         for (key, wv) in cache where wv.window === keeperWindow {
-            // Only restore into a container whose window is actually usable — if the main window
-            // is STILL miniaturized (app activated via Dock click without restoring the window),
-            // moving back would re-freeze the page; leave it in the keeper.
-            guard let home = keeperHomes[key]?.view, let hw = home.window,
-                  hw.isVisible, !hw.isMiniaturized else { stillKept += 1; continue }
-            wv.removeFromSuperview()
-            wv.translatesAutoresizingMaskIntoConstraints = true
-            wv.frame = home.bounds
-            wv.autoresizingMask = [.width, .height]
-            // Below the cream cover (containers keep the cover as their topmost subview).
-            home.addSubview(wv, positioned: .below, relativeTo: nil)
-            keeperHomes.removeValue(forKey: key)
-            restored += 1
+            let home = keeperHomes[key]?.view
+            if let home, let hw = home.window, hw.isVisible, !hw.isMiniaturized {
+                // Home container is usable — put the webview straight back.
+                wv.removeFromSuperview()
+                wv.translatesAutoresizingMaskIntoConstraints = true
+                wv.frame = home.bounds
+                wv.autoresizingMask = [.width, .height]
+                // Below the cream cover (containers keep the cover as their topmost subview).
+                home.addSubview(wv, positioned: .below, relativeTo: nil)
+                keeperHomes.removeValue(forKey: key)
+                restored += 1
+            } else if home?.window != nil {
+                // Home exists but its window is still hidden/miniaturized — restoring now would
+                // re-freeze the page; keep it until the window is actually usable.
+                stillKept += 1
+            } else {
+                // Home container is GONE (panel or window rebuilt while hidden). Release the view
+                // from the keeper's claim — leaving it "kept" would deadlock: updateNSView refuses
+                // to touch kept views, so it could never be re-adopted. Unparented + not-kept, the
+                // objectWillChange render below re-embeds it into the new container.
+                wv.removeFromSuperview()
+                keeperHomes.removeValue(forKey: key)
+                released += 1
+            }
         }
         keeperActive = stillKept > 0
         if !keeperActive {
             keeperHomes = [:]
             keeperWindow?.orderOut(nil)
         }
-        // Stale homes (panel rebuilt while hidden) reattach via WebPanel.updateNSView on the
-        // render this triggers — isKept() is false for restored views now.
         objectWillChange.send()
-        clog("keeper: restored \(restored), still kept \(stillKept)")
+        clog("keeper: restored \(restored), released \(released), still kept \(stillKept)")
     }
 
     // MARK: - Native completion watchdog
