@@ -67,7 +67,18 @@ if [ -d "$(dirname "$SITE_CHORUS_DIR")" ]; then
     cp "$RELEASES/appcast.xml" "$SITE_CHORUS_DIR/"
     # Ship deltas too when generate_appcast produced them.
     find "$RELEASES" -name "*.delta" -newer "$PLIST" -exec cp {} "$SITE_CHORUS_DIR/" \; 2>/dev/null || true
-    echo "    → $SITE_CHORUS_DIR (记得部署网站)"
+    # Keep the landing page's download link / version / size current.
+    LANDING="$SITE_CHORUS_DIR/index.html"
+    if [ -f "$LANDING" ]; then
+        SIZE_H="$(du -h "$DMG" | cut -f1 | tr -d ' ' | sed 's/M$//')"
+        sed -i '' -E \
+          -e "s|Chorus-[0-9]+\.[0-9]+\.[0-9]+\.dmg|Chorus-$VERSION.dmg|g" \
+          -e "s|(id=\"dl-version\">)[0-9]+\.[0-9]+\.[0-9]+|\1$VERSION|" \
+          -e "s|· [0-9.]+ MB ·|· $SIZE_H MB ·|" \
+          "$LANDING"
+        echo "    landing page updated → $VERSION ($SIZE_H MB)"
+    fi
+    echo "    → $SITE_CHORUS_DIR (记得部署网站: cd 个人网页 && npx wrangler pages deploy public --project-name zhouyixiao)"
 else
     echo "==> Website repo not found — upload these to $DOWNLOAD_PREFIX yourself:"
     echo "    $DMG"
