@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Chorus</title>
+        <item>
+            <title>0.2.0</title>
+            <pubDate>Fri, 24 Jul 2026 21:56:13 +0800</pubDate>
+            <sparkle:version>0.2.0</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://zhouyixiao.com/chorus/Chorus-0.2.0.dmg" length="5757087" type="application/octet-stream" sparkle:edSignature="c/MBib/A6TKGPd+DJ8SZGRFHSVyW3lt+lbeRizprn59ukZy80PBnT1Y6DcPjkmAn17oEDViGNXxu+knOJu33BA=="/>
+        </item>
+    </channel>
+</rss>

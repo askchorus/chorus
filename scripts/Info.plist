@@ -2,45 +2,45 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>Chorus</string>
-    <key>CFBundleDisplayName</key>
-    <string>Chorus</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.smiletalker.chorus</string>
-    <key>CFBundleVersion</key>
-    <string>0.1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
-    <key>CFBundleExecutable</key>
-    <string>Chorus</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.productivity</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-    <key>NSSupportsAutomaticTermination</key>
-    <true/>
-    <key>NSSupportsSuddenTermination</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>Personal use only</string>
-    <key>SUFeedURL</key>
-    <string>https://zhouyixiao.com/chorus/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string>MGBVeD2KToJlIJ2qCTZ3AwrdeUoit1P2UFdYCQ4RG+I=</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Chorus uses the microphone for voice input in the quick-input box.</string>
-    <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Chorus transcribes your speech on-device to fill the quick-input box.</string>
+	<key>CFBundleDisplayName</key>
+	<string>Chorus</string>
+	<key>CFBundleExecutable</key>
+	<string>Chorus</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.smiletalker.chorus</string>
+	<key>CFBundleName</key>
+	<string>Chorus</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>0.2.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Personal use only</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Chorus uses the microphone for voice input in the quick-input box.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Chorus transcribes your speech on-device to fill the quick-input box.</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<true/>
+	<key>NSSupportsSuddenTermination</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://zhouyixiao.com/chorus/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>MGBVeD2KToJlIJ2qCTZ3AwrdeUoit1P2UFdYCQ4RG+I=</string>
 </dict>
 </plist>

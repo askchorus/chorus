@@ -14,3 +14,5 @@ scripts/Chorus.iconset/
 # Xcode (if opened)
 *.xcuserstate
 xcuserdata/
+releases/*.dmg
+releases/*.delta
