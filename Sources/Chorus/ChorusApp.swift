@@ -45,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Touch the store once so its init() wires up the completion script handler bridge
         _ = WebViewStore.shared
+        // Keeper window must exist and be ordered in BEFORE any ⌘H (see prepareKeeper's doc).
+        WebViewStore.shared.prepareKeeper()
 
         // Keeper triggers for the two window-level paths that hide pages WITHOUT hiding the app:
         // minimize (yellow button) and close (red button, app stays in the menu bar). Restore is
@@ -71,6 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let w = note.object as? NSWindow, WebViewStore.shared.windowHostsPanels(w) else { return }
                 clog("APP main window closing — adopting panels into keeper")
                 WebViewStore.shared.adoptIntoKeeper()
+                // The always-present keeper means AppKit never sees "last window closed", so the
+                // quit-on-close behavior (menu-bar icon disabled) must be triggered manually.
+                if !(UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true) {
+                    DispatchQueue.main.async { NSApp.terminate(nil) }
+                }
             }
         }
 

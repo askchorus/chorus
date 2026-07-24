@@ -493,28 +493,33 @@ final class WebViewStore: ObservableObject {
         cache.values.contains { $0.window === window }
     }
 
-    func adoptIntoKeeper() {
-        let win: NSWindow
-        if let w = keeperWindow {
-            win = w
-        } else {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 2, height: 2),
-                             styleMask: .borderless, backing: .buffered, defer: false)
-            w.isOpaque = false
-            w.backgroundColor = .clear
-            w.alphaValue = 0.01                    // 0.0 could count as not-visible; 0.01 doesn't
-            w.ignoresMouseEvents = true
-            w.level = .normal
-            w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-            w.isExcludedFromWindowsMenu = true
-            w.isReleasedWhenClosed = false
-            if let screen = NSScreen.main {
-                w.setFrameOrigin(NSPoint(x: screen.frame.minX, y: screen.frame.minY))
-            }
-            keeperWindow = w
-            win = w
+    /// Create the keeper window up-front (called once at launch). It must ALREADY be on screen
+    /// when ⌘H hides the app: ordering a window front FROM didHide un-hides the app (live logs
+    /// showed a 17ms didHide→didUnhide bounce — "⌘H stopped working"), whereas a pre-existing
+    /// canHide=false window simply survives the hide with no ordering calls at all.
+    func prepareKeeper() {
+        guard keeperWindow == nil else { return }
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 2, height: 2),
+                         styleMask: .borderless, backing: .buffered, defer: false)
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        w.alphaValue = 0.01                    // 0.0 could count as not-visible; 0.01 doesn't
+        w.ignoresMouseEvents = true
+        w.level = .normal
+        w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        w.isExcludedFromWindowsMenu = true
+        w.isReleasedWhenClosed = false
+        w.canHide = false                      // survives NSApp.hide — the whole point
+        if let screen = NSScreen.main {
+            w.setFrameOrigin(NSPoint(x: screen.frame.minX, y: screen.frame.minY))
         }
-        guard let content = win.contentView else { return }
+        keeperWindow = w
+        w.orderFrontRegardless()               // at launch the app is visible — safe to order in
+    }
+
+    func adoptIntoKeeper() {
+        prepareKeeper()
+        guard let win = keeperWindow, let content = win.contentView else { return }
         var moved = 0
         for (key, wv) in cache where wv.window !== win {
             keeperHomes[key] = WeakViewBox(wv.superview)
@@ -528,7 +533,10 @@ final class WebViewStore: ObservableObject {
             moved += 1
         }
         keeperActive = true
-        win.orderFrontRegardless()
+        // NO ordering calls here: ordering the keeper front from didHide un-hides the app.
+        // The window is on screen from launch (canHide=false carries it through ⌘H); re-order
+        // defensively only when the app is NOT hidden.
+        if !win.isVisible && !NSApp.isHidden { win.orderFrontRegardless() }
         clog("keeper: adopted \(moved) webviews (main window hidden/minimized)")
     }
 
