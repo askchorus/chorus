@@ -48,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Keeper window must exist and be ordered in BEFORE any ⌘H (see prepareKeeper's doc).
         WebViewStore.shared.prepareKeeper()
 
+        // Start Sparkle at launch so its scheduled background checks run (user consent is asked
+        // once by Sparkle itself); a dev build without a reachable appcast just stays quiet.
+        _ = UpdateManager.shared
+
         // Keeper triggers for the two window-level paths that hide pages WITHOUT hiding the app:
         // minimize (yellow button) and close (red button, app stays in the menu bar). Restore is
         // driven by applicationDidBecomeActive/didUnhide + windowDidDeminiaturize below.
@@ -174,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(action(L("menubar.open"), #selector(mbOpenMain)))
         menu.addItem(action(L("menu.settings"), #selector(mbOpenSettings)))
         menu.addItem(.separator())
+        menu.addItem(action(L("menu.checkUpdates"), #selector(mbCheckUpdates)))
         menu.addItem(action(L("menubar.quit"), #selector(mbQuit)))
 
         // Left-click summons the quick input (the valuable, discoverable path); right-click
@@ -249,6 +254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func mbCheckUpdates() { UpdateManager.shared.checkForUpdates() }
+
     @objc private func mbQuit() { NSApp.terminate(nil) }
 }
 
@@ -265,6 +272,11 @@ struct ChorusApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button(L("menu.checkUpdates")) { UpdateManager.shared.checkForUpdates() }
+            }
+        }
 
         Settings {
             SettingsView()

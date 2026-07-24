@@ -34,6 +34,10 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Personal use only</string>
+    <key>SUFeedURL</key>
+    <string>https://zhouyixiao.com/chorus/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>MGBVeD2KToJlIJ2qCTZ3AwrdeUoit1P2UFdYCQ4RG+I=</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Chorus uses the microphone for voice input in the quick-input box.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

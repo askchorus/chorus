@@ -105,6 +105,7 @@ let L10nTable: [String: [String: String]] = [
     "menubar.thinking": ["zh": "%d 个在思考…", "en": "%d thinking…"],
     "menubar.open": ["zh": "打开 Chorus", "en": "Open Chorus"],
     "menubar.quit": ["zh": "退出 Chorus", "en": "Quit Chorus"],
+    "menu.checkUpdates": ["zh": "检查更新…", "en": "Check for Updates…"],
     "settings.section.menubar": ["zh": "菜单栏", "en": "Menu Bar"],
     "settings.menubar.show": ["zh": "在菜单栏显示图标", "en": "Show menu bar icon"],
     "settings.menubar.desc": [

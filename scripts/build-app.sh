@@ -36,6 +36,20 @@ cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT/scripts/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/scripts/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
+echo "==> Embedding Sparkle.framework..."
+# SPM links the binary against @rpath/Sparkle.framework; the manually-assembled bundle must
+# carry the framework and an rpath pointing at Contents/Frameworks.
+FRAMEWORKS_DIR="$CONTENTS/Frameworks"
+mkdir -p "$FRAMEWORKS_DIR"
+SPARKLE_FW="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [ ! -d "$SPARKLE_FW" ]; then
+    # Artifact layout differs across Sparkle releases — locate it.
+    SPARKLE_FW="$(find "$ROOT/.build/artifacts" -type d -name "Sparkle.framework" -path "*macos*" | head -1)"
+fi
+[ -d "$SPARKLE_FW" ] || { echo "ERROR: Sparkle.framework not found under .build/artifacts"; exit 1; }
+cp -R "$SPARKLE_FW" "$FRAMEWORKS_DIR/"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/$APP_NAME" 2>/dev/null || true
+
 echo "==> Ad-hoc signing..."
 codesign --force --deep --sign - "$APP_DIR"
 
