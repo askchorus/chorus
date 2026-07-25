@@ -3,6 +3,17 @@
     <channel>
         <title>Chorus</title>
         <item>
+            <title>0.2.1</title>
+            <pubDate>Sat, 25 Jul 2026 17:13:28 +0800</pubDate>
+            <sparkle:version>0.2.1</sparkle:version>
+            <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://zhouyixiao.com/chorus/Chorus-0.2.1.dmg" length="5790363" type="application/octet-stream" sparkle:edSignature="gO6Won8o/YtRpGZ5IR/W5nsCmQ80TcXYu9IHQ8bDkzuC/W1oDx5jmKz8jenCR79hdt/V6IEcV7RQuBfN6y8/BA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.1-0.2.0.delta" sparkle:deltaFrom="0.2.0" length="337194" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="qmm6m6OZ0kovVUeenQRtoWPeHZiUxi+Fwmvw431t/qWCHz4EfSjLvpaUpFYbcXY5vKGe2UAaop8JXh9vhd6xBQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.2.0</title>
             <pubDate>Fri, 24 Jul 2026 21:56:13 +0800</pubDate>
             <sparkle:version>0.2.0</sparkle:version>
