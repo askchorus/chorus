@@ -487,7 +487,8 @@ enum Broadcaster {
               try { cb(ts); } catch (_) {}
             };
             const n = nativeRAF((ts) => fire(ts));
-            const t = setTimeout(() => fire(performance.now()), realHidden() ? 16 : 100);
+            const t = setTimeout(() => fire(performance.now()),
+              realHidden() ? (window.__chorusStreamingActive ? 16 : 750) : 100);
             pending.set(id, { n, t });
             return id;
           };
@@ -519,7 +520,8 @@ enum Broadcaster {
                 try { cb(deadline || { didTimeout: true, timeRemaining: () => 50 }); } catch (_) {}
               };
               const n = nativeRIC((d) => fire(d), opts);
-              const t = setTimeout(() => fire(null), realHidden() ? 50 : 400);
+              const t = setTimeout(() => fire(null),
+              realHidden() ? (window.__chorusStreamingActive ? 50 : 1200) : 400);
               ricPending.set(id, { n, t });
               return id;
             };
@@ -542,7 +544,8 @@ enum Broadcaster {
             window.scheduler.postTask = (cb, opts) => {
               if (!realHidden()) return nativePost(cb, opts);
               return new Promise((resolve, reject) => {
-                setTimeout(() => { try { resolve(cb()); } catch (e) { reject(e); } }, 10);
+                setTimeout(() => { try { resolve(cb()); } catch (e) { reject(e); } },
+                           window.__chorusStreamingActive ? 10 : 150);
               });
             };
           }
@@ -1313,6 +1316,7 @@ enum Broadcaster {
                 return;
               }
               const streaming = isStreaming();
+              window.__chorusStreamingActive = streaming;   // keep the shims' activity flag fresh
               if (streaming) {
                 idleTicks = 0;
                 if (!wasStreaming) {
@@ -1450,6 +1454,9 @@ enum Broadcaster {
             // While a broadcast is actively tracking this page, let it own the signal.
             if (window.__chorusPoll) { was = false; if (confirm) { clearTimeout(confirm); confirm = null; } return; }
             const now = streaming();
+            // Live activity flag for the keep-alive shims: full-rate timer backups only while a
+            // response is actually generating; hidden idle pages drop to a slow tick (energy).
+            window.__chorusStreamingActive = now;
             if (now) {
               if (isGemini) paintUntil = Date.now() + 6000;  // keep repainting through the stream
               else L.followBottom();                          // other panels: just follow the stream

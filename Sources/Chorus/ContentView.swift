@@ -673,10 +673,30 @@ final class WebViewStore: ObservableObject {
 
     /// Drop a webview (used when a custom provider is removed) so it stops consuming memory.
     func removeWebView(key: String) {
+        urlObservers.removeValue(forKey: key)?.invalidate()
+        loadingObservers.removeValue(forKey: key)?.invalidate()
         cache[key]?.removeFromSuperview()
         cache[key] = nil
         streamingKeys.remove(key)
         favicons.removeValue(forKey: key)
+        loadingKeys.remove(key)
+    }
+
+    /// Tear down a HIDDEN panel's webview to stop it consuming CPU/energy (all WebKit power
+    /// saving is disabled for the notification fix, so an invisible page runs full tilt).
+    /// The conversation URL is continuously recorded via KVO, so re-showing the panel recreates
+    /// the webview right back on the same conversation. Skips (and retries once) if the panel is
+    /// mid-generation, so a completion isn't lost.
+    func destroyHiddenPanel(key: String, retried: Bool = false) {
+        guard cache[key] != nil else { return }
+        if streamingKeys.contains(key), !retried {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+                self?.destroyHiddenPanel(key: key, retried: true)
+            }
+            return
+        }
+        removeWebView(key: key)
+        clog("hidden panel torn down — \(key) (recreated on re-show)")
     }
 }
 
@@ -892,6 +912,14 @@ struct ContentView: View {
                 hiddenProvidersRaw = newRaw
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { reflowing = false }
             }
+            // Energy: tear down the hidden panel's webview after a grace period (a quick
+            // hide→show toggle inside the window costs nothing; past it, re-show reloads and
+            // restores the recorded conversation).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                let stillHidden = (UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
+                    .split(separator: ",").map(String.init).contains(key)
+                if stillHidden { WebViewStore.shared.destroyHiddenPanel(key: key) }
+            }
         }
     }
 
@@ -934,8 +962,13 @@ struct ContentView: View {
         .background(WindowConfigurator())
         .onAppear {
             AppearanceManager.apply(appearance)
-            // Pre-create all webviews up-front so their lifecycle is independent of view rebuilds.
-            for p in allProviders {
+            // Pre-create webviews for VISIBLE panels only, so their lifecycle is independent of
+            // view rebuilds. Hidden panels used to be created too — with all power-saving disabled
+            // for the notification fix, that meant 5+ invisible full-tilt web pages burning energy
+            // around the clock. A hidden panel now costs nothing; re-showing it recreates the
+            // webview and restores its recorded conversation URL.
+            let hidden = Set(hiddenProvidersRaw.split(separator: ",").map(String.init))
+            for p in allProviders where !hidden.contains(p.key) {
                 _ = store.getOrCreate(key: p.key, url: p.url)
             }
             if !welcomeSeen { showWelcome = true }   // first launch only
