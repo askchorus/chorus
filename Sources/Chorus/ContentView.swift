@@ -968,7 +968,17 @@ struct ContentView: View {
             StatsSheet { showStats = false }
         }
         .sheet(isPresented: $showWelcome) {
-            WelcomeSheet { welcomeSeen = true; showWelcome = false }
+            WelcomeSheet {
+                welcomeSeen = true
+                showWelcome = false
+                // Ask for notification permission HERE, not at launch: the guide's last step just
+                // explained what notifications are for, so the system dialog lands with context
+                // (launch-time asks stacked on top of this sheet with zero explanation).
+                CompletionNotifier.shared.requestAuthorizationIfNeeded()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chorusShowGuide)) { _ in
+            showWelcome = true   // 菜单 → 使用指引
         }
     }
 

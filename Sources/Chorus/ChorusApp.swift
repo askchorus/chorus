@@ -85,8 +85,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // Request notification permission (system dialog shown once on first launch)
-        CompletionNotifier.shared.requestAuthorizationIfNeeded()
+        // Request notification permission at launch only for users who have finished onboarding —
+        // first-run users get asked from the welcome sheet's Get Started button instead, right
+        // after the guide explains what the notification is for (context → better grant rate).
+        if UserDefaults.standard.bool(forKey: "welcomeSeen") {
+            CompletionNotifier.shared.requestAuthorizationIfNeeded()
+        }
 
         // Menu bar: build the status item, keep its icon in sync with streaming state, and
         // add/remove it live when the user toggles the setting.
@@ -259,6 +263,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func mbQuit() { NSApp.terminate(nil) }
 }
 
+extension Notification.Name {
+    /// Posted by the 使用指引 menu item; ContentView re-presents the welcome sheet.
+    static let chorusShowGuide = Notification.Name("chorusShowGuide")
+}
+
 @main
 struct ChorusApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -275,6 +284,7 @@ struct ChorusApp: App {
         .commands {
             CommandGroup(after: .appInfo) {
                 Button(L("menu.checkUpdates")) { UpdateManager.shared.checkForUpdates() }
+                Button(L("menu.guide")) { NotificationCenter.default.post(name: .chorusShowGuide, object: nil) }
             }
             // ⌘H: a REAL app-hide (NSApp.hide) suspends WebKit at the APPLICATION level — pages
             // freeze even inside the canHide=false keeper window (watchdog logged Δ0 for the whole

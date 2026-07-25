@@ -262,7 +262,23 @@ struct WelcomeSheet: View {
             }
             .padding(.horizontal, 40)
 
-            Spacer(minLength: 28)
+            Spacer(minLength: 16)
+
+            // The #1 first-launch anxiety is "why am I signing in to three sites inside an
+            // unfamiliar app?" — answer it before asking anything of the user.
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.black.opacity(0.4))
+                    .padding(.top, 1)
+                Text(L("welcome.privacy"))
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.black.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 42)
+
+            Spacer(minLength: 16)
 
             Button(action: onStart) {
                 Text(L("welcome.start"))

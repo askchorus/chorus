@@ -91,6 +91,11 @@ let L10nTable: [String: [String: String]] = [
     "welcome.step3.title": ["zh": "随时快速发问", "en": "Ask from anywhere"],
     "welcome.step3.desc": ["zh": "在任何 app 里按 %@，唤出快速输入框", "en": "Press %@ in any app to summon the quick input"],
     "welcome.start": ["zh": "开始使用", "en": "Get Started"],
+    "welcome.privacy": [
+        "zh": "Chorus 直接加载各家官网，用你自己的账号。数据只在你的电脑与 AI 官网之间传输，不经过任何中间服务器。",
+        "en": "Chorus loads each AI's official site with your own accounts. Data flows only between your Mac and the AI sites — no middleman server.",
+    ],
+    "menu.guide": ["zh": "使用指引", "en": "Guide"],
 
     // MARK: Settings — language
     "settings.language.label": ["zh": "界面语言", "en": "Interface language"],
