@@ -59,14 +59,23 @@ enum KeyStore {
         try? fm.createDirectory(at: d, withIntermediateDirectories: true)
         return d.appendingPathComponent("apikeys.json")
     }
+    /// Owner-only read/write. Default file creation is 644 (group/others READABLE) — other
+    /// accounts on the same Mac could read the plaintext keys. 600 is the baseline hygiene we owe
+    /// users until the Keychain migration (blocked on stable Developer-ID signing).
+    private static func clampPermissions(_ url: URL) {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
     private static func load() -> [String: String] {
-        guard let url, let data = try? Data(contentsOf: url),
+        guard let url else { return [:] }
+        clampPermissions(url)   // migrate files created before the 600 clamp existed
+        guard let data = try? Data(contentsOf: url),
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
         return dict
     }
     private static func save(_ dict: [String: String]) {
         guard let url, let data = try? JSONEncoder().encode(dict) else { return }
-        try? data.write(to: url, options: .atomic)
+        try? data.write(to: url, options: .atomic)   // atomic replaces the file → re-clamp after
+        clampPermissions(url)
     }
 
     static func get(account: String) -> String? {
