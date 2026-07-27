@@ -115,20 +115,40 @@ struct AccentBar: View {
     }
 }
 
-/// Makes the host NSWindow draggable from any background area and keeps the title bar
-/// transparent — needed for the immersive, hidden-title-bar look.
+/// Keeps the title bar transparent for the immersive, hidden-title-bar look.
+/// isMovableByWindowBackground must stay FALSE: the main composer is a SwiftUI multiline
+/// TextField, which is not an AppKit text control — with background-dragging on, AppKit treated
+/// click-drags inside it as "move the window" and text selection was impossible. Window dragging
+/// is provided explicitly by WindowDragHandle on the top strip instead.
 struct WindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
         DispatchQueue.main.async {
             guard let w = v.window else { return }
-            w.isMovableByWindowBackground = true
+            w.isMovableByWindowBackground = false
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.backgroundColor = ChorusTheme.windowBackground
         }
         return v
     }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// An explicit window-drag area (the top strip): press-and-drag moves the window, double-click
+/// performs the standard titlebar zoom/minimize action. Replaces whole-window background dragging,
+/// which broke text selection in the SwiftUI composer.
+struct WindowDragHandle: NSViewRepresentable {
+    final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                window?.performZoom(nil)
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
+    }
+    func makeNSView(context: Context) -> NSView { DragView() }
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 

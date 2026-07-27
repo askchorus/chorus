@@ -1018,7 +1018,9 @@ struct ContentView: View {
     /// Minimal immersive top strip — just reserves the traffic-light row so the cards don't
     /// slide under the window controls. All global actions now live in the composer's menu.
     private var topBar: some View {
-        Color.clear.frame(height: 28)
+        // The explicit window-drag strip (background dragging is off so the composer can select
+        // text — see WindowConfigurator).
+        WindowDragHandle().frame(height: 28)
     }
 
     private func openSettings() {
