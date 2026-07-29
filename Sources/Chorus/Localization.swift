@@ -51,6 +51,7 @@ let L10nTable: [String: [String: String]] = [
     "menu.settings": ["zh": "设置…", "en": "Settings…"],
     "menu.actions": ["zh": "操作", "en": "Actions"],
     "panel.reload": ["zh": "重载 %@", "en": "Reload %@"],
+    "panel.newChat": ["zh": "%@ 新对话", "en": "New chat in %@"],
     "panel.hide": ["zh": "隐藏 %@", "en": "Hide %@"],
 
     // MARK: Quick input

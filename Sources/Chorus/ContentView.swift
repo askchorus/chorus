@@ -1195,6 +1195,19 @@ struct ContentView: View {
                     .frame(width: 14, height: 14)
             }
             if hoveredHeaderKey == p.key {
+                // Per-panel new chat — asking ONE AI a fresh question is a common flow (the
+                // global New chat resets every panel, which is a different intent).
+                Button {
+                    store.newChat(key: p.key)
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(Lf("panel.newChat", p.name))
+                .transition(.opacity)
+
                 // Reload hidden while loading (the spinner is there instead → can't double-tap).
                 if !store.loadingKeys.contains(p.key) {
                     Button {
