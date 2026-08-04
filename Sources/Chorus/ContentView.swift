@@ -797,7 +797,11 @@ struct ContentView: View {
             shareCardData = blocks.isEmpty ? nil
                 : ShareCardData(question: store.lastBroadcast,
                                 answers: blocks.map { ShareAnswer(name: $0.name, color: $0.color, text: $0.text) })
-            showShareCard = true
+            // Present on the NEXT runloop: presenting in the same transaction as the data write
+            // makes the FIRST-ever presentation build from the pre-transaction snapshot (nil →
+            // "no answers"), with nothing arriving later to trigger a rebuild. Same bug and same
+            // fix as the summary sheet.
+            DispatchQueue.main.async { showShareCard = true }
         }
     }
 
