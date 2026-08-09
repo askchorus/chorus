@@ -1144,9 +1144,52 @@ enum Broadcaster {
           //    then trigger send. Try a real click first; if button stays disabled past the
           //    deadline, click it anyway as a last-ditch attempt; finally fall back to a
           //    synthesized Enter on the input (some sites send via key event not button).
-          const sendDeadline = Date.now() + ((IMAGES_B64.length || WAIT_UPLOAD) ? 25000 : 3000);
+          const sendDeadline = Date.now() + ((IMAGES_B64.length || WAIT_UPLOAD) ? 25000 : 8000);
           let lastBtn = null;
           let clicked = false;
+
+          // Re-resolve the composer on EVERY use: Angular/React re-render it (Gemini especially),
+          // detaching the node captured at the start — a detached node reads as empty and swallows
+          // dispatched events.
+          const liveInput = () => pickFirst(cfg.inputSelectors) || input;
+          const composerText = () => {
+            try {
+              const el = liveInput();
+              return ((el.isContentEditable ? el.innerText : el.value) || '').trim();
+            } catch (_) { return ''; }
+          };
+
+          // Shadow-DOM-aware send-button lookup, used when the light-DOM query comes up empty
+          // (web-component composers hide their controls inside a shadow root).
+          const deepPickSend = () => {
+            try {
+              const els = deepQueryAll(cfg.sendSelectors || []);
+              return els.find(e => e.offsetParent !== null) || els[0] || null;
+            } catch (_) { return null; }
+          };
+
+          // Make a framework re-read the composer's DOM. Gemini renders its send button only once
+          // Angular registers non-empty input; when our typing doesn't reach that model no button
+          // ever appears AND synthetic Enter is ignored (it consults the same model) — the exact
+          // "text sits in the box, nothing sends" failure. Re-firing input events (plus a
+          // space-then-delete edit, which is a real model change) wakes it up.
+          const nudgeEditor = () => {
+            const el = liveInput();
+            if (!el) return;
+            try { el.focus(); } catch (_) {}
+            try {
+              el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ' ' }));
+            } catch (_) {
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            try {
+              document.execCommand('insertText', false, ' ');
+              document.execCommand('delete', false);
+            } catch (_) {}
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+          };
+          let nudges = 0;
 
           // Dispatch the full pointer/mouse event sequence (for sites that listen to them),
           // then trigger the click EXACTLY ONCE via el.click(). Calling both
@@ -1171,7 +1214,7 @@ enum Broadcaster {
 
           const sendLoopStart = Date.now();
           while (Date.now() < sendDeadline) {
-            const btn = pickFirst(cfg.sendSelectors);
+            const btn = pickFirst(cfg.sendSelectors) || deepPickSend();
             if (btn) {
               lastBtn = btn;
               // Disabled = attribute (real <button>s) OR a 'disabled' CSS class on the element or
@@ -1184,7 +1227,13 @@ enum Broadcaster {
                 clicked = true;
                 break;
               }
-            } else if (Date.now() - sendLoopStart > 5000) {
+            } else if (composerText() !== '' && nudges < 6) {
+              // Button not rendered yet but text IS in the composer → the framework probably
+              // hasn't registered our input. Wake it, then keep polling (see nudgeEditor).
+              nudges++;
+              if (nudges === 1) clog('send: no button yet, text present — nudging the editor');
+              nudgeEditor();
+            } else if ((IMAGES_B64.length || WAIT_UPLOAD) && Date.now() - sendLoopStart > 5000) {
               // No element has EVER matched the send selectors — more waiting can't help (the
               // long image deadline exists to wait for a FOUND button to enable during upload).
               // Bail to the Enter fallback instead of burning up to 25s on generic sites.
@@ -1220,17 +1269,10 @@ enum Broadcaster {
           //     Retry: wake the framework with a fresh input event, re-click, then fall back
           //     to a synthesized Enter (Gemini sends on Enter).
           if (TEXT && input) {
-            // Re-resolve the composer on EVERY check/retry. Angular/React re-render the composer
-            // (Gemini especially), detaching the node we captured at the start — reading a detached
-            // node can fake an empty composer ("send succeeded"), and dispatching focus/Enter/click
-            // events at it is a silent no-op, which made all three retries fire into the void.
-            const liveInput = () => pickFirst(cfg.inputSelectors) || input;
-            const composerText = () => {
-              try {
-                const el = liveInput();
-                return ((el.isContentEditable ? el.innerText : el.value) || '').trim();
-              } catch (_) { return ''; }
-            };
+            // liveInput / composerText are defined above the send loop — they re-resolve the
+            // composer on every use because Angular/React re-render it (Gemini especially), and a
+            // detached node both reads as empty and swallows dispatched events.
+            //
             // A successful send EITHER clears the composer OR makes a stop button appear (streaming
             // started). Checking both prevents a re-send — and a double-posted message — when an AI
             // begins generating without clearing its editor. force=true bypasses the Gemini deep-walk
