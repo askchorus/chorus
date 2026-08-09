@@ -272,10 +272,21 @@ final class WebViewStore: ObservableObject {
         let visibleKeys = Set(cache.keys).subtracting(hiddenKeys)
         let visibleAPIKeys = Set(APIProviderRegistry.all().map(\.id)).subtracting(hiddenKeys)
 
-        let requiredRaw = UserDefaults.standard.string(forKey: "notifyRequiredProviders") ?? "chatgpt,claude,gemini"
-        let requiredKeys = Set(requiredRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
-        // Wait on web hosts AND native API panels that the user marked required.
-        let trackKeys = visibleKeys.union(visibleAPIKeys).intersection(requiredKeys)
+        // Default: wait for whatever the user currently has ON SCREEN — the panels you chose to
+        // show ARE the answer set you're waiting for, and it stays right when panels are added or
+        // hidden. The old behaviour (a separate hand-kept checklist) silently drifted: hiding a
+        // listed panel dropped it, and newly shown panels were never waited for, so the "all
+        // done" alert could fire while a visible AI was still writing.
+        let everyVisible = UserDefaults.standard.object(forKey: "notifyWaitAllVisible") as? Bool ?? true
+        let onScreen = visibleKeys.union(visibleAPIKeys)
+        let trackKeys: Set<String>
+        if everyVisible {
+            trackKeys = onScreen
+        } else {
+            let requiredRaw = UserDefaults.standard.string(forKey: "notifyRequiredProviders") ?? "chatgpt,claude,gemini"
+            let requiredKeys = Set(requiredRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+            trackKeys = onScreen.intersection(requiredKeys)
+        }
 
         if !trackKeys.isEmpty {
             let batchID = UUID()
@@ -285,7 +296,7 @@ final class WebViewStore: ObservableObject {
                 totalCount: trackKeys.count,
                 lastActivityAt: Date()
             )
-            clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (visible=\(visibleKeys), required=\(requiredKeys))")
+            clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (onScreen=\(onScreen), mode=\(everyVisible ? "all-visible" : "manual-list"))")
             scheduleBatchFallback(batchID: batchID)
             startCompletionWatchdogIfNeeded()   // native busy→idle detection survives minimize
             // Keep the batch alive through long thinking runs (Claude Extra exceeded the old 300s,
@@ -295,7 +306,7 @@ final class WebViewStore: ObservableObject {
                 self?.pendingBatches.removeValue(forKey: batchID)
             }
         } else {
-            clog("broadcast skipped completion tracking — no providers to wait for (visible=\(visibleKeys), required=\(requiredKeys))")
+            clog("broadcast skipped completion tracking — no providers to wait for (onScreen=\(onScreen), mode=\(everyVisible ? "all-visible" : "manual-list"))")
         }
 
         let jsWithImages = Broadcaster.injectionScript(text: text, imagesBase64: imagesBase64)

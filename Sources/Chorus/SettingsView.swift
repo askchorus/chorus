@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage("foregroundMainOnSend") private var foregroundMainOnSend: Bool = true
     @AppStorage("autoPasteOnSummon") private var autoPasteOnSummon: Bool = true
     @AppStorage("notifyMode") private var notifyMode: String = "quickOnly"
+    @AppStorage("notifyWaitAllVisible") private var notifyWaitAllVisible: Bool = true
     @AppStorage("notifyRequiredProviders") private var notifyRequiredProvidersRaw: String = "chatgpt,claude,gemini"
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
@@ -328,22 +329,26 @@ struct SettingsView: View {
 
                 Divider().padding(.vertical, 4)
 
-                Text(L("settings.notify.waitFor"))
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                Toggle(L("settings.notify.waitAllVisible"), isOn: $notifyWaitAllVisible)
+                hint("settings.notify.waitAllVisible.desc")
 
-                ForEach(allProviders) { p in
-                    Toggle(p.name, isOn: requiredBinding(for: p.key))
-                        .padding(.leading, 4)
-                }
-                // Native API panels can block the notification too (off by default — check the
-                // ones you want the "all done" alert to wait for).
-                ForEach(apiProviders) { p in
-                    Toggle("\(p.name)  ·  API", isOn: requiredBinding(for: p.id))
-                        .padding(.leading, 4)
-                }
+                if !notifyWaitAllVisible {
+                    Text(L("settings.notify.waitFor"))
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
 
-                hint("settings.notify.waitDesc")
+                    ForEach(allProviders) { p in
+                        Toggle(p.name, isOn: requiredBinding(for: p.key))
+                            .padding(.leading, 4)
+                    }
+                    // Native API panels can block the notification too.
+                    ForEach(apiProviders) { p in
+                        Toggle("\(p.name)  ·  API", isOn: requiredBinding(for: p.id))
+                            .padding(.leading, 4)
+                    }
+
+                    hint("settings.notify.waitDesc")
+                }
             }
 
             Section(L("settings.section.quickPrompts")) {

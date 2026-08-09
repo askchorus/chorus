@@ -52,6 +52,11 @@ let L10nTable: [String: [String: String]] = [
     "menu.actions": ["zh": "操作", "en": "Actions"],
     "panel.reload": ["zh": "重载 %@", "en": "Reload %@"],
     "panel.newChat": ["zh": "%@ 新对话", "en": "New chat in %@"],
+    "settings.notify.waitAllVisible": ["zh": "等所有显示中的 AI 答完", "en": "Wait for every visible AI"],
+    "settings.notify.waitAllVisible.desc": [
+        "zh": "通知在当前显示的每个 AI 都答完后发出；增减面板时自动跟随，无需另外维护名单。关闭后可手动指定等待哪几个。",
+        "en": "Notify once every AI you currently have on screen has finished. Follows panels as you show or hide them — no separate list to maintain. Turn off to pick specific AIs instead.",
+    ],
     "panel.hide": ["zh": "隐藏 %@", "en": "Hide %@"],
 
     // MARK: Quick input
