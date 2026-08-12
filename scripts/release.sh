@@ -22,7 +22,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 VERSION="${1:-}"
-[ -n "$VERSION" ] || { echo "Usage: $0 <version>   e.g. $0 0.2.0"; exit 1; }
+NOTE="${2:-}"   # optional one-line Chinese summary shown in the landing page's 最近更新 list
+[ -n "$VERSION" ] || { echo "Usage: $0 <version> [\"一句话更新说明\"]   e.g. $0 0.2.4 \"修复 Gemini 偶发发送失败\""; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ERROR: version must look like 0.2.0"; exit 1; }
 
 PLIST="$ROOT/scripts/Info.plist"
@@ -67,6 +68,45 @@ if [ -d "$(dirname "$SITE_CHORUS_DIR")" ]; then
     cp "$RELEASES/appcast.xml" "$SITE_CHORUS_DIR/"
     # Ship deltas too when generate_appcast produced them.
     find "$RELEASES" -name "*.delta" -newer "$PLIST" -exec cp {} "$SITE_CHORUS_DIR/" \; 2>/dev/null || true
+    # Changelog (最近更新 on the landing page): record this release in releases.json, then
+    # RENDER it straight into index.html. Rendering at release time (rather than fetching
+    # releases.json in the browser) keeps the page a single self-contained file — no runtime
+    # request that can fail and silently drop the section.
+    VERSION="$VERSION" NOTE="$NOTE" SITE="$SITE_CHORUS_DIR" python3 - <<'PYEOF'
+import json, os, datetime, re, html
+site = os.environ["SITE"]
+jpath, hpath = os.path.join(site, "releases.json"), os.path.join(site, "index.html")
+try:
+    data = json.load(open(jpath, encoding="utf-8"))
+except Exception:
+    data = []
+note = os.environ.get("NOTE", "").strip()
+if note:
+    v = os.environ["VERSION"]
+    data = [e for e in data if e.get("version") != v]
+    data.insert(0, {"version": v, "date": datetime.date.today().isoformat(), "note": note})
+    json.dump(data, open(jpath, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    print("    changelog: added %s" % v)
+else:
+    print("    changelog: no note given (pass one as arg 2) — list left as-is")
+
+if not os.path.exists(hpath) or not data:
+    raise SystemExit(0)
+rows = []
+for e in data[:3]:
+    mm_dd = (e.get("date") or "")[5:]
+    when = mm_dd.replace("-", "月") + "日" if mm_dd else ""
+    rows.append('<div class="log-row"><b>%s</b><time>%s</time><span>%s</span></div>'
+                % (html.escape(e.get("version", "")), when, html.escape(e.get("note", ""))))
+doc = open(hpath, encoding="utf-8").read()
+new_doc = re.sub(r'(<div id="log-rows">).*?(</div>)',
+                 lambda m: m.group(1) + "\n" + "\n".join(rows) + "\n  " + m.group(2),
+                 doc, count=1, flags=re.S)
+if new_doc != doc:
+    open(hpath, "w", encoding="utf-8").write(new_doc)
+    print("    changelog: rendered %d rows into index.html" % len(rows))
+PYEOF
+
     # Keep the landing page's download link / version / size current.
     LANDING="$SITE_CHORUS_DIR/index.html"
     if [ -f "$LANDING" ]; then
