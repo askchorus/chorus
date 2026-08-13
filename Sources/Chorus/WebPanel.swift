@@ -755,6 +755,10 @@ enum Broadcaster {
               if (h.includes('kimi') || h.includes('moonshot')) {
                 const segs = document.querySelectorAll('.segment.segment-assistant, .segment-assistant');
                 el = segs[segs.length - 1];
+              } else if (h.includes('manus')) {
+                // Agent transcript: measure the WHOLE conversation column, so the long tool-running
+                // pauses between steps still read as "growing" rather than finished.
+                el = document.querySelector('main') || document.body;
               } else {
                 const ns = document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"]');
                 el = ns[ns.length - 1];
@@ -871,6 +875,34 @@ enum Broadcaster {
               // synthetic DROP on the editor attaches properly, and attachment previews are
               // .image-thumbnail chips (no blob:/data: <img>, so the generic attachment gate
               // never saw them and always waited its full 8s).
+              // Verified against the live DOM 2026-08-10. Manus's composer is TipTap/ProseMirror
+              // (our execCommand+InputEvent typing drives it correctly — confirmed by watching the
+              // send button flip from disabled to enabled). Its send control carries NO aria-label,
+              // data-testid, type=submit or form — only Tailwind classes — so it is resolved
+              // structurally instead: the last button in the composer's control row.
+              host: 'manus.im',
+              inputSelectors: [
+                'div[contenteditable="true"].tiptap',
+                'div[contenteditable="true"].ProseMirror',
+                'div[contenteditable="true"]'
+              ],
+              sendResolve: () => {
+                const ed = document.querySelector('div[contenteditable="true"].tiptap')
+                  || document.querySelector('div[contenteditable="true"]');
+                if (!ed) return null;
+                let box = ed, hops = 0;
+                while (box && hops < 6 && box.querySelectorAll('button').length < 2) {
+                  box = box.parentElement; hops++;
+                }
+                if (!box) return null;
+                const btns = [...box.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+                return btns.length ? btns[btns.length - 1] : null;   // disabled until text lands
+              },
+              sendSelectors: [],
+              uploadMethod: 'fileInput',
+              fileInputSelectors: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
+            },
+            {
               host: 'kimi.com',
               inputSelectors: [
                 'div[contenteditable="true"].chat-input-editor',
@@ -1214,7 +1246,12 @@ enum Broadcaster {
 
           const sendLoopStart = Date.now();
           while (Date.now() < sendDeadline) {
-            const btn = pickFirst(cfg.sendSelectors) || deepPickSend();
+            // cfg.sendResolve: structural lookup for composers whose send control carries no
+            // identifying attributes at all (Manus). Tried first, then selectors, then a
+            // shadow-DOM-aware deep query.
+            let btn = null;
+            if (cfg.sendResolve) { try { btn = cfg.sendResolve(); } catch (_) {} }
+            btn = btn || pickFirst(cfg.sendSelectors) || deepPickSend();
             if (btn) {
               lastBtn = btn;
               // Disabled = attribute (real <button>s) OR a 'disabled' CSS class on the element or
@@ -1766,6 +1803,10 @@ enum Broadcaster {
               if (t) return dedupe(t);
             }
             sels = ['.segment-assistant .markdown', '.markdown'];
+          } else if (host.includes('manus')) {
+            // Best-effort until a real task can be inspected (Manus runs cost credits, so no
+            // sample was generated): take the last prose block in the transcript.
+            sels = ['.prose', '[class*="markdown" i]', '[class*="prose" i]'];
           } else {
             // Best-effort for other web AIs (Grok / 豆包 / DeepSeek web / 千问 / customs): the last
             // markdown-ish block. Not verified per-site — may miss or over-capture; precise
