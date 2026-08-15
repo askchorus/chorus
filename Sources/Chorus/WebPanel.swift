@@ -602,7 +602,10 @@ enum Broadcaster {
           // "Really visible": offsetParent alone is too permissive — Gemini's per-message stop
           // affordances pass it while having zero height until their message is hovered.
           const isReallyVisible = (el) => {
-            if (!el || el.offsetParent === null) return false;
+            // No offsetParent test: it is null for position:fixed elements (composer bars, and the
+            // stop buttons that live in them). The rect + computed-style checks below already
+            // reject anything not actually rendered, including display:none ancestors.
+            if (!el) return false;
             const rect = el.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) return false;
             const style = window.getComputedStyle(el);
@@ -856,13 +859,22 @@ enum Broadcaster {
                 'div.ql-editor[contenteditable="true"]',
                 'div[contenteditable="true"]'
               ],
+              // Ordered most-specific first. The 2026 redesign moved the class onto the
+              // <gem-icon-button> wrapper (so the old 'button.send-button' matches nothing) and,
+              // critically, the loose 'aria-label*="Send"' catch-all can match a SIDEBAR entry —
+              // "More options for <chat title>" — whenever a conversation title contains "send".
+              // The sidebar comes first in DOM order, so that stray menu button won the lookup and
+              // broadcasts opened a menu instead of sending. :not() keeps the catch-all safe.
               sendSelectors: [
+                'gem-icon-button.send-button button',
+                'button[aria-label="Send message"]',
+                'button[aria-label="发送消息"]',
+                'gem-icon-button.send-button',
                 'button.send-button',
                 'button[data-test-id="send-button"]',
                 'button[mattooltip*="Send" i]',
-                'button[aria-label*="发送"]',            // localized: a Chinese Gemini hides the
-                'button[aria-label*="Send message" i]',  // English-only selectors entirely
-                'button[aria-label*="Send" i]'
+                'button[aria-label^="发送"]',
+                'button[aria-label*="Send" i]:not([aria-label*="More options" i]):not([aria-label*="更多" i])'
               ],
               // Gemini's image upload goes through the native runOpenPanel path
               // (geminiUploadViaPanel), not this script — so no upload selectors here.
@@ -895,7 +907,10 @@ enum Broadcaster {
                   box = box.parentElement; hops++;
                 }
                 if (!box) return null;
-                const btns = [...box.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+                const btns = [...box.querySelectorAll('button')].filter(b => {
+                  const r = b.getBoundingClientRect();   // rect, not offsetParent (fixed bars)
+                  return r.width > 0 && r.height > 0;
+                });
                 return btns.length ? btns[btns.length - 1] : null;   // disabled until text lands
               },
               sendSelectors: [],
@@ -941,10 +956,20 @@ enum Broadcaster {
             clog('using generic config for ' + location.hostname);
           }
 
+          // offsetParent is null for position:fixed elements — and floating composer bars are
+          // usually fixed. Testing visibility that way made us skip Gemini's real send button and
+          // fall through to a stray sidebar match; measure the box instead.
+          const onScreen = (el) => {
+            try {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            } catch (_) { return false; }
+          };
+
           const pickFirst = (selectors) => {
             for (const sel of selectors) {
               const el = document.querySelector(sel);
-              if (el && el.offsetParent !== null) return el;
+              if (el && onScreen(el)) return el;
             }
             for (const sel of selectors) {
               const el = document.querySelector(sel);
@@ -1196,7 +1221,7 @@ enum Broadcaster {
           const deepPickSend = () => {
             try {
               const els = deepQueryAll(cfg.sendSelectors || []);
-              return els.find(e => e.offsetParent !== null) || els[0] || null;
+              return els.find(e => onScreen(e)) || els[0] || null;
             } catch (_) { return null; }
           };
 
@@ -1252,6 +1277,15 @@ enum Broadcaster {
             let btn = null;
             if (cfg.sendResolve) { try { btn = cfg.sendResolve(); } catch (_) {} }
             btn = btn || pickFirst(cfg.sendSelectors) || deepPickSend();
+            // Backstop against label collisions like Gemini's "More options for <chat titled …
+            // SEND>": clicking a menu opens it instead of sending, and the prompt strands.
+            if (btn) {
+              const lbl = (btn.getAttribute && btn.getAttribute('aria-label') || '');
+              if (/more options|更多选项|options for/i.test(lbl)) {
+                clog('send: ignoring label collision — "' + lbl.slice(0, 40) + '"');
+                btn = null;
+              }
+            }
             if (btn) {
               lastBtn = btn;
               // Disabled = attribute (real <button>s) OR a 'disabled' CSS class on the element or
