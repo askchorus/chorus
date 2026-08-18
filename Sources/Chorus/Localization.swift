@@ -51,6 +51,12 @@ let L10nTable: [String: [String: String]] = [
     "menu.settings": ["zh": "设置…", "en": "Settings…"],
     "menu.actions": ["zh": "操作", "en": "Actions"],
     "panel.reload": ["zh": "重载 %@", "en": "Reload %@"],
+    "panel.loadFailed": ["zh": "%@ 加载失败", "en": "%@ failed to load"],
+    "panel.loadFailed.hint": [
+        "zh": "多为网络或代理问题（该站点在当前线路上不可达）。换个节点后重试。",
+        "en": "Usually a network or proxy issue — this site is unreachable on the current route. Switch and retry.",
+    ],
+    "panel.retry": ["zh": "重试", "en": "Retry"],
     "panel.newChat": ["zh": "%@ 新对话", "en": "New chat in %@"],
     "settings.notify.waitAllVisible": ["zh": "等所有显示中的 AI 答完", "en": "Wait for every visible AI"],
     "settings.notify.waitAllVisible.desc": [

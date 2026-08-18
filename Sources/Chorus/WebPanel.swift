@@ -146,6 +146,32 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
             WebViewStore.shared.recoverIfDeadConversation(webView)
             WebViewStore.shared.recordSessionURL(for: webView)
             WebViewStore.shared.fetchFavicon(for: webView)
+            if let host = webView.url?.host { WebViewStore.shared.clearLoadFailure(host: host) }
+        }
+    }
+
+    // A failed page load leaves a blank white panel with no explanation (this bit the user when
+    // gemini.google.com's TLS was being reset on their network while Chrome — which falls back to
+    // QUIC — still worked). Surface it so the panel can say what happened and offer a retry.
+    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        reportLoadFailure(webView, error)
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        reportLoadFailure(webView, error)
+    }
+
+    private nonisolated func reportLoadFailure(_ webView: WKWebView, _ error: Error) {
+        let ns = error as NSError
+        // -999 is "cancelled": a superseded navigation (SPA redirect, fast reload), not a failure.
+        guard ns.code != NSURLErrorCancelled else { return }
+        let host = webView.url?.host
+            ?? (ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
+                .flatMap { URL(string: $0)?.host }
+            ?? "?"
+        let reason = ns.localizedDescription
+        Task { @MainActor in
+            WebViewStore.shared.noteLoadFailure(host: host, reason: reason)
         }
     }
 

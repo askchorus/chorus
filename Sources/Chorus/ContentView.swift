@@ -22,6 +22,9 @@ final class WebViewStore: ObservableObject {
     /// Provider keys whose webview is loading a page — drives the reload spinner (so a tap on
     /// reload visibly does something and the user doesn't click it repeatedly).
     @Published private(set) var loadingKeys: Set<String> = []
+    /// Panels whose page failed to load, with a short reason. A failed load leaves the webview
+    /// BLANK WHITE with no explanation — the panel has to say so and offer a retry.
+    @Published private(set) var loadErrors: [String: String] = [:]
     /// The most recent broadcast prompt — included as "the question" when summarizing answers.
     @Published private(set) var lastBroadcast: String = ""
     /// Provider keys/ids that have FINISHED answering since the last broadcast — so "summarize"
@@ -682,6 +685,21 @@ final class WebViewStore: ObservableObject {
         return nil
     }
 
+    /// Record/clear a panel's load failure (called from the navigation delegate).
+    func noteLoadFailure(host: String, reason: String) {
+        guard let key = providerKey(forHost: host) else { return }
+        loadErrors[key] = reason
+        clog("load failed — \(key): \(reason)")
+    }
+    func clearLoadFailure(host: String) {
+        guard let key = providerKey(forHost: host), loadErrors[key] != nil else { return }
+        loadErrors.removeValue(forKey: key)
+    }
+    func retryLoad(key: String) {
+        loadErrors.removeValue(forKey: key)
+        cache[key]?.reload()
+    }
+
     /// Drop a webview (used when a custom provider is removed) so it stops consuming memory.
     func removeWebView(key: String) {
         urlObservers.removeValue(forKey: key)?.invalidate()
@@ -1044,12 +1062,50 @@ struct ContentView: View {
         }
     }
 
+    /// Shown over a panel whose page failed to load — the webview itself would just be white.
+    private func loadErrorCard(name: String, reason: String, retry: @escaping () -> Void) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 22, weight: .light))
+                .foregroundColor(.secondary)
+            Text(Lf("panel.loadFailed", name))
+                .font(.system(size: 13, weight: .semibold))
+            Text(reason)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .padding(.horizontal, 18)
+            Text(L("panel.loadFailed.hint"))
+                .font(.system(size: 10.5))
+                .foregroundColor(.secondary.opacity(0.75))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 18)
+            Button(action: retry) {
+                Text(L("panel.retry"))
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ChorusTheme.canvas(colorScheme))
+    }
+
     private func card(for p: Provider) -> some View {
         VStack(spacing: 0) {
             AccentBar(color: ProviderStyle.accent(key: p.key, host: p.url.host ?? ""),
                       active: store.streamingKeys.contains(p.key))
             slimHeader(for: p)
             WebPanel(webView: store.getOrCreate(key: p.key, url: p.url), reflowing: reflowing)
+                .overlay(alignment: .center) {
+                    // A failed load renders as a blank white webview; say so instead.
+                    if let reason = store.loadErrors[p.key] {
+                        loadErrorCard(name: p.name, reason: reason) { store.retryLoad(key: p.key) }
+                    }
+                }
         }
         .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
         .overlay(
