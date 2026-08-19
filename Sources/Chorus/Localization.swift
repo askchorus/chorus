@@ -51,6 +51,56 @@ let L10nTable: [String: [String: String]] = [
     "menu.settings": ["zh": "设置…", "en": "Settings…"],
     "menu.actions": ["zh": "操作", "en": "Actions"],
     "panel.reload": ["zh": "重载 %@", "en": "Reload %@"],
+
+    // MARK: Sheets — summary / share card / stats
+    "common.close": ["zh": "关闭", "en": "Close"],
+    "common.error": ["zh": "出错", "en": "Error"],
+    "summary.title": ["zh": "各家回答汇总", "en": "Answers compared"],
+    "summary.working": ["zh": "正在综合各家回答…", "en": "Comparing the answers…"],
+    "summary.workingHint": [
+        "zh": "收集各家回答并交给模型综合，通常需要十几秒",
+        "en": "Collecting each answer and handing them to the model — usually 10–30 seconds",
+    ],
+    "summary.needTwo": [
+        "zh": "至少需要两家答完才能对比（现在只抓到 %d 家）。",
+        "en": "At least two AIs need to finish before there's anything to compare (only %d so far).",
+    ],
+    "summary.needAPI": ["zh": "汇总需要一个 API 模型来做综合", "en": "Comparing needs an API model to do the synthesis"],
+    "summary.openSettings": ["zh": "打开设置添加…", "en": "Open Settings to add one…"],
+    "summary.pickModel": ["zh": "选一个模型，汇总各家 AI 的回答", "en": "Pick a model to compare the answers"],
+    "summary.useModel": ["zh": "用 %@ 汇总", "en": "Compare with %@"],
+    "share.title": ["zh": "分享卡片", "en": "Share card"],
+    "share.empty": [
+        "zh": "没有可分享的内容\n先广播一个问题，等各家答完再来",
+        "en": "Nothing to share yet\nAsk a question first and let the AIs answer",
+    ],
+    "share.sizeDesktop": ["zh": "电脑版", "en": "Desktop"],
+    "share.sizeMobile": ["zh": "手机版", "en": "Mobile"],
+    "share.brand": ["zh": "Chorus · 同时问多个 AI", "en": "Chorus · Ask multiple AIs at once"],
+    "share.copy": ["zh": "复制图片", "en": "Copy image"],
+    "share.copied": ["zh": "已复制", "en": "Copied"],
+    "share.save": ["zh": "保存…", "en": "Save…"],
+    "stats.title": ["zh": "胜率统计", "en": "Win rate"],
+    "stats.range7": ["zh": "7天", "en": "7 days"],
+    "stats.range30": ["zh": "30天", "en": "30 days"],
+    "stats.rangeAll": ["zh": "全部", "en": "All time"],
+    "stats.lowSample": ["zh": "样本少", "en": "Few votes"],
+    "stats.empty": [
+        "zh": "还没有投票记录。\n广播一个问题，等各家答完，点面板标题栏的 ☆ 选出这轮最佳。",
+        "en": "No votes yet.\nAsk a question, wait for the answers, then hit ☆ in a panel's header to pick the best one.",
+    ],
+    "stats.disclaimer": [
+        "zh": "这是「你的口味」随时间的记录，不是模型客观评测；样本太少时别当真。",
+        "en": "A record of YOUR taste over time — not an objective benchmark. Don't read much into a small sample.",
+    ],
+
+    // MARK: API errors (shown inside API panels)
+    "api.err.auth": ["zh": "密钥无效或无权限", "en": "Invalid key or no permission"],
+    "api.err.notFound": ["zh": "找不到接口/模型，检查 Base URL 和模型名", "en": "Endpoint or model not found — check the Base URL and model name"],
+    "api.err.rateLimit": ["zh": "请求过多/额度不足", "en": "Rate limited or out of quota"],
+    "api.err.offline": ["zh": "连不上服务器（本地模型没启动？）", "en": "Can't reach the server (is your local model running?)"],
+
+    // MARK: Panel load failure
     "panel.loadFailed": ["zh": "%@ 加载失败", "en": "%@ failed to load"],
     "panel.loadFailed.hint": [
         "zh": "多为网络或代理问题（该站点在当前线路上不可达）。换个节点后重试。",

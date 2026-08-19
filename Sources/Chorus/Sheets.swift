@@ -14,12 +14,12 @@ struct SummarySheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles").foregroundColor(.secondary)
-                Text("各家回答汇总").font(.headline)
+                Text(L("summary.title")).font(.headline)
                 if streaming {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
                 Spacer()
-                Button("关闭", action: onClose)
+                Button(L("common.close"), action: onClose)
             }
             .padding()
             Divider()
@@ -30,9 +30,9 @@ struct SummarySheet: View {
                 VStack(spacing: 14) {
                     Spacer()
                     ProgressView().scaleEffect(1.3)
-                    Text("正在综合各家回答…")
+                    Text(L("summary.working"))
                         .font(.system(size: 15, weight: .medium))
-                    Text("收集各家回答并交给模型综合，通常需要十几秒")
+                    Text(L("summary.workingHint"))
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -71,7 +71,7 @@ struct ShareCardData { let question: String; let answers: [ShareAnswer] }
 enum ShareCardWidth: CaseIterable {
     case desktop, mobile
     var px: CGFloat { self == .desktop ? 640 : 390 }
-    var label: String { self == .desktop ? "电脑版" : "手机版" }
+    var label: String { self == .desktop ? L("share.sizeDesktop") : L("share.sizeMobile") }
 }
 
 /// A warm, branded comparison card rendered to an image: the question on top, then each AI's
@@ -116,7 +116,7 @@ private struct ShareCardView: View {
 
             HStack(spacing: 5) {
                 Image(systemName: "sparkles").font(.system(size: 11))
-                Text("Chorus · 同时问多个 AI").font(.system(size: 11, weight: .medium))
+                Text(L("share.brand")).font(.system(size: 11, weight: .medium))
                 Spacer()
             }
             .foregroundColor(.black.opacity(0.4))
@@ -143,16 +143,16 @@ struct ShareCardSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("分享卡片").font(.headline)
+                Text(L("share.title")).font(.headline)
                 Spacer()
-                Button("关闭", action: onClose).keyboardShortcut(.cancelAction)
+                Button(L("common.close"), action: onClose).keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
 
             if data == nil {
                 Spacer()
-                Text("没有可分享的内容\n先广播一个问题，等各家答完再来")
+                Text(L("share.empty"))
                     .multilineTextAlignment(.center)
                     .foregroundColor(.secondary).padding(40)
                 Spacer()
@@ -179,11 +179,11 @@ struct ShareCardSheet: View {
                 Spacer()
                 Button {
                     if let rendered { copy(rendered); copied = true }
-                } label: { Label(copied ? "已复制" : "复制图片", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                } label: { Label(copied ? L("share.copied") : L("share.copy"), systemImage: copied ? "checkmark" : "doc.on.doc") }
                     .disabled(rendered == nil)
                 Button {
                     if let rendered { save(rendered) }
-                } label: { Label("保存…", systemImage: "square.and.arrow.down") }
+                } label: { Label(L("share.save"), systemImage: "square.and.arrow.down") }
                     .keyboardShortcut(.defaultAction)
                     .disabled(rendered == nil)
             }
@@ -328,7 +328,7 @@ struct StatsSheet: View {
 
     enum StatRange: CaseIterable {
         case week, month, all
-        var label: String { self == .week ? "7天" : self == .month ? "30天" : "全部" }
+        var label: String { self == .week ? L("stats.range7") : self == .month ? L("stats.range30") : L("stats.rangeAll") }
         var days: Int? { self == .week ? 7 : self == .month ? 30 : nil }
     }
 
@@ -357,9 +357,9 @@ struct StatsSheet: View {
         let data = rows()
         VStack(spacing: 0) {
             HStack {
-                Text("胜率统计").font(.headline)
+                Text(L("stats.title")).font(.headline)
                 Spacer()
-                Button("关闭", action: onClose).keyboardShortcut(.cancelAction)
+                Button(L("common.close"), action: onClose).keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
@@ -371,7 +371,7 @@ struct StatsSheet: View {
 
             if data.isEmpty {
                 Spacer()
-                Text("还没有投票记录。\n广播一个问题，等各家答完，点面板标题栏的 ☆ 选出这轮最佳。")
+                Text(L("stats.empty"))
                     .multilineTextAlignment(.center).foregroundColor(.secondary).padding(40)
                 Spacer()
             } else {
@@ -382,7 +382,7 @@ struct StatsSheet: View {
                                 HStack(spacing: 6) {
                                     Text(r.name).font(.system(size: 13, weight: .semibold))
                                     if r.shown < 30 {
-                                        Text("样本少").font(.system(size: 10)).foregroundColor(.secondary)
+                                        Text(L("stats.lowSample")).font(.system(size: 10)).foregroundColor(.secondary)
                                             .padding(.horizontal, 5).padding(.vertical, 1)
                                             .background(Capsule().fill(Color.primary.opacity(0.08)))
                                     }
@@ -404,7 +404,7 @@ struct StatsSheet: View {
                     .padding(18)
                 }
                 Divider()
-                Text("这是「你的口味」随时间的记录，不是模型客观评测；样本太少时别当真。")
+                Text(L("stats.disclaimer"))
                     .font(.system(size: 11)).foregroundColor(.secondary)
                     .padding(.horizontal, 16).padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)

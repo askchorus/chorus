@@ -807,7 +807,7 @@ struct ContentView: View {
         DispatchQueue.main.async { showSummary = true }
         gatherAnswers(freshOnly: true) { blocks in
             guard blocks.count >= 2 else {
-                summaryText = "至少需要两家答完才能对比（现在只抓到 \(blocks.count) 家）。"
+                summaryText = Lf("summary.needTwo", blocks.count)
                 summaryStreaming = false
                 return
             }
@@ -837,7 +837,21 @@ struct ContentView: View {
     private func runSummary(provider: APIProvider, blocks: [(name: String, text: String)]) {
         let q = store.lastBroadcast.trimmingCharacters(in: .whitespacesAndNewlines)
         let joined = blocks.map { "【\($0.name)】\n\($0.text)" }.joined(separator: "\n\n———\n\n")
-        let prompt = """
+        // The instruction goes to the summarizer MODEL, so it must follow the UI language —
+        // an English user handed a Chinese prompt gets a Chinese summary of English answers.
+        let prompt = currentLang() == "en"
+            ? """
+        Below are \(blocks.count) AI answers to \(q.isEmpty ? "the same question" : "the question “\(q)”"). Compare them in English and give me:
+        1. Consensus — what they all agree on
+        2. Main disagreements / contradictions
+        3. What each one uniquely contributes
+        4. A one-sentence bottom line
+
+        Format: short headings plus bullet lists (lines starting with -). **Do not use markdown tables** (the pipe | kind) — the viewer can't render them and they come out garbled. For disagreements, give each dimension its own short section with each AI's position as a bullet, not a table.
+
+        \(joined)
+        """
+            : """
         下面是 \(blocks.count) 个 AI 对\(q.isEmpty ? "同一个问题" : "问题「\(q)」")的回答。请用中文综合对比,给我:
         1. 共识 —— 它们都同意的点
         2. 主要分歧 / 矛盾
@@ -857,7 +871,7 @@ struct ContentView: View {
                     Task { @MainActor in summaryText += delta }
                 }
             } catch {
-                await MainActor.run { summaryText += "\n\n[出错] " + APIClient.friendly(error) }
+                await MainActor.run { summaryText += "\n\n[" + L("common.error") + "] " + APIClient.friendly(error) }
             }
             await MainActor.run { summaryStreaming = false }
         }
@@ -1221,7 +1235,7 @@ struct ContentView: View {
                     .foregroundColor(isWinner ? accent : accent.opacity(0.6))
             }
             .buttonStyle(.plain)
-            .help(isWinner ? "已选「\(name)」为这轮最佳（再点取消）" : "选「\(name)」为这轮最佳")
+            .help(isWinner ? Lf("vote.chosen", name) : Lf("vote.choose", name))
         }
     }
 
@@ -1460,12 +1474,12 @@ struct ContentView: View {
     private var summarizeButton: some View {
         Menu {
             if apiProviders.isEmpty {
-                Text("汇总需要一个 API 模型来做综合")
-                Button("打开设置添加…") { openSettings() }
+                Text(L("summary.needAPI"))
+                Button(L("summary.openSettings")) { openSettings() }
             } else {
-                Section("选一个模型,汇总各家 AI 的回答") {
+                Section(L("summary.pickModel")) {
                     ForEach(apiProviders) { p in
-                        Button("用 \(p.name) 汇总") { summarizeAnswers(using: p) }
+                        Button(Lf("summary.useModel", p.name)) { summarizeAnswers(using: p) }
                     }
                 }
             }

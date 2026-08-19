@@ -161,22 +161,22 @@ func isLikelyEnglishWord(_ s: String) -> Bool {
     return trimmed.allSatisfy { $0.isASCII && ($0.isLetter || $0 == "-" || $0 == "'") }
 }
 
-/// Quick-action prefixes used when the input contains text only.
-let kDefaultChipPrompts: [String] = [
-    "事实核查",
-    "解释一下",
-    "说的对吗",
-    "翻译",
-]
+/// Quick-action prefixes used when the input contains text only. These are PROMPT text sent to
+/// the AIs (not UI labels), so they follow the UI language — an English user tapping a chip
+/// should not prefix their question with Chinese. Users can still edit the list in Settings;
+/// a saved custom list wins over these defaults.
+var kDefaultChipPrompts: [String] {
+    currentLang() == "en"
+        ? ["Fact-check", "Explain", "Is this right?", "Translate"]
+        : ["事实核查", "解释一下", "说的对吗", "翻译"]
+}
 
 /// Quick-action prefixes shown when an image is attached. Tailored for vision tasks.
-let kImageChipPrompts: [String] = [
-    "解释这张图",
-    "识别文字",
-    "翻译图中文字",
-    "描述一下",
-    "图片出处",
-]
+var kImageChipPrompts: [String] {
+    currentLang() == "en"
+        ? ["Explain this image", "Extract the text", "Translate the text", "Describe it", "Where is this from?"]
+        : ["解释这张图", "识别文字", "翻译图中文字", "描述一下", "图片出处"]
+}
 
 /// Compose the new prompt body after a chip is tapped.
 /// No trailing colon: for image-only it reads as a clean imperative ("解释这张图"),

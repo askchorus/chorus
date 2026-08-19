@@ -226,14 +226,14 @@ enum APIClient {
         case Err.http(let code, let m):
             let hint: String
             switch code {
-            case 401, 403: hint = "密钥无效或无权限"
-            case 404:      hint = "找不到接口/模型，检查 Base URL 和模型名"
-            case 429:      hint = "请求过多/额度不足"
+            case 401, 403: hint = L("api.err.auth")
+            case 404:      hint = L("api.err.notFound")
+            case 429:      hint = L("api.err.rateLimit")
             default:       hint = "HTTP \(code)"
             }
-            return m.isEmpty ? hint : "\(hint)：\(m)"
+            return m.isEmpty ? hint : "\(hint): \(m)"
         case let urlErr as URLError where urlErr.code == .cannotConnectToHost:
-            return "连不上服务器（本地模型没启动？）"
+            return L("api.err.offline")
         default:
             return (error as NSError).localizedDescription
         }
