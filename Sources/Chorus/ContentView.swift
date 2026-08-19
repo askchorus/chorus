@@ -700,6 +700,61 @@ final class WebViewStore: ObservableObject {
         cache[key]?.reload()
     }
 
+    /// Cookie names that carry REGION / consent / preference state rather than a login session.
+    /// Google caches its "which country are you in" verdict in these, which is why Gemini keeps
+    /// showing "not supported in your country" after you switch to a working proxy node — the
+    /// verdict is cached per cookie store, and Chorus has its own, separate from Chrome's.
+    /// Deleting only these re-runs the geo check WITHOUT signing the user out.
+    private static let regionCookieNames: Set<String> = [
+        "NID", "AEC", "SOCS", "OTZ", "CONSENT", "DV", "1P_JAR",
+        "__Secure-ENID", "__Secure-OSID", "ENID",
+        "cf_clearance",          // Cloudflare's region/challenge verdict (ChatGPT, Claude)
+    ]
+
+    /// Soft reset: drop region/consent cookies for this panel's host and reload. Keeps the login.
+    func refreshSiteState(key: String) {
+        guard let wv = cache[key], let host = wv.url?.host ?? providerHost(for: key) else { return }
+        let store = wv.configuration.websiteDataStore.httpCookieStore
+        store.getAllCookies { cookies in
+            let base = Self.registrableSuffix(host)
+            let doomed = cookies.filter { c in
+                Self.regionCookieNames.contains(c.name) && c.domain.hasSuffix(base)
+            }
+            let group = DispatchGroup()
+            for c in doomed { group.enter(); store.delete(c) { group.leave() } }
+            group.notify(queue: .main) {
+                clog("site state refreshed — \(key): dropped \(doomed.count) region cookie(s) for \(base)")
+                wv.reload()
+            }
+        }
+    }
+
+    /// Hard reset: wipe EVERYTHING this host stored (cookies, caches, local/session storage,
+    /// service workers) and reload — this signs the user out of that AI.
+    func clearSiteData(key: String) {
+        guard let wv = cache[key], let host = wv.url?.host ?? providerHost(for: key) else { return }
+        let base = Self.registrableSuffix(host)
+        let ds = wv.configuration.websiteDataStore
+        ds.fetchDataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()) { records in
+            let hit = records.filter { $0.displayName.hasSuffix(base) || base.hasSuffix($0.displayName) }
+            ds.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: hit) {
+                clog("site data cleared — \(key): \(hit.count) record(s) for \(base)")
+                if let u = self.freshURL(forKey: key) { wv.load(URLRequest(url: u)) } else { wv.reload() }
+            }
+        }
+    }
+
+    /// "google.com" for "gemini.google.com" — cookies are usually set on the parent domain.
+    private static func registrableSuffix(_ host: String) -> String {
+        let parts = host.split(separator: ".")
+        guard parts.count > 2 else { return host }
+        return parts.suffix(2).joined(separator: ".")
+    }
+
+    private func providerHost(for key: String) -> String? {
+        (ProviderRegistry.builtIn + ProviderRegistry.custom()).first { $0.key == key }?.url.host
+    }
+
     /// Drop a webview (used when a custom provider is removed) so it stops consuming memory.
     func removeWebView(key: String) {
         urlObservers.removeValue(forKey: key)?.invalidate()
@@ -755,6 +810,8 @@ struct ContentView: View {
     @State private var reflowing = false
     // Set to an API provider id when its "new chat" is tapped → shows a clear-confirmation alert.
     @State private var clearConfirmAPIId: String? = nil
+    /// Panel key awaiting confirmation for the destructive "clear all site data" action.
+    @State private var clearDataConfirmKey: String? = nil
     // "Summarize answers": the synthesis sheet state.
     @State private var showSummary = false
     @State private var summaryText = ""
@@ -1022,6 +1079,18 @@ struct ContentView: View {
         }
         .onChange(of: appearance) { newValue in
             AppearanceManager.apply(newValue)
+        }
+        .alert(L("panel.clearData.title"), isPresented: Binding(
+            get: { clearDataConfirmKey != nil },
+            set: { if !$0 { clearDataConfirmKey = nil } }
+        )) {
+            Button(L("panel.clearData.confirm"), role: .destructive) {
+                if let k = clearDataConfirmKey { store.clearSiteData(key: k) }
+                clearDataConfirmKey = nil
+            }
+            Button(L("common.cancel"), role: .cancel) { clearDataConfirmKey = nil }
+        } message: {
+            Text(L("panel.clearData.message"))
         }
         .alert(L("api.clearConfirm.title"), isPresented: Binding(
             get: { clearConfirmAPIId != nil },
@@ -1335,6 +1404,15 @@ struct ContentView: View {
             }
         )
         .contentShape(Rectangle())
+        // Right-click menu: room for the occasional actions without crowding the hover icons,
+        // and the destructive one is appropriately tucked away.
+        .contextMenu {
+            Button(Lf("panel.newChat", p.name)) { store.newChat(key: p.key) }
+            Button(Lf("panel.reload", p.name)) { store.reload(key: p.key) }
+            Divider()
+            Button(L("panel.refreshSite")) { store.refreshSiteState(key: p.key) }
+            Button(L("panel.clearData"), role: .destructive) { clearDataConfirmKey = p.key }
+        }
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.1)) {
                 hoveredHeaderKey = hovering ? p.key : (hoveredHeaderKey == p.key ? nil : hoveredHeaderKey)

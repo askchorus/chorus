@@ -107,6 +107,14 @@ let L10nTable: [String: [String: String]] = [
         "en": "Usually a network or proxy issue — this site is unreachable on the current route. Switch and retry.",
     ],
     "panel.retry": ["zh": "重试", "en": "Retry"],
+    "panel.refreshSite": ["zh": "刷新站点状态（保留登录）", "en": "Refresh site state (stay signed in)"],
+    "panel.clearData": ["zh": "清除该站点数据…", "en": "Clear this site's data…"],
+    "panel.clearData.title": ["zh": "清除该站点的全部数据？", "en": "Clear all data for this site?"],
+    "panel.clearData.message": [
+        "zh": "会删除这个 AI 在 Chorus 内的 Cookie、缓存和本地存储——你需要重新登录它。仅在「刷新站点状态」无效时使用。",
+        "en": "Deletes this AI's cookies, cache and local storage inside Chorus — you'll have to sign in again. Use this only when “Refresh site state” didn't help.",
+    ],
+    "panel.clearData.confirm": ["zh": "清除并重新加载", "en": "Clear and reload"],
     "panel.newChat": ["zh": "%@ 新对话", "en": "New chat in %@"],
     "settings.notify.waitAllVisible": ["zh": "等所有显示中的 AI 答完", "en": "Wait for every visible AI"],
     "settings.notify.waitAllVisible.desc": [
