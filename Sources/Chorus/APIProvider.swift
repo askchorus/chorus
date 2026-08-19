@@ -28,6 +28,11 @@ enum APIProviderRegistry {
         APIPreset(name: "OpenAI",     baseURL: "https://api.openai.com/v1",        model: "gpt-4o",            needsKey: true),
         APIPreset(name: "DeepSeek",   baseURL: "https://api.deepseek.com/v1",      model: "deepseek-chat",     needsKey: true),
         APIPreset(name: "Groq",       baseURL: "https://api.groq.com/openai/v1",   model: "llama-3.3-70b-versatile", needsKey: true),
+        // Gemini speaks OpenAI's protocol at this endpoint. Worth a preset of its own: when the
+        // consumer web app is geo-blocked (a flagged proxy IP gets "not supported in your
+        // country"), the API endpoint stays reachable on the same network — so an API panel is
+        // the way to keep Gemini in the lineup without re-routing anything.
+        APIPreset(name: "Gemini",     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3.5-flash", needsKey: true),
         APIPreset(name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1",     model: "",                  needsKey: true),
         APIPreset(name: "硅基流动",    baseURL: "https://api.siliconflow.cn/v1",    model: "",                  needsKey: true),
         APIPreset(name: "Ollama",     baseURL: "http://localhost:11434/v1",        model: "llama3.2",          needsKey: false),
