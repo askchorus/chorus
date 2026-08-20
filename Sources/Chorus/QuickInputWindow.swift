@@ -398,9 +398,11 @@ struct QuickInputView: View {
             // hit. Looking a word up and wanting the AIs to expand on it ("解释一下 …") is a
             // natural combo, so the two shouldn't be mutually exclusive.
             if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil {
+                // Fallbacks are resolved against the CURRENT input so the suggested prefix
+                // matches the language of what's being asked (see defaultChipPrompts).
                 let chips = attachedImage != nil
-                    ? parseChipList(imageChipsRaw, fallback: kImageChipPrompts)
-                    : parseChipList(textChipsRaw, fallback: kDefaultChipPrompts)
+                    ? parseChipList(imageChipsRaw, fallback: imageChipPrompts(for: prompt))
+                    : parseChipList(textChipsRaw, fallback: defaultChipPrompts(for: prompt))
                 HStack(spacing: 8) {
                     ForEach(chips, id: \.self) { chip in
                         Button {

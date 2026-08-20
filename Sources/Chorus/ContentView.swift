@@ -1306,15 +1306,16 @@ struct ContentView: View {
     @ViewBuilder private func winnerTrophy(key: String, accentHost: String, name: String) -> some View {
         if store.answeredLastBroadcast.contains(key) && store.answeredLastBroadcast.count >= 2 {
             let isWinner = voteStore.currentWinner == key
-            let accent = ProviderStyle.accent(key: key, host: accentHost)
             Button {
                 pickWinner(key)
             } label: {
                 Image(systemName: isWinner ? "trophy.fill" : "trophy")
                     .font(.system(size: 13, weight: .semibold))
-                    // Use the panel's brand color (filled when chosen, tinted outline otherwise) so
-                    // the "pick the best" affordance is actually noticeable, not a faint grey glyph.
-                    .foregroundColor(isWinner ? accent : accent.opacity(0.6))
+                    // One gold for the award everywhere, NOT each panel's brand color: the trophy
+                    // is a verdict, not part of that AI's identity, and per-panel colors made the
+                    // winner blend into its own card instead of standing out across the row.
+                    // Unselected stays neutral so exactly one gold mark is visible per round.
+                    .foregroundColor(isWinner ? ChorusTheme.trophyGold : Color.secondary.opacity(0.45))
             }
             .buttonStyle(.plain)
             .help(isWinner ? Lf("vote.chosen", name) : Lf("vote.choose", name))

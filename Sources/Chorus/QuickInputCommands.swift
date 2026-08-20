@@ -161,22 +161,34 @@ func isLikelyEnglishWord(_ s: String) -> Bool {
     return trimmed.allSatisfy { $0.isASCII && ($0.isLetter || $0 == "-" || $0 == "'") }
 }
 
-/// Quick-action prefixes used when the input contains text only. These are PROMPT text sent to
-/// the AIs (not UI labels), so they follow the UI language — an English user tapping a chip
-/// should not prefix their question with Chinese. Users can still edit the list in Settings;
-/// a saved custom list wins over these defaults.
-var kDefaultChipPrompts: [String] {
-    currentLang() == "en"
-        ? ["Fact-check", "Explain", "Is this right?", "Translate"]
-        : ["事实核查", "解释一下", "说的对吗", "翻译"]
+/// Chips are PROMPT text, not UI chrome: tapping one prefixes it to what you're asking. So they
+/// follow the language of the INPUT, not the interface — "Fact-check: <一整段中文>" nudges the AIs
+/// to answer in English, and "事实核查: <an English paragraph>" does the reverse. With an empty
+/// composer there's nothing to match, so the UI language decides.
+func chipsAreChinese(for input: String) -> Bool {
+    let cjk = input.unicodeScalars.filter { (0x4E00...0x9FFF).contains($0.value) }.count
+    let latin = input.unicodeScalars.filter { ("a"..."z").contains(Character($0)) || ("A"..."Z").contains(Character($0)) }.count
+    if cjk == 0 && latin == 0 { return currentLang() == "zh" }   // digits/punctuation only
+    return cjk * 3 >= latin   // a little CJK goes a long way — one Chinese char ≈ a word
+}
+
+/// Quick-action prefixes used when the input contains text only.
+func defaultChipPrompts(for input: String = "") -> [String] {
+    chipsAreChinese(for: input)
+        ? ["事实核查", "解释一下", "说的对吗", "翻译"]
+        : ["Fact-check", "Explain", "Is this right?", "Translate"]
 }
 
 /// Quick-action prefixes shown when an image is attached. Tailored for vision tasks.
-var kImageChipPrompts: [String] {
-    currentLang() == "en"
-        ? ["Explain this image", "Extract the text", "Translate the text", "Describe it", "Where is this from?"]
-        : ["解释这张图", "识别文字", "翻译图中文字", "描述一下", "图片出处"]
+func imageChipPrompts(for input: String = "") -> [String] {
+    chipsAreChinese(for: input)
+        ? ["解释这张图", "识别文字", "翻译图中文字", "描述一下", "图片出处"]
+        : ["Explain this image", "Extract the text", "Translate the text", "Describe it", "Where is this from?"]
 }
+
+/// Stored-default seeds for Settings (the editable list) — UI language, since there's no input yet.
+var kDefaultChipPrompts: [String] { defaultChipPrompts() }
+var kImageChipPrompts: [String] { imageChipPrompts() }
 
 /// Compose the new prompt body after a chip is tapped.
 /// No trailing colon: for image-only it reads as a clean imperative ("解释这张图"),

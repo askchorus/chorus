@@ -13,6 +13,9 @@ enum ChorusTheme {
     /// (scripts/dmg-background.swift mirrors these as CGColor — it can't import the app module,
     /// so keep them in sync by hand.)
     static let brandOrange = Color(red: 0.86, green: 0.5, blue: 0.26)
+    /// The single color of the "won this round" trophy — a warm gold that sits with the cream
+    /// palette while still reading as an award at 13pt.
+    static let trophyGold = Color(red: 0.83, green: 0.63, blue: 0.16)
     /// Light cream gradient backing branded cards (share card, welcome card).
     static let cardCream: [Color] = [Color(red: 0.988, green: 0.972, blue: 0.937),
                                      Color(red: 0.956, green: 0.925, blue: 0.862)]
