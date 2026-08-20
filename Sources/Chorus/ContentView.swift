@@ -1194,10 +1194,20 @@ struct ContentView: View {
         .overlay(
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
                 .strokeBorder(
-                    dropTargetKey == p.key ? Color.accentColor.opacity(0.8) : ChorusTheme.cardBorder(colorScheme),
-                    lineWidth: dropTargetKey == p.key ? 2 : 1
+                    dropTargetKey == p.key ? Color.accentColor.opacity(0.9) : ChorusTheme.cardBorder(colorScheme),
+                    lineWidth: dropTargetKey == p.key ? 3 : 1
                 )
         )
+        // While a panel is dragged over this one, wash the whole card in the accent tint. The
+        // system draws a COPY (+) cursor for the drag — the wrong verb for a reorder — so the
+        // layout, not the cursor, has to say "release here and they swap".
+        .overlay {
+            if dropTargetKey == p.key {
+                RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.10))
+                    .allowsHitTesting(false)
+            }
+        }
         .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
                 radius: ChorusTheme.cardShadow(colorScheme).radius,
                 x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
@@ -1353,6 +1363,14 @@ struct ContentView: View {
                 // context menu's recognizer swallows the header's .draggable gesture, which
                 // silently broke drag-to-reorder (cursor flashed to a hand, then nothing).
                 Menu {
+                    // Explicit reordering. Dragging a header works, but macOS shows the COPY (+)
+                    // cursor for it — the wrong verb for "move this panel" — and nothing hints
+                    // that panels are draggable at all. These say it outright.
+                    Button(L("panel.moveLeft")) { movePanel(key: p.key, by: -1) }
+                        .disabled(!canMovePanel(key: p.key, by: -1))
+                    Button(L("panel.moveRight")) { movePanel(key: p.key, by: 1) }
+                        .disabled(!canMovePanel(key: p.key, by: 1))
+                    Divider()
                     Button(L("panel.refreshSite")) { store.refreshSiteState(key: p.key) }
                     Button(L("panel.clearData"), role: .destructive) { clearDataConfirmKey = p.key }
                 } label: {
@@ -1446,6 +1464,24 @@ struct ContentView: View {
             withAnimation(.easeOut(duration: 0.1)) {
                 dropTargetKey = isTargeted ? p.key : (dropTargetKey == p.key ? nil : dropTargetKey)
             }
+        }
+    }
+
+    /// Can this panel move one slot in `direction` (-1 left, +1 right) among VISIBLE panels?
+    private func canMovePanel(key: String, by direction: Int) -> Bool {
+        guard let i = visibleProviders.firstIndex(where: { $0.key == key }) else { return false }
+        let target = i + direction
+        return target >= 0 && target < visibleProviders.count
+    }
+
+    /// Swap this panel with its visible neighbour. Works on the full order list so hidden panels
+    /// keep their relative places.
+    private func movePanel(key: String, by direction: Int) {
+        guard canMovePanel(key: key, by: direction),
+              let vi = visibleProviders.firstIndex(where: { $0.key == key }) else { return }
+        let neighbourKey = visibleProviders[vi + direction].key
+        withAnimation(.easeInOut(duration: 0.18)) {
+            reorder(droppedKey: key, targetKey: neighbourKey)
         }
     }
 

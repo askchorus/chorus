@@ -108,6 +108,8 @@ let L10nTable: [String: [String: String]] = [
     ],
     "panel.retry": ["zh": "重试", "en": "Retry"],
     "panel.moreActions": ["zh": "更多操作", "en": "More actions"],
+    "panel.moveLeft": ["zh": "左移", "en": "Move left"],
+    "panel.moveRight": ["zh": "右移", "en": "Move right"],
     "panel.refreshSite": ["zh": "刷新站点状态（保留登录）", "en": "Refresh site state (stay signed in)"],
     "panel.clearData": ["zh": "清除该站点数据…", "en": "Clear this site's data…"],
     "panel.clearData.title": ["zh": "清除该站点的全部数据？", "en": "Clear all data for this site?"],
