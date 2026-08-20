@@ -1349,6 +1349,23 @@ struct ContentView: View {
                     .frame(width: 14, height: 14)
             }
             if hoveredHeaderKey == p.key {
+                // Occasional actions live behind "…" rather than a header .contextMenu: a
+                // context menu's recognizer swallows the header's .draggable gesture, which
+                // silently broke drag-to-reorder (cursor flashed to a hand, then nothing).
+                Menu {
+                    Button(L("panel.refreshSite")) { store.refreshSiteState(key: p.key) }
+                    Button(L("panel.clearData"), role: .destructive) { clearDataConfirmKey = p.key }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 14)
+                .help(L("panel.moreActions"))
+                .transition(.opacity)
+
                 // Per-panel new chat — asking ONE AI a fresh question is a common flow (the
                 // global New chat resets every panel, which is a different intent).
                 Button {
@@ -1404,15 +1421,6 @@ struct ContentView: View {
             }
         )
         .contentShape(Rectangle())
-        // Right-click menu: room for the occasional actions without crowding the hover icons,
-        // and the destructive one is appropriately tucked away.
-        .contextMenu {
-            Button(Lf("panel.newChat", p.name)) { store.newChat(key: p.key) }
-            Button(Lf("panel.reload", p.name)) { store.reload(key: p.key) }
-            Divider()
-            Button(L("panel.refreshSite")) { store.refreshSiteState(key: p.key) }
-            Button(L("panel.clearData"), role: .destructive) { clearDataConfirmKey = p.key }
-        }
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.1)) {
                 hoveredHeaderKey = hovering ? p.key : (hoveredHeaderKey == p.key ? nil : hoveredHeaderKey)

@@ -107,6 +107,7 @@ let L10nTable: [String: [String: String]] = [
         "en": "Usually a network or proxy issue — this site is unreachable on the current route. Switch and retry.",
     ],
     "panel.retry": ["zh": "重试", "en": "Retry"],
+    "panel.moreActions": ["zh": "更多操作", "en": "More actions"],
     "panel.refreshSite": ["zh": "刷新站点状态（保留登录）", "en": "Refresh site state (stay signed in)"],
     "panel.clearData": ["zh": "清除该站点数据…", "en": "Clear this site's data…"],
     "panel.clearData.title": ["zh": "清除该站点的全部数据？", "en": "Clear all data for this site?"],
