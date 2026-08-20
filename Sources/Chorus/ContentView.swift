@@ -1258,7 +1258,7 @@ struct ContentView: View {
                     .layoutPriority(-1)   // shrink the long model name first, keep the buttons clear
             }
             Spacer(minLength: 8)
-            winnerStar(key: p.id, accentHost: "", name: p.name)
+            winnerTrophy(key: p.id, accentHost: "", name: p.name)
             if apiStore.isStreaming(p.id) {
                 Button { apiStore.stop(p.id) } label: {
                     Image(systemName: "stop.fill")
@@ -1297,20 +1297,23 @@ struct ContentView: View {
 
     /// Thin neutral status strip: a "thinking" dot, the provider name, and hover actions.
     /// Kept minimal so it doesn't compete with each site's own header below it.
-    /// "Crown this answer the best of the round" star. Shown only once the round is votable
+    /// "This answer won the round" trophy. A star was the obvious first choice but the wrong
+    /// word: everywhere else ☆ means FAVOURITE — a persistent bookmark — while this is a
+    /// single-choice verdict on one round, and what it feeds is literally called 胜率 / win rate.
+    /// A trophy says that without a legend. Shown only once the round is votable
     /// (this panel answered AND ≥2 panels answered — a 1-panel vote is meaningless). Single-select:
     /// clicking a different panel moves the crown; clicking the current winner clears it.
-    @ViewBuilder private func winnerStar(key: String, accentHost: String, name: String) -> some View {
+    @ViewBuilder private func winnerTrophy(key: String, accentHost: String, name: String) -> some View {
         if store.answeredLastBroadcast.contains(key) && store.answeredLastBroadcast.count >= 2 {
             let isWinner = voteStore.currentWinner == key
             let accent = ProviderStyle.accent(key: key, host: accentHost)
             Button {
                 pickWinner(key)
             } label: {
-                Image(systemName: isWinner ? "star.fill" : "star")
-                    .font(.system(size: 14, weight: .semibold))
+                Image(systemName: isWinner ? "trophy.fill" : "trophy")
+                    .font(.system(size: 13, weight: .semibold))
                     // Use the panel's brand color (filled when chosen, tinted outline otherwise) so
-                    // the "pick the best" affordance is actually noticeable, not a faint grey star.
+                    // the "pick the best" affordance is actually noticeable, not a faint grey glyph.
                     .foregroundColor(isWinner ? accent : accent.opacity(0.6))
             }
             .buttonStyle(.plain)
@@ -1349,7 +1352,7 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary.opacity(0.9))
             Spacer()
-            winnerStar(key: p.key, accentHost: p.url.host ?? "", name: p.name)
+            winnerTrophy(key: p.key, accentHost: p.url.host ?? "", name: p.name)
             // Loading spinner — always visible (not hover-gated) while the page reloads, so a
             // reload tap visibly registers and the user waits instead of clicking again.
             if store.loadingKeys.contains(p.key) {

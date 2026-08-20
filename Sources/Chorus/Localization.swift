@@ -86,8 +86,8 @@ let L10nTable: [String: [String: String]] = [
     "stats.rangeAll": ["zh": "全部", "en": "All time"],
     "stats.lowSample": ["zh": "样本少", "en": "Few votes"],
     "stats.empty": [
-        "zh": "还没有投票记录。\n广播一个问题，等各家答完，点面板标题栏的 ☆ 选出这轮最佳。",
-        "en": "No votes yet.\nAsk a question, wait for the answers, then hit ☆ in a panel's header to pick the best one.",
+        "zh": "还没有投票记录。\n广播一个问题，等各家答完，点面板标题栏的奖杯图标选出这轮最佳。",
+        "en": "No votes yet.\nAsk a question, wait for the answers, then hit the trophy in a panel's header to pick the best one.",
     ],
     "stats.disclaimer": [
         "zh": "这是「你的口味」随时间的记录，不是模型客观评测；样本太少时别当真。",
