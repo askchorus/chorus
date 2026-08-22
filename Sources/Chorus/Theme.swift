@@ -155,3 +155,35 @@ struct WindowDragHandle: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+
+/// A tiny drawing of a window split into panes — the shape the picker actually produces.
+/// Drawn rather than taken from SF Symbols: the symbol set has no connected 3x2, and its
+/// `square.grid.*` glyphs are DETACHED squares, which read as "a bunch of things" (a launcher)
+/// instead of "one window divided into panes".
+struct LayoutGlyph: View {
+    let cols: Int
+    let rows: Int
+    var side: CGFloat = 15
+    var lineWidth: CGFloat = 1.2
+
+    var body: some View {
+        let w = side
+        let h = side * 0.8
+        Path { path in
+            let r = CGRect(x: lineWidth / 2, y: lineWidth / 2, width: w - lineWidth, height: h - lineWidth)
+            path.addRoundedRect(in: r, cornerSize: CGSize(width: 2.5, height: 2.5))
+            for i in 1 ..< max(cols, 1) {
+                let x = r.minX + r.width * CGFloat(i) / CGFloat(cols)
+                path.move(to: CGPoint(x: x, y: r.minY))
+                path.addLine(to: CGPoint(x: x, y: r.maxY))
+            }
+            for i in 1 ..< max(rows, 1) {
+                let y = r.minY + r.height * CGFloat(i) / CGFloat(rows)
+                path.move(to: CGPoint(x: r.minX, y: y))
+                path.addLine(to: CGPoint(x: r.maxX, y: y))
+            }
+        }
+        .stroke(style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round))
+        .frame(width: w, height: h)
+    }
+}

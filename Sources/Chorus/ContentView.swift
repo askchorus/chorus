@@ -1642,12 +1642,12 @@ struct ContentView: View {
     /// rearrangement — re-flowing the same three panels into different rows changes nothing
     /// useful; what the user wants is "put more AIs on screen, now".
     /// Panels are taken from the top of their existing order, so the choice is predictable.
-    private static let layoutPresets: [(count: Int, columns: Int, icon: String)] = [
-        (1, 1, "rectangle"),
-        (2, 2, "rectangle.split.2x1"),
-        (3, 3, "rectangle.split.3x1"),
-        (4, 2, "square.grid.2x2"),
-        (6, 3, "square.grid.3x2"),
+    private static let layoutPresets: [(count: Int, columns: Int, rows: Int)] = [
+        (1, 1, 1),
+        (2, 2, 1),
+        (3, 3, 1),
+        (4, 2, 2),
+        (6, 3, 2),
     ]
 
     private var layoutButton: some View {
@@ -1657,8 +1657,7 @@ struct ContentView: View {
         return Button {
             showLayoutPicker.toggle()
         } label: {
-            Image(systemName: current?.icon ?? "rectangle.split.3x1")
-                .font(.system(size: 13))
+            LayoutGlyph(cols: current?.columns ?? panelColumns, rows: current?.rows ?? 1)
                 .foregroundColor(.secondary)
                 .frame(height: 26)
                 .contentShape(Rectangle())
@@ -1681,8 +1680,8 @@ struct ContentView: View {
                             applyLayoutPreset(count: preset.count, columns: preset.columns)
                             showLayoutPicker = false
                         } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: preset.icon).font(.system(size: 15))
+                            VStack(spacing: 5) {
+                                LayoutGlyph(cols: preset.columns, rows: preset.rows, side: 17)
                                 Text("\(preset.count)").font(.system(size: 9))
                             }
                             .frame(width: 38, height: 40)
