@@ -943,6 +943,7 @@ struct ContentView: View {
     /// Panels per row. Default 3 keeps the historical single row for anyone running the usual
     /// three panels, while more panels now wrap instead of shrinking into unreadable slivers.
     @AppStorage("panelColumns") private var panelColumns: Int = 3
+    @State private var showLayoutPicker = false
     @AppStorage("welcomeSeen") private var welcomeSeen: Bool = false   // first-run welcome card
     @State private var showWelcome = false
     // Observed so the main window re-renders (and shows/removes API cards) the moment an API
@@ -1651,31 +1652,55 @@ struct ContentView: View {
 
     private var layoutButton: some View {
         let available = orderedProviders.count + apiProviders.count
-        return HStack(spacing: 2) {
-            ForEach(Self.layoutPresets, id: \.count) { preset in
-                let reachable = min(preset.count, available)
-                let isCurrent = visiblePanels.count == reachable && panelColumns == preset.columns
-                Button {
-                    applyLayoutPreset(count: preset.count, columns: preset.columns)
-                } label: {
-                    Image(systemName: preset.icon)
-                        .font(.system(size: 12))
-                        .frame(width: 22, height: 22)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(isCurrent ? Color.primary.opacity(0.10) : .clear)
-                        )
-                        .foregroundColor(isCurrent ? .primary : .secondary)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                // More panels than you have providers isn't reachable — say so rather than
-                // silently doing something smaller than the icon promises.
-                .disabled(preset.count > available)
-                .help(Lf("layout.showN", preset.count))
-            }
+        let current = Self.layoutPresets.last { min($0.count, available) == visiblePanels.count
+            && $0.columns == panelColumns }
+        return Button {
+            showLayoutPicker.toggle()
+        } label: {
+            Image(systemName: current?.icon ?? "rectangle.split.3x1")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+                .frame(height: 26)
+                .contentShape(Rectangle())
         }
-        .fixedSize()
+        .buttonStyle(.plain)
+        .help(L("layout.help"))
+        // One glyph in the composer strip; the five-way progression appears only when asked for.
+        // Five icons inline read as clutter next to the other controls — ChatHub can afford the
+        // full row because it lives in a roomy sidebar card, this bar can't.
+        .popover(isPresented: $showLayoutPicker, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("layout.title"))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(Self.layoutPresets, id: \.count) { preset in
+                        let reachable = min(preset.count, available)
+                        let isCurrent = visiblePanels.count == reachable && panelColumns == preset.columns
+                        Button {
+                            applyLayoutPreset(count: preset.count, columns: preset.columns)
+                            showLayoutPicker = false
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: preset.icon).font(.system(size: 15))
+                                Text("\(preset.count)").font(.system(size: 9))
+                            }
+                            .frame(width: 38, height: 40)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(isCurrent ? Color.primary.opacity(0.10) : .clear)
+                            )
+                            .foregroundColor(isCurrent ? .primary : .secondary)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(preset.count > available)
+                        .help(Lf("layout.showN", preset.count))
+                    }
+                }
+            }
+            .padding(12)
+        }
     }
 
     /// Show the first `count` panels in order, hide the rest, and set the row width to match.
