@@ -1636,46 +1636,63 @@ struct ContentView: View {
         }
     }
 
-    /// Panels-per-row picker, sitting next to the summarize button. Icons mirror the resulting
-    /// shape so the choice reads at a glance; the count is capped by how many panels are open,
-    /// so picking 3 with two panels still shows one row of two.
+    /// How many AIs to show at once, ChatHub-style: one click goes from three panels to six,
+    /// and the arrangement follows the count (4 → 2x2, 6 → 3x2). This is a COUNT picker, not a
+    /// rearrangement — re-flowing the same three panels into different rows changes nothing
+    /// useful; what the user wants is "put more AIs on screen, now".
+    /// Panels are taken from the top of their existing order, so the choice is predictable.
+    private static let layoutPresets: [(count: Int, columns: Int, icon: String)] = [
+        (1, 1, "rectangle"),
+        (2, 2, "rectangle.split.2x1"),
+        (3, 3, "rectangle.split.3x1"),
+        (4, 2, "square.grid.2x2"),
+        (6, 3, "square.grid.3x2"),
+    ]
+
     private var layoutButton: some View {
-        Menu {
-            ForEach([1, 2, 3], id: \.self) { n in
+        let available = orderedProviders.count + apiProviders.count
+        return HStack(spacing: 2) {
+            ForEach(Self.layoutPresets, id: \.count) { preset in
+                let reachable = min(preset.count, available)
+                let isCurrent = visiblePanels.count == reachable && panelColumns == preset.columns
                 Button {
-                    guard n != panelColumns else { return }
-                    // Widening panels makes WebKit repaint the exposed strip white; raise the
-                    // cream cover across the change, same as the hide/show reflow.
-                    reflowing = true
-                    panelColumns = n
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { reflowing = false }
+                    applyLayoutPreset(count: preset.count, columns: preset.columns)
                 } label: {
-                    Label(Lf("layout.columns", n), systemImage: Self.layoutIcon(n))
-                    if panelColumns == n { Image(systemName: "checkmark") }
+                    Image(systemName: preset.icon)
+                        .font(.system(size: 12))
+                        .frame(width: 22, height: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isCurrent ? Color.primary.opacity(0.10) : .clear)
+                        )
+                        .foregroundColor(isCurrent ? .primary : .secondary)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                // More panels than you have providers isn't reachable — say so rather than
+                // silently doing something smaller than the icon promises.
+                .disabled(preset.count > available)
+                .help(Lf("layout.showN", preset.count))
             }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: Self.layoutIcon(panelColumns)).font(.system(size: 13))
-                if !minimalMode {
-                    Text(L("layout.title")).font(.system(size: 12, weight: .medium))
-                }
-            }
-            .foregroundColor(.secondary)
-            .frame(height: 26)
-            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
-        .help(L("layout.help"))
     }
 
-    private static func layoutIcon(_ columns: Int) -> String {
-        switch columns {
-        case 1:  return "rectangle"
-        case 2:  return "rectangle.split.2x1"
-        default: return "rectangle.split.3x1"
+    /// Show the first `count` panels in order, hide the rest, and set the row width to match.
+    private func applyLayoutPreset(count: Int, columns: Int) {
+        let webKeys = orderedProviders.map(\.key)
+        let apiKeys = apiProviders.map(\.id)
+        let all = webKeys + apiKeys
+        let keep = Set(all.prefix(count))
+        let hidden = all.filter { !keep.contains($0) }
+
+        // Widening/adding panels makes WebKit repaint the newly exposed area white; raise the
+        // cream cover across the change like the hide/show reflow does.
+        reflowing = true
+        panelColumns = columns
+        DispatchQueue.main.async {
+            hiddenProvidersRaw = hidden.sorted().joined(separator: ",")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { reflowing = false }
         }
     }
 

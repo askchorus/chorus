@@ -56,9 +56,7 @@ let L10nTable: [String: [String: String]] = [
     "common.close": ["zh": "关闭", "en": "Close"],
     "common.error": ["zh": "出错", "en": "Error"],
     "summary.button": ["zh": "汇总", "en": "Compare"],
-    "layout.title": ["zh": "布局", "en": "Layout"],
-    "layout.help": ["zh": "每行显示几个面板", "en": "Panels per row"],
-    "layout.columns": ["zh": "每行 %d 个", "en": "%d per row"],
+    "layout.showN": ["zh": "同时显示 %d 个 AI", "en": "Show %d AIs at once"],
     "summary.title": ["zh": "各家回答汇总", "en": "Answers compared"],
     "summary.working": ["zh": "正在综合各家回答…", "en": "Comparing the answers…"],
     "summary.workingHint": [
