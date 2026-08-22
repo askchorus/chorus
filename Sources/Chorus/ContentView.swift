@@ -940,6 +940,9 @@ struct ContentView: View {
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
     @AppStorage("appearance") private var appearance: String = "light"
     @AppStorage("minimalMode") private var minimalMode: Bool = false
+    /// Panels per row. Default 3 keeps the historical single row for anyone running the usual
+    /// three panels, while more panels now wrap instead of shrinking into unreadable slivers.
+    @AppStorage("panelColumns") private var panelColumns: Int = 3
     @AppStorage("welcomeSeen") private var welcomeSeen: Bool = false   // first-run welcome card
     @State private var showWelcome = false
     // Observed so the main window re-renders (and shows/removes API cards) the moment an API
@@ -976,6 +979,41 @@ struct ContentView: View {
 
     private var hiddenKeys: Set<String> {
         Set(hiddenProvidersRaw.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+    }
+
+    /// One entry per on-screen panel, web and API alike, so the grid can lay them out together.
+    private enum PanelItem: Identifiable {
+        case web(Provider)
+        case api(APIProvider)
+        var id: String {
+            switch self {
+            case .web(let p): return "w_" + p.key
+            case .api(let p): return "a_" + p.id
+            }
+        }
+    }
+
+    private var visiblePanels: [PanelItem] {
+        visibleProviders.map { .web($0) } + visibleAPIProviders.map { .api($0) }
+    }
+
+    /// Panels split into rows of `panelColumns`. Columns are capped by the panel count, so with
+    /// three panels and "3 columns" this is exactly the old single row; a partial last row lets
+    /// its panels stretch rather than leaving a hole.
+    private var panelRows: [[PanelItem]] {
+        let items = visiblePanels
+        guard !items.isEmpty else { return [] }
+        let cols = max(1, min(panelColumns, items.count))
+        return stride(from: 0, to: items.count, by: cols).map {
+            Array(items[$0 ..< min($0 + cols, items.count)])
+        }
+    }
+
+    @ViewBuilder private func panelView(_ item: PanelItem) -> some View {
+        switch item {
+        case .web(let p): card(for: p)
+        case .api(let p): apiCard(for: p)
+        }
     }
 
     private var visibleProviders: [Provider] {
@@ -1041,15 +1079,17 @@ struct ContentView: View {
 
             // Floating webview "cards" on the canvas. Reordering just shuffles the ForEach;
             // WKWebViews stay alive in the store and get reparented into the new positions.
-            HStack(spacing: ChorusTheme.gap) {
-                ForEach(visibleProviders) { p in
-                    card(for: p)
-                        .frame(minWidth: 300, maxWidth: .infinity)
-                }
-                // Native API model panels, after the web cards.
-                ForEach(visibleAPIProviders) { p in
-                    apiCard(for: p)
-                        .frame(minWidth: 300, maxWidth: .infinity)
+            // Rows of panels. The grid always FILLS the window and each panel scrolls its own
+            // page — an outer scroll would fight the webviews for the scroll wheel.
+            VStack(spacing: ChorusTheme.gap) {
+                ForEach(Array(panelRows.enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: ChorusTheme.gap) {
+                        ForEach(row) { item in
+                            panelView(item)
+                                .frame(minWidth: 300, maxWidth: .infinity)
+                        }
+                    }
+                    .frame(minHeight: 240, maxHeight: .infinity)
                 }
             }
             .padding(.horizontal, ChorusTheme.margin)
@@ -1510,6 +1550,7 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 10) {
                 composerMenu
                 summarizeButton
+                layoutButton
 
                 // Vertical-axis TextField re-measures the WHOLE text on every keystroke — fine for
                 // normal prompts, but typing after pasting a long article lagged badly. Above a
@@ -1595,6 +1636,49 @@ struct ContentView: View {
         }
     }
 
+    /// Panels-per-row picker, sitting next to the summarize button. Icons mirror the resulting
+    /// shape so the choice reads at a glance; the count is capped by how many panels are open,
+    /// so picking 3 with two panels still shows one row of two.
+    private var layoutButton: some View {
+        Menu {
+            ForEach([1, 2, 3], id: \.self) { n in
+                Button {
+                    guard n != panelColumns else { return }
+                    // Widening panels makes WebKit repaint the exposed strip white; raise the
+                    // cream cover across the change, same as the hide/show reflow.
+                    reflowing = true
+                    panelColumns = n
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { reflowing = false }
+                } label: {
+                    Label(Lf("layout.columns", n), systemImage: Self.layoutIcon(n))
+                    if panelColumns == n { Image(systemName: "checkmark") }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: Self.layoutIcon(panelColumns)).font(.system(size: 13))
+                if !minimalMode {
+                    Text(L("layout.title")).font(.system(size: 12, weight: .medium))
+                }
+            }
+            .foregroundColor(.secondary)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(L("layout.help"))
+    }
+
+    private static func layoutIcon(_ columns: Int) -> String {
+        switch columns {
+        case 1:  return "rectangle"
+        case 2:  return "rectangle.split.2x1"
+        default: return "rectangle.split.3x1"
+        }
+    }
+
     /// "Summarize all answers" — a one-click composer button (was buried in the … menu). Click
     /// the sparkles → pick which API model synthesizes the comparison.
     private var summarizeButton: some View {
@@ -1613,7 +1697,7 @@ struct ContentView: View {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles").font(.system(size: 14))
                 if !minimalMode {
-                    Text("汇总").font(.system(size: 12, weight: .medium))
+                    Text(L("summary.button")).font(.system(size: 12, weight: .medium))
                 }
             }
             .foregroundColor(.secondary)
