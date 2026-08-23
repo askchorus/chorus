@@ -1668,37 +1668,32 @@ struct ContentView: View {
         // Five icons inline read as clutter next to the other controls — ChatHub can afford the
         // full row because it lives in a roomy sidebar card, this bar can't.
         .popover(isPresented: $showLayoutPicker, arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L("layout.title"))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
-                HStack(spacing: 6) {
-                    ForEach(Self.layoutPresets, id: \.count) { preset in
-                        let reachable = min(preset.count, available)
-                        let isCurrent = visiblePanels.count == reachable && panelColumns == preset.columns
-                        Button {
-                            applyLayoutPreset(count: preset.count, columns: preset.columns)
-                            showLayoutPicker = false
-                        } label: {
-                            VStack(spacing: 5) {
-                                LayoutGlyph(cols: preset.columns, rows: preset.rows, side: 17)
-                                Text("\(preset.count)").font(.system(size: 9))
-                            }
-                            .frame(width: 38, height: 40)
+            // No caption, no numbers: the glyphs already ARE the answer (one pane, two, three,
+            // 2x2, 3x2). Labelling a self-evident picture is just noise; hover tooltips cover
+            // the rare "wait, how many is that?".
+            HStack(spacing: 6) {
+                ForEach(Self.layoutPresets, id: \.count) { preset in
+                    let reachable = min(preset.count, available)
+                    let isCurrent = visiblePanels.count == reachable && panelColumns == preset.columns
+                    Button {
+                        applyLayoutPreset(count: preset.count, columns: preset.columns)
+                        showLayoutPicker = false
+                    } label: {
+                        LayoutGlyph(cols: preset.columns, rows: preset.rows, side: 17)
+                            .frame(width: 34, height: 30)
                             .background(
                                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                                     .fill(isCurrent ? Color.primary.opacity(0.10) : .clear)
                             )
                             .foregroundColor(isCurrent ? .primary : .secondary)
                             .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(preset.count > available)
-                        .help(Lf("layout.showN", preset.count))
                     }
+                    .buttonStyle(.plain)
+                    .disabled(preset.count > available)
+                    .help(Lf("layout.showN", preset.count))
                 }
             }
-            .padding(12)
+            .padding(10)
         }
     }
 

@@ -56,7 +56,6 @@ let L10nTable: [String: [String: String]] = [
     "common.close": ["zh": "关闭", "en": "Close"],
     "common.error": ["zh": "出错", "en": "Error"],
     "summary.button": ["zh": "汇总", "en": "Compare"],
-    "layout.title": ["zh": "同时显示几个 AI", "en": "AIs on screen"],
     "layout.help": ["zh": "同时显示几个 AI", "en": "How many AIs to show"],
     "layout.showN": ["zh": "同时显示 %d 个 AI", "en": "Show %d AIs at once"],
     "summary.title": ["zh": "各家回答汇总", "en": "Answers compared"],
