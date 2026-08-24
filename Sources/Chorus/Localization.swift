@@ -141,6 +141,20 @@ let L10nTable: [String: [String: String]] = [
     "quick.chipHelp": ["zh": "以「%@：」为前缀发送给所有 AI", "en": "Send to all AIs with “%@: ” prepended"],
     "quick.pastedText": ["zh": "已粘贴长文本（%d 字）", "en": "Pasted text (%d chars)"],
 
+    // MARK: Settings — agent bridge
+    "settings.section.agent": ["zh": "编程助手接入（实验）", "en": "Coding-agent access (experimental)"],
+    "settings.agent.enable": ["zh": "允许本机的 AI 助手向这些面板提问", "en": "Let a local AI agent ask these panels"],
+    "settings.agent.desc": [
+        "zh": "开启后，Claude Code / Codex 等本机助手可以把问题发给你当前显示的 AI 面板，并拿回各家的原文回答——用的是你自己的订阅，不消耗 API 额度。它问的每一句都会出现在窗口里，你能看到也能叫停；两次提问之间强制至少间隔 30 秒。默认关闭。",
+        "en": "Lets a local agent (Claude Code, Codex…) put a question to the AI panels you have open and read back each answer — through your own subscriptions, with no API billing. Everything it asks shows up in the window where you can watch and stop it, and questions are spaced at least 30s apart. Off by default.",
+    ],
+    "settings.agent.endpoint": ["zh": "本机地址", "en": "Local endpoint"],
+    "settings.agent.copyConfig": ["zh": "复制访问令牌", "en": "Copy access token"],
+    "settings.agent.tokenHint": [
+        "zh": "仅监听本机回环地址，其它设备无法访问。令牌用于让助手证明身份。",
+        "en": "Bound to loopback only — nothing on your network can reach it. The token is how the agent identifies itself.",
+    ],
+
     // MARK: Settings — sections
     "settings.section.language": ["zh": "语言", "en": "Language"],
     "settings.section.quickInput": ["zh": "快捷输入", "en": "Quick Input"],

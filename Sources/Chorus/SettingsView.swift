@@ -9,6 +9,8 @@ struct SettingsView: View {
     @AppStorage("foregroundMainOnSend") private var foregroundMainOnSend: Bool = true
     @AppStorage("autoPasteOnSummon") private var autoPasteOnSummon: Bool = true
     @AppStorage("notifyMode") private var notifyMode: String = "quickOnly"
+    @AppStorage("agentBridgeEnabled") private var agentBridgeEnabled: Bool = false
+    @State private var agentTokenCopied = false
     @AppStorage("notifyWaitAllVisible") private var notifyWaitAllVisible: Bool = true
     @AppStorage("notifyRequiredProviders") private var notifyRequiredProvidersRaw: String = "chatgpt,claude,gemini"
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
@@ -302,6 +304,28 @@ struct SettingsView: View {
                     }
                     .disabled(newAPIName.trimmingCharacters(in: .whitespaces).isEmpty
                               || newAPIBase.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            Section(L("settings.section.agent")) {
+                Toggle(L("settings.agent.enable"), isOn: $agentBridgeEnabled)
+                hint("settings.agent.desc")
+                if agentBridgeEnabled {
+                    HStack(spacing: 8) {
+                        Text(L("settings.agent.endpoint")).font(.caption).foregroundColor(.secondary)
+                        Text("127.0.0.1:\(AgentBridge.shared.port)")
+                            .font(.system(size: 11, design: .monospaced))
+                        Button(L("settings.agent.copyConfig")) {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(AgentBridge.shared.token, forType: .string)
+                            agentTokenCopied = true
+                        }
+                        .font(.caption)
+                        if agentTokenCopied {
+                            Text(L("settings.about.copied")).font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    hint("settings.agent.tokenHint")
                 }
             }
 

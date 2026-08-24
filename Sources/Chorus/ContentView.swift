@@ -685,6 +685,53 @@ final class WebViewStore: ObservableObject {
         return nil
     }
 
+    // MARK: - Agent bridge support
+
+    /// Panels an agent question goes to: exactly what the user has on screen. Deliberately not
+    /// agent-selectable — the panels you chose to show are the ones you've consented to have
+    /// asked, and letting a caller name arbitrary providers would quietly wake hidden ones.
+    func agentTargetKeys() -> [String] {
+        let hidden = Set((UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
+            .split(separator: ",").map(String.init))
+        return cache.keys.filter { !hidden.contains($0) }
+    }
+
+    /// Wait for the current agent round to finish, then hand back each panel's answer. Resolves
+    /// early once every target has reported; otherwise returns whatever exists at the timeout, so
+    /// one stuck panel can't swallow the other answers.
+    func awaitAgentAnswers(timeout: TimeInterval,
+                           completion: @escaping ([(key: String, name: String, text: String)]) -> Void) {
+        let targets = Set(agentTargetKeys())
+        let deadline = Date().addingTimeInterval(timeout)
+        var done = false
+
+        func harvest() {
+            guard !done else { return }
+            done = true
+            let providers = ProviderRegistry.all()
+            var out: [(key: String, name: String, text: String)] = []
+            let group = DispatchGroup()
+            for key in targets.sorted() {
+                let name = providers.first { $0.key == key }?.name ?? key
+                group.enter()
+                self.extractAnswer(key: key) { text in
+                    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { out.append((key: key, name: name, text: t)) }
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) { completion(out.sorted { $0.key < $1.key }) }
+        }
+
+        func poll() {
+            guard !done else { return }
+            if targets.isSubset(of: self.answeredLastBroadcast) { return harvest() }
+            if Date() >= deadline { return harvest() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { poll() }
+        }
+        poll()
+    }
+
     /// Record/clear a panel's load failure (called from the navigation delegate).
     func noteLoadFailure(host: String, reason: String) {
         guard let key = providerKey(forHost: host) else { return }

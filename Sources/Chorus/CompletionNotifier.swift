@@ -74,13 +74,16 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
     /// `source` indicates whether the broadcast originated from the main window or the quick input.
     func handleBatchComplete(source: BroadcastSource) {
         let mode = UserDefaults.standard.string(forKey: "notifyMode") ?? "quickOnly"
-        let shouldNotify: Bool
+        var shouldNotify: Bool
         switch mode {
         case "off":      shouldNotify = false
         case "always":   shouldNotify = true
         case "quickOnly": shouldNotify = (source == .quickInput)
         default:         shouldNotify = (source == .quickInput)
         }
+        // An agent question is answered back through the bridge; a banner for something the user
+        // never typed is pure noise.
+        if source == .agent { shouldNotify = false }
         clog("batch complete — source=\(source), mode=\(mode), shouldNotify=\(shouldNotify)")
         guard shouldNotify else { return }
 
@@ -106,4 +109,8 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
 enum BroadcastSource {
     case mainWindow
     case quickInput
+    /// Asked by a coding agent through the local bridge. Never raises a completion notification —
+    /// the agent is already waiting on the reply, and a banner for a question the user didn't type
+    /// would just be noise.
+    case agent
 }

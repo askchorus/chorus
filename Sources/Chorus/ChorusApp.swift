@@ -48,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Keeper window must exist and be ordered in BEFORE any ⌘H (see prepareKeeper's doc).
         WebViewStore.shared.prepareKeeper()
 
+        // Local agent bridge — no-op unless the user turned it on in Settings.
+        AgentBridge.shared.syncWithSetting()
+
         // Start Sparkle at launch so its scheduled background checks run (user consent is asked
         // once by Sparkle itself); a dev build without a reachable appcast just stays quiet.
         _ = UpdateManager.shared
@@ -103,7 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.syncMenuBarVisibility() } }
+            .sink { [weak self] _ in MainActor.assumeIsolated {
+                self?.syncMenuBarVisibility()
+                AgentBridge.shared.syncWithSetting()   // toggling the setting starts/stops it live
+            } }
             .store(in: &cancellables)
     }
 
