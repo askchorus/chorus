@@ -3,6 +3,20 @@
     <channel>
         <title>Chorus</title>
         <item>
+            <title>0.2.4</title>
+            <pubDate>Tue, 25 Aug 2026 01:08:04 +0800</pubDate>
+            <sparkle:version>0.2.4</sparkle:version>
+            <sparkle:shortVersionString>0.2.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://zhouyixiao.com/chorus/Chorus-0.2.4.dmg" length="5985697" type="application/octet-stream" sparkle:edSignature="UuSXhmcyRwh8yC1/pvQHNe+DR0fe1k4yEwQLITZVOWwoSJVsmaQ/UkZJEfz21KW3wuXFq06f+NOr2Hs+UCYiDw=="/>
+            <sparkle:deltas>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.3.delta" sparkle:deltaFrom="0.2.3" length="551634" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="DS9kdG+vyoqIuc1SLVfNV21JwxKC6O7Hbki7tMVgtrgTL4IjWeLIL0q5aWOP83WUblLAGUQyR6JALigFQp9OBw=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.2.delta" sparkle:deltaFrom="0.2.2" length="567714" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="bEMt3ZDmE5H+EBuHks4sJeJA8Ajc5OJiukaIoK9kdgXAKGmzPFlrjfJwmSdqLWt/J4/JVoy6QJXlEf10IFxkCw=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.1.delta" sparkle:deltaFrom="0.2.1" length="578650" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="YUOgQ4KCyNXDoW9AfYuWreMxViCp5j74d0E8bjsKzBW2e1U1PUACNF3QFxNoMyy8ZRLbR2MfxOKz53E5eLJfBQ=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.0.delta" sparkle:deltaFrom="0.2.0" length="605986" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ytitvqRx1HpgLXoS1Ljxi/3O+uzb3QPCvNFGGtXEou1evAS1y47S+pn3R1mQkss54FaNNUmagu45LkGpfvIKBQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.2.3</title>
             <pubDate>Mon, 10 Aug 2026 00:51:58 +0800</pubDate>
             <sparkle:version>0.2.3</sparkle:version>
@@ -25,17 +39,6 @@
             <sparkle:deltas>
                 <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.2-0.2.1.delta" sparkle:deltaFrom="0.2.1" length="267738" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="LfLGKdzSS7g2mHHePxm6q0HXbwqlufMcWwnSans9yjT5maGzy8h1A8TrDroPGtwd9UUZ4QuSshJV3ziXmar4Cw=="/>
                 <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.2-0.2.0.delta" sparkle:deltaFrom="0.2.0" length="375718" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="zr05+vYpvQTFTHWYrDlS8KCFgO6XIbOoigxjihiW6ow/NTwVvVjbgihSY5yHKAlq4MRpSTi0PKhNX+FI1UdBDQ=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>0.2.1</title>
-            <pubDate>Sat, 25 Jul 2026 17:13:28 +0800</pubDate>
-            <sparkle:version>0.2.1</sparkle:version>
-            <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://zhouyixiao.com/chorus/Chorus-0.2.1.dmg" length="5790363" type="application/octet-stream" sparkle:edSignature="gO6Won8o/YtRpGZ5IR/W5nsCmQ80TcXYu9IHQ8bDkzuC/W1oDx5jmKz8jenCR79hdt/V6IEcV7RQuBfN6y8/BA=="/>
-            <sparkle:deltas>
-                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.1-0.2.0.delta" sparkle:deltaFrom="0.2.0" length="337194" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="qmm6m6OZ0kovVUeenQRtoWPeHZiUxi+Fwmvw431t/qWCHz4EfSjLvpaUpFYbcXY5vKGe2UAaop8JXh9vhd6xBQ=="/>
             </sparkle:deltas>
         </item>
     </channel>
