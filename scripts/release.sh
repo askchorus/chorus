@@ -99,9 +99,17 @@ for e in data[:3]:
     rows.append('<div class="log-row"><b>%s</b><time>%s</time><span>%s</span></div>'
                 % (html.escape(e.get("version", "")), when, html.escape(e.get("note", ""))))
 doc = open(hpath, encoding="utf-8").read()
-new_doc = re.sub(r'(<div id="log-rows">).*?(</div>)',
-                 lambda m: m.group(1) + "\n" + "\n".join(rows) + "\n  " + m.group(2),
-                 doc, count=1, flags=re.S)
+# Replace the WHOLE block up to the gatekeeper card. A non-greedy match to the first
+# </div> used to stop INSIDE the block once it had rows, duplicating entries and leaving a
+# stray closing tag behind.
+block = ('  <div class="log" id="log">\n    <h2>最近更新</h2>\n    <div id="log-rows">\n'
+         + "\n".join(rows) + '\n    </div>\n  </div>\n')
+start_marker, end_marker = '  <div class="log" id="log">', '  <div class="gatekeeper">'
+if start_marker in doc and end_marker in doc:
+    i, j = doc.index(start_marker), doc.index(end_marker)
+    new_doc = doc[:i] + block + doc[j:]
+else:
+    new_doc = doc
 if new_doc != doc:
     open(hpath, "w", encoding="utf-8").write(new_doc)
     print("    changelog: rendered %d rows into index.html" % len(rows))
