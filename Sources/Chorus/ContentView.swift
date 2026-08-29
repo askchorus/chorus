@@ -219,7 +219,18 @@ final class WebViewStore: ObservableObject {
     /// Navigate a panel to its "new conversation" page (login/cookies preserved).
     func newChat(key: String) {
         guard let webView = cache[key], let url = freshURL(forKey: key) else { return }
+        newChatStartedAt[key] = Date()
+        clog("[NewChat] \(key) — loading \(url.absoluteString)")
         webView.load(URLRequest(url: url))
+    }
+
+    /// TEMP DIAG: when each new-chat navigation actually finished, to find out whether the
+    /// "sometimes instant, sometimes ages" the user sees is the full page load or something else.
+    var newChatStartedAt: [String: Date] = [:]
+    func noteNavigationFinished(_ webView: WKWebView) {
+        guard let key = cache.first(where: { $0.value === webView })?.key,
+              let started = newChatStartedAt.removeValue(forKey: key) else { return }
+        clog("[NewChat] \(key) — finished in \(String(format: "%.1f", Date().timeIntervalSince(started)))s")
     }
 
     /// After a restored session loads, some deep links point at a conversation that no longer
@@ -251,11 +262,17 @@ final class WebViewStore: ObservableObject {
 
     /// Broadcast a prompt to all webviews. `source` is used by the completion notifier
     /// to decide whether to alert (e.g. only for quick-input broadcasts in default config).
-    func broadcast(text: String, images: [NSImage] = [], source: BroadcastSource = .mainWindow) {
-        lastBroadcast = text          // remembered so "summarize" can include the question
-        answeredLastBroadcast = []    // new question → prior answers no longer count
-        currentBroadcastId = UUID().uuidString
-        VoteStore.shared.newRound()   // commit the previous round's pick, reset the star state
+    /// `targets` (panel keys) narrows the send to specific panels — used by @-directed asks.
+    /// A directed ask is a SIDE question: it does not reset the round, so the other panels'
+    /// answers keep counting for summarize/vote exactly as they stood.
+    func broadcast(text: String, images: [NSImage] = [], source: BroadcastSource = .mainWindow,
+                   targets: Set<String>? = nil) {
+        if targets == nil {
+            lastBroadcast = text          // remembered so "summarize" can include the question
+            answeredLastBroadcast = []    // new question → prior answers no longer count
+            currentBroadcastId = UUID().uuidString
+            VoteStore.shared.newRound()   // commit the previous round's pick, reset the star state
+        }
         var imagesBase64: [String] = []
         var pngDatas: [Data] = []
         for image in images {
@@ -283,7 +300,9 @@ final class WebViewStore: ObservableObject {
         let everyVisible = UserDefaults.standard.object(forKey: "notifyWaitAllVisible") as? Bool ?? true
         let onScreen = visibleKeys.union(visibleAPIKeys)
         let trackKeys: Set<String>
-        if everyVisible {
+        if let targets {
+            trackKeys = targets.intersection(onScreen)
+        } else if everyVisible {
             trackKeys = onScreen
         } else {
             let requiredRaw = UserDefaults.standard.string(forKey: "notifyRequiredProviders") ?? "chatgpt,claude,gemini"
@@ -319,6 +338,7 @@ final class WebViewStore: ObservableObject {
         for (key, webView) in cache {
             // Don't broadcast to hidden panels — hiding a panel excludes it from sends.
             if hiddenKeys.contains(key) { continue }
+            if let targets, !targets.contains(key) { continue }
 
             // Gemini blocks synthetic JS image attachment: it renders no static <input type=file>
             // and ignores synthetic paste/drop (isTrusted=false). Instead we intercept its
@@ -340,8 +360,10 @@ final class WebViewStore: ObservableObject {
         let apiPrompt = text
         let apiImages = imagesBase64
         let skip = hiddenKeys
+        let only = targets
         Task { @MainActor in
             for p in APIProviderRegistry.all() where !skip.contains(p.id) {
+                if let only, !only.contains(p.id) { continue }
                 APIChatStore.shared.send(to: p, prompt: apiPrompt, imagesBase64: apiImages)
             }
         }
@@ -730,6 +752,37 @@ final class WebViewStore: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { poll() }
         }
         poll()
+    }
+
+    /// Parse a leading "@name " prefix into a directed target. "@gemini 展开说说第二点" →
+    /// (["gemini"], "展开说说第二点"). Matches ON-SCREEN panels only (web + API), by display name
+    /// or key, case-insensitively. Anything that doesn't resolve is left untouched — an email
+    /// address or a stray @ must not eat the message.
+    func resolveDirectedPrompt(_ raw: String) -> (targets: Set<String>?, text: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("@"), trimmed.count > 1 else { return (nil, raw) }
+        let afterAt = trimmed.dropFirst()
+        let token = afterAt.prefix { !$0.isWhitespace }
+        let rest = afterAt.dropFirst(token.count).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty, !rest.isEmpty else { return (nil, raw) }   // "@gemini" alone isn't a question
+
+        let hidden = Set((UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
+            .split(separator: ",").map(String.init))
+        let needle = token.lowercased()
+
+        for p in ProviderRegistry.all() where !hidden.contains(p.key) {
+            if p.name.lowercased() == needle || p.key.lowercased() == needle
+                || p.name.lowercased().hasPrefix(needle) {
+                return ([p.key], String(rest))
+            }
+        }
+        for p in APIProviderRegistry.all() where !hidden.contains(p.id) {
+            if p.name.lowercased() == needle || p.id.lowercased() == needle
+                || p.name.lowercased().hasPrefix(needle) {
+                return ([p.id], String(rest))
+            }
+        }
+        return (nil, raw)
     }
 
     /// Record/clear a panel's load failure (called from the navigation delegate).
@@ -1994,7 +2047,9 @@ struct ContentView: View {
         dictator.stop()  // end any in-progress dictation
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
-        store.broadcast(text: text, images: attachedImages.map(\.image), source: .mainWindow)
+        let directed = store.resolveDirectedPrompt(text)
+        store.broadcast(text: directed.text, images: attachedImages.map(\.image), source: .mainWindow,
+                        targets: directed.targets)
         PromptHistory.add(text)
         historyIndex = nil
         prompt = ""

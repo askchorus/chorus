@@ -576,7 +576,9 @@ struct QuickInputView: View {
             let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             let text = composedBroadcastText()
             guard !text.isEmpty || attachedImage != nil else { return }
-            store.broadcast(text: text, images: attachedImage.map { [$0] } ?? [], source: .quickInput)
+            let directed = store.resolveDirectedPrompt(text)
+            store.broadcast(text: directed.text, images: attachedImage.map { [$0] } ?? [],
+                            source: .quickInput, targets: directed.targets)
             if !typed.isEmpty { PromptHistory.add(typed) }   // recall only the typed part, not pasted blobs
             historyIndex = nil
             prompt = ""
@@ -603,7 +605,9 @@ struct QuickInputView: View {
         let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = composedBroadcastText()
         guard !text.isEmpty || attachedImage != nil else { return }
-        store.broadcast(text: text, images: attachedImage.map { [$0] } ?? [], source: .quickInput)
+        let directed = store.resolveDirectedPrompt(text)
+            store.broadcast(text: directed.text, images: attachedImage.map { [$0] } ?? [],
+                            source: .quickInput, targets: directed.targets)
         if !typed.isEmpty { PromptHistory.add(typed) }
         historyIndex = nil
         prompt = ""

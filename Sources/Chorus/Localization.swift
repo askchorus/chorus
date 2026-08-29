@@ -39,8 +39,8 @@ func completionNotificationBody() -> String {
 let L10nTable: [String: [String: String]] = [
     // MARK: Composer + panel chrome (main window)
     "composer.placeholder": [
-        "zh": "问所有 AI…    ⌘↩ 发送 · ⌘V 粘贴图片",
-        "en": "Ask all AIs…    ⌘↩ to send · ⌘V to paste image",
+        "zh": "问所有 AI…    ⌘↩ 发送 · ⌘V 贴图 · @某家 单独问",
+        "en": "Ask all AIs…    ⌘↩ send · ⌘V image · @name asks one",
     ],
     "composer.imageAttached": ["zh": "已附加图片", "en": "Image attached"],
     "composer.removeImage": ["zh": "移除已附加的图片", "en": "Remove attached image"],

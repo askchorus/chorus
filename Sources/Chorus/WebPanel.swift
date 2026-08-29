@@ -143,6 +143,7 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     // last conversation on next launch (gated by the "restore session" setting at read time).
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            WebViewStore.shared.noteNavigationFinished(webView)
             WebViewStore.shared.recoverIfDeadConversation(webView)
             WebViewStore.shared.recordSessionURL(for: webView)
             WebViewStore.shared.fetchFavicon(for: webView)
