@@ -945,6 +945,18 @@ enum Broadcaster {
               fileInputSelectors: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
             },
             {
+              // Verified against the live DOM 2026-08-30. DeepSeek web's controls are all DIVs
+              // with hashed classes and no aria-labels, so the generic selectors never matched
+              // and every text send burned the full deadline before the Enter fallback. The send
+              // control is the one circular primary role=button; its disabled state is the BEM
+              // modifier class ds-button--disabled (caught by the --disabled check in the loop).
+              host: 'deepseek.com',
+              inputSelectors: ['textarea'],
+              sendSelectors: ['div[role="button"].ds-button--primary.ds-button--circle'],
+              uploadMethod: 'fileInput',
+              fileInputSelectors: ['input[type="file"][accept*="image"]', 'input[type="file"]'],
+            },
+            {
               host: 'kimi.com',
               inputSelectors: [
                 'div[contenteditable="true"].chat-input-editor',
@@ -1317,9 +1329,12 @@ enum Broadcaster {
               lastBtn = btn;
               // Disabled = attribute (real <button>s) OR a 'disabled' CSS class on the element or
               // an ancestor — Kimi's send control is <div class="send-button-container disabled">
-              // with neither attribute, and we click its inner svg (class lives on the parent).
+              // with neither attribute, and we click its inner svg (class lives on the parent) —
+              // OR a BEM-style modifier like DeepSeek's ds-button--disabled.
+              const cls = (btn.getAttribute && btn.getAttribute('class')) || '';
               const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true'
-                || !!(btn.closest && btn.closest('.disabled'));
+                || !!(btn.closest && btn.closest('.disabled'))
+                || cls.split(/\\s+/).some(c => c === 'disabled' || c.endsWith('--disabled'));
               if (!isDisabled) {
                 fullClick(btn);
                 clicked = true;
@@ -1331,10 +1346,12 @@ enum Broadcaster {
               nudges++;
               if (nudges === 1) clog('send: no button yet, text present — nudging the editor');
               nudgeEditor();
-            } else if ((IMAGES_B64.length || WAIT_UPLOAD) && Date.now() - sendLoopStart > 5000) {
+            } else if (!lastBtn && Date.now() - sendLoopStart > ((IMAGES_B64.length || WAIT_UPLOAD) ? 5000 : 2500)) {
               // No element has EVER matched the send selectors — more waiting can't help (the
-              // long image deadline exists to wait for a FOUND button to enable during upload).
-              // Bail to the Enter fallback instead of burning up to 25s on generic sites.
+              // long deadlines exist to wait for a FOUND button to enable, e.g. during upload).
+              // Bail to the Enter fallback instead of burning the full deadline. Gating this to
+              // the image path made every text send on an unmatched site (DeepSeek before it had
+              // tuned selectors) sit out the whole 8s — the "takes forever to send" complaint.
               break;
             }
             await new Promise(r => setTimeout(r, 200));
