@@ -365,6 +365,14 @@ enum WebViewFactory {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
 
+        // Pin the embedded sites to LIGHT. Chorus's own chrome is light cream, but the webviews
+        // follow the system appearance, so with macOS in dark mode (or auto-switching at night)
+        // every site set to "follow system" flips dark — a mismatched patchwork the user kept
+        // fixing by hand inside each site's settings. Forcing aqua makes prefers-color-scheme
+        // report light regardless of the system setting. (A site whose OWN theme toggle is set
+        // to explicit dark still honors that; this only pins what "auto" resolves to.)
+        webView.appearance = NSAppearance(named: .aqua)
+
         // The color WebKit paints in areas not yet covered by page content — i.e. before the
         // first paint of a freshly-added panel, and (the real offender here) the strip exposed
         // when a panel WIDENS after an AI is removed. Default is white, which flashed as an ugly
