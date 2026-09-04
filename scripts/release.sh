@@ -99,17 +99,20 @@ for e in data[:3]:
     rows.append('<div class="log-row"><b>%s</b><time>%s</time><span>%s</span></div>'
                 % (html.escape(e.get("version", "")), when, html.escape(e.get("note", ""))))
 doc = open(hpath, encoding="utf-8").read()
-# Replace the WHOLE block up to the gatekeeper card. A non-greedy match to the first
-# </div> used to stop INSIDE the block once it had rows, duplicating entries and leaving a
-# stray closing tag behind.
-block = ('  <div class="log" id="log">\n    <h2>最近更新</h2>\n    <div id="log-rows">\n'
-         + "\n".join(rows) + '\n    </div>\n  </div>\n')
-start_marker, end_marker = '  <div class="log" id="log">', '  <div class="gatekeeper">'
+# Replace ONLY what sits between the sentinel comments. The previous version ran from the
+# log div to the gatekeeper card, so ANY section added between them would be deleted on the
+# next release — the privacy block was already sitting in that blast radius.
+block = ('  <div class="sec log" id="log">\n'
+         '    <h2><span class="zh">最近更新</span><span class="en">Recent updates</span></h2>\n'
+         '    <div id="log-rows">\n' + "\n".join(rows) + '\n    </div>\n  </div>\n')
+start_marker, end_marker = '<!-- chorus:log:start', '<!-- chorus:log:end -->'
 if start_marker in doc and end_marker in doc:
-    i, j = doc.index(start_marker), doc.index(end_marker)
+    i = doc.index('\n', doc.index(start_marker)) + 1   # keep the marker line itself
+    j = doc.index(end_marker)
     new_doc = doc[:i] + block + doc[j:]
 else:
     new_doc = doc
+    print("    changelog: sentinel markers missing — index.html left untouched")
 if new_doc != doc:
     open(hpath, "w", encoding="utf-8").write(new_doc)
     print("    changelog: rendered %d rows into index.html" % len(rows))
