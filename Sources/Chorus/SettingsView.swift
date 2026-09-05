@@ -526,7 +526,7 @@ struct ChipListEditor: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(newChip.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Add prompt")
+                .help(L("settings.prompts.add"))
             }
         }
         .padding(.vertical, 4)
@@ -550,7 +550,7 @@ struct ChipPill: View {
                     .foregroundColor(.secondary.opacity(0.55))
             }
             .buttonStyle(.plain)
-            .help("Remove")
+            .help(L("settings.prompts.remove"))
         }
         .padding(.leading, 11)
         .padding(.trailing, 6)

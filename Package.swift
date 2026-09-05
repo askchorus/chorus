@@ -17,6 +17,11 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/Chorus"
+        ),
+        .testTarget(
+            name: "ChorusTests",
+            dependencies: ["Chorus"],
+            path: "Tests/ChorusTests"
         )
     ],
     swiftLanguageVersions: [.v5]

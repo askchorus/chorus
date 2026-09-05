@@ -50,6 +50,7 @@ let L10nTable: [String: [String: String]] = [
     "menu.panels": ["zh": "面板", "en": "Panels"],
     "menu.settings": ["zh": "设置…", "en": "Settings…"],
     "menu.actions": ["zh": "操作", "en": "Actions"],
+    "menu.shareCard": ["zh": "生成分享卡片", "en": "Make a share card"],
     "panel.reload": ["zh": "重载 %@", "en": "Reload %@"],
 
     // MARK: Sheets — summary / share card / stats
@@ -72,6 +73,8 @@ let L10nTable: [String: [String: String]] = [
     "summary.openSettings": ["zh": "打开设置添加…", "en": "Open Settings to add one…"],
     "summary.pickModel": ["zh": "选一个模型，汇总各家 AI 的回答", "en": "Pick a model to compare the answers"],
     "summary.useModel": ["zh": "用 %@ 汇总", "en": "Compare with %@"],
+    "summary.help": ["zh": "汇总各家回答：把所有 AI 的回答交给一个模型综合对比",
+                     "en": "Compare answers: hand every AI's reply to one model for a side-by-side synthesis"],
     "share.title": ["zh": "分享卡片", "en": "Share card"],
     "share.empty": [
         "zh": "没有可分享的内容\n先广播一个问题，等各家答完再来",
@@ -140,6 +143,9 @@ let L10nTable: [String: [String: String]] = [
     "quick.micDenied": ["zh": "麦克风/语音识别权限被拒——请到系统设置开启", "en": "Mic / speech permission denied — enable it in System Settings"],
     "quick.chipHelp": ["zh": "以「%@：」为前缀发送给所有 AI", "en": "Send to all AIs with “%@: ” prepended"],
     "quick.pastedText": ["zh": "已粘贴长文本（%d 字）", "en": "Pasted text (%d chars)"],
+    "quick.notInDict": ["zh": "词典里没有「%@」。", "en": "“%@” isn't in your dictionaries."],
+    "quick.askAll": ["zh": "问所有 AI", "en": "Ask all AIs"],
+    "quick.googleSearch": ["zh": "在浏览器里 Google 一下", "en": "Open Google search in your browser"],
 
     // MARK: Settings — agent bridge
     "settings.section.agent": ["zh": "编程助手接入（实验）", "en": "Coding-agent access (experimental)"],
@@ -311,4 +317,6 @@ let L10nTable: [String: [String: String]] = [
     "settings.prompts.imageChips": ["zh": "图片模式标签（附加图片时显示）", "en": "Image-mode chips (shown when an image is attached)"],
     "settings.prompts.restore": ["zh": "恢复默认", "en": "Restore defaults"],
     "settings.prompts.addPlaceholder": ["zh": "添加一个提示…", "en": "Add a prompt…"],
+    "settings.prompts.add": ["zh": "添加", "en": "Add prompt"],
+    "settings.prompts.remove": ["zh": "移除", "en": "Remove"],
 ]

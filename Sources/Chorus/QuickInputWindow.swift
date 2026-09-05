@@ -301,7 +301,7 @@ struct QuickInputView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    Text("Image attached")
+                    Text(L("composer.imageAttached"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -452,7 +452,7 @@ struct QuickInputView: View {
                 // Dictionary MISS: short message + the same action footer.
                 Divider()
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("“\(word)” isn't in your dictionaries.")
+                    Text(Lf("quick.notInDict", word))
                         .font(.system(size: 14))
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 18)
@@ -721,10 +721,10 @@ struct QuickInputView: View {
     private var actionFooter: some View {
         VStack(spacing: 2) {
             Divider().padding(.horizontal, 10).padding(.bottom, 4)
-            fallbackRow(id: "ask", cap: "⌘↩", label: "Ask all AIs") {
+            fallbackRow(id: "ask", cap: "⌘↩", label: L("quick.askAll")) {
                 broadcastCurrent()
             }
-            fallbackRow(id: "google", cap: "⌘B", label: "Open Google search in your browser") {
+            fallbackRow(id: "google", cap: "⌘B", label: L("quick.googleSearch")) {
                 openGoogleSearch(prompt.trimmingCharacters(in: .whitespacesAndNewlines))
                 onDismiss()
             }

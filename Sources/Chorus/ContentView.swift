@@ -754,35 +754,18 @@ final class WebViewStore: ObservableObject {
         poll()
     }
 
-    /// Parse a leading "@name " prefix into a directed target. "@gemini 展开说说第二点" →
-    /// (["gemini"], "展开说说第二点"). Matches ON-SCREEN panels only (web + API), by display name
-    /// or key, case-insensitively. Anything that doesn't resolve is left untouched — an email
-    /// address or a stray @ must not eat the message.
+    /// Parse a leading "@name " prefix into a directed target — "@gemini 展开说说第二点" →
+    /// (["gemini"], "展开说说第二点"). Candidates are the ON-SCREEN panels (web + API); the
+    /// matching rules live in `DirectedPrompt.resolve` (pure, unit-tested).
     func resolveDirectedPrompt(_ raw: String) -> (targets: Set<String>?, text: String) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("@"), trimmed.count > 1 else { return (nil, raw) }
-        let afterAt = trimmed.dropFirst()
-        let token = afterAt.prefix { !$0.isWhitespace }
-        let rest = afterAt.dropFirst(token.count).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty, !rest.isEmpty else { return (nil, raw) }   // "@gemini" alone isn't a question
-
         let hidden = Set((UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
             .split(separator: ",").map(String.init))
-        let needle = token.lowercased()
-
-        for p in ProviderRegistry.all() where !hidden.contains(p.key) {
-            if p.name.lowercased() == needle || p.key.lowercased() == needle
-                || p.name.lowercased().hasPrefix(needle) {
-                return ([p.key], String(rest))
-            }
-        }
-        for p in APIProviderRegistry.all() where !hidden.contains(p.id) {
-            if p.name.lowercased() == needle || p.id.lowercased() == needle
-                || p.name.lowercased().hasPrefix(needle) {
-                return ([p.id], String(rest))
-            }
-        }
-        return (nil, raw)
+        let candidates =
+            ProviderRegistry.all().filter { !hidden.contains($0.key) }
+                .map { DirectedPrompt.Candidate(id: $0.key, name: $0.name) }
+            + APIProviderRegistry.all().filter { !hidden.contains($0.id) }
+                .map { DirectedPrompt.Candidate(id: $0.id, name: $0.name) }
+        return DirectedPrompt.resolve(raw, candidates: candidates)
     }
 
     /// Record/clear a panel's load failure (called from the navigation delegate).
@@ -881,6 +864,18 @@ final class WebViewStore: ObservableObject {
         }
         removeWebView(key: key)
         clog("hidden panel torn down — \(key) (recreated on re-show)")
+    }
+
+    /// Schedule a hidden panel's teardown after a grace period, skipping it if the panel has
+    /// been shown again by then. EVERY path that hides a web panel must go through here: the
+    /// layout picker once bypassed it and left up to five invisible pages running full tilt
+    /// (all WebKit power saving is off for the notification fix, so hidden ≠ idle).
+    func scheduleTeardownIfStillHidden(key: String, grace: TimeInterval = 60) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
+            let stillHidden = (UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
+                .split(separator: ",").map(String.init).contains(key)
+            if stillHidden { self?.destroyHiddenPanel(key: key) }
+        }
     }
 }
 
@@ -1158,11 +1153,7 @@ struct ContentView: View {
             // Energy: tear down the hidden panel's webview after a grace period (a quick
             // hide→show toggle inside the window costs nothing; past it, re-show reloads and
             // restores the recorded conversation).
-            DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-                let stillHidden = (UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
-                    .split(separator: ",").map(String.init).contains(key)
-                if stillHidden { WebViewStore.shared.destroyHiddenPanel(key: key) }
-            }
+            store.scheduleTeardownIfStillHidden(key: key)
         }
     }
 
@@ -1804,6 +1795,10 @@ struct ContentView: View {
         let all = webKeys + apiKeys
         let keep = Set(all.prefix(count))
         let hidden = all.filter { !keep.contains($0) }
+        // Web panels this preset hides that were showing until now. They need the same deferred
+        // teardown the ✕ button schedules — this path used to skip it, leaving every panel the
+        // picker hid running invisibly at full tilt.
+        let newlyHiddenWeb = hidden.filter { webKeys.contains($0) && !hiddenKeys.contains($0) }
 
         // Widening/adding panels makes WebKit repaint the newly exposed area white; raise the
         // cream cover across the change like the hide/show reflow does.
@@ -1811,6 +1806,7 @@ struct ContentView: View {
         panelColumns = columns
         DispatchQueue.main.async {
             hiddenProvidersRaw = hidden.sorted().joined(separator: ",")
+            for key in newlyHiddenWeb { store.scheduleTeardownIfStillHidden(key: key) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { reflowing = false }
         }
     }
@@ -1843,7 +1839,7 @@ struct ContentView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("汇总各家回答：把所有 AI 的回答交给一个模型综合对比")
+        .help(L("summary.help"))
     }
 
     /// Global actions tucked into the composer's left edge (ChatGPT-style). Keeps the title
@@ -1861,11 +1857,11 @@ struct ContentView: View {
 
             Button {
                 generateShareCard()
-            } label: { Label("生成分享卡片", systemImage: "photo") }
+            } label: { Label(L("menu.shareCard"), systemImage: "photo") }
 
             Button {
                 showStats = true
-            } label: { Label("胜率统计", systemImage: "chart.bar") }
+            } label: { Label(L("stats.title"), systemImage: "chart.bar") }
 
             Divider()
 
