@@ -58,7 +58,14 @@ echo "==> Regenerating appcast (EdDSA signatures from login Keychain)..."
 "$SPARKLE_BIN/generate_appcast" --download-url-prefix "$DOWNLOAD_PREFIX" "$RELEASES" > /dev/null
 echo "    $RELEASES/appcast.xml"
 
-echo "==> Tagging v$VERSION..."
+# Commit the version bump + regenerated appcast BEFORE tagging. Tagging first (as this script
+# used to) pointed every vX.Y.Z tag at the commit *preceding* the bump — the tagged tree never
+# matched the shipped build.
+echo "==> Committing the release and tagging v$VERSION..."
+git add scripts/Info.plist releases/appcast.xml
+if ! git diff --cached --quiet; then
+    git commit -q -m "Release $VERSION"
+fi
 git tag -f "v$VERSION" >/dev/null 2>&1 || true
 
 if [ -d "$(dirname "$SITE_CHORUS_DIR")" ]; then
@@ -138,4 +145,4 @@ fi
 
 echo ""
 echo "✓ Release $VERSION ready."
-echo "  提交版本号变更: git add scripts/Info.plist releases/appcast.xml && git commit -m 'Release $VERSION'"
+echo "  版本号与 appcast 已提交并打上 v$VERSION，记得: git push && git push --tags"
