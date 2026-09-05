@@ -143,6 +143,7 @@ private let helpTextZH = """
 func isLikelyDictionaryQuery(_ s: String) -> Bool {
     let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return false }
+    if trimmed.hasPrefix("@") { return false }   // an @-mention being typed is never a word lookup
     // Must be a single token — no whitespace inside
     if trimmed.contains(where: { $0.isWhitespace }) { return false }
     // Reject sentence punctuation / slashes (commands)

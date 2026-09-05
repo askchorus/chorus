@@ -264,6 +264,14 @@ struct QuickInputView: View {
     @State private var commandUpdateTask: Task<Void, Never>? = nil  // debounces lookups so fast typing/deleting stays smooth
     @FocusState private var focused: Bool
 
+    // @-mention: the picked "only this AI" chip, the picker's rows while "@…" is being typed,
+    // and the previous text (macOS 13's onChange has no old-value form) for the space-to-chip
+    // conversion. Mirrors the main composer; see DirectedPrompt.
+    @State private var directedTarget: DirectedPrompt.Target? = nil
+    @State private var pickerOptions: [DirectedPrompt.Target] = []
+    @State private var pickerIndex: Int = 0
+    @State private var lastPrompt: String = ""
+
     // User-customizable quick-prompt chips (edited in Settings → Quick Prompts).
     @AppStorage("customTextChips") private var textChipsRaw: String = kDefaultChipPrompts.joined(separator: "\n")
     @AppStorage("customImageChips") private var imageChipsRaw: String = kImageChipPrompts.joined(separator: "\n")
@@ -336,8 +344,13 @@ struct QuickInputView: View {
                     .foregroundColor(.secondary)
                     .padding(.top, 3)
 
+                if let t = directedTarget {
+                    DirectedChip(target: t) { directedTarget = nil }
+                        .padding(.top, 2)
+                }
+
                 TextField(
-                    minimalMode ? "" : L("quick.placeholder"),
+                    quickPlaceholder,
                     text: $prompt,
                     axis: .vertical
                 )
@@ -397,7 +410,7 @@ struct QuickInputView: View {
             // Chips show whenever there's text or an image — INCLUDING during a dictionary
             // hit. Looking a word up and wanting the AIs to expand on it ("解释一下 …") is a
             // natural combo, so the two shouldn't be mutually exclusive.
-            if !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil {
+            if !pickerVisible && (!prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImage != nil) {
                 // Fallbacks are resolved against the CURRENT input so the suggested prefix
                 // matches the language of what's being asked (see defaultChipPrompts).
                 let chips = attachedImage != nil
@@ -435,6 +448,16 @@ struct QuickInputView: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 10)
+            }
+
+            // @-mention list — drops out below the field while "@…" is being typed. The panel
+            // grows to fit it exactly like it does for a dictionary hit.
+            if pickerVisible {
+                Divider()
+                MentionPicker(options: pickerOptions, selected: $pickerIndex,
+                              favicons: store.favicons) { acceptMention($0) }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
             }
 
             // Result area — only shown when a command produced output.
@@ -507,7 +530,8 @@ struct QuickInputView: View {
         .onPreferenceChange(ContentSizeKey.self) { size in
             onSizeChange(size)
         }
-        .onChange(of: prompt) { _ in
+        .onChange(of: prompt) { new in
+            handlePromptChange(new)
             // Debounce: don't run the dictionary lookup on every keystroke (it stutters fast
             // typing / deleting and the IME commit). Wait ~150ms after the last change.
             commandUpdateTask?.cancel()
@@ -543,7 +567,7 @@ struct QuickInputView: View {
     /// made it look like you "couldn't delete" pasted text). Image takes priority over text.
     private func loadClipboardIfEnabled() {
         // Never overwrite existing content — preserve the user's draft across hide/re-summon.
-        guard prompt.isEmpty, attachedImage == nil, pastedText == nil else { return }
+        guard prompt.isEmpty, attachedImage == nil, pastedText == nil, directedTarget == nil else { return }
         let enabled = UserDefaults.standard.object(forKey: "autoPasteOnSummon") as? Bool ?? true
         guard enabled else { return }
         let pb = NSPasteboard.general
@@ -558,6 +582,11 @@ struct QuickInputView: View {
 
     private func submit() {
         dictator.stop()  // end any in-progress dictation before acting on the prompt
+        // Enter while the mention picker is up picks the highlighted row; it never sends "@ge".
+        if pickerVisible {
+            acceptHighlightedMention()
+            return
+        }
         switch CommandRouter.route(prompt) {
         case .help:
             commandResult = nil
@@ -576,7 +605,7 @@ struct QuickInputView: View {
             let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             let text = composedBroadcastText()
             guard !text.isEmpty || attachedImage != nil else { return }
-            let directed = store.resolveDirectedPrompt(text)
+            let directed = directedRouting(for: text)
             store.broadcast(text: directed.text, images: attachedImage.map { [$0] } ?? [],
                             source: .quickInput, targets: directed.targets)
             if !typed.isEmpty { PromptHistory.add(typed) }   // recall only the typed part, not pasted blobs
@@ -586,8 +615,60 @@ struct QuickInputView: View {
             pastedText = nil
             commandResult = nil
             aiFallbackWord = nil
+            directedTarget = nil
             onSubmitCompleted()
         }
+    }
+
+    // MARK: @-mention picker + chip (mirrors the main composer)
+
+    private var pickerVisible: Bool { DirectedPrompt.pendingMention(in: prompt) != nil }
+
+    private var quickPlaceholder: String {
+        if minimalMode { return "" }
+        if let t = directedTarget { return Lf("quick.placeholderDirected", t.name) }
+        return L("quick.placeholder")
+    }
+
+    /// The chip wins when present; otherwise "@name question" typed straight through resolves.
+    private func directedRouting(for text: String) -> (targets: Set<String>?, text: String) {
+        if let t = directedTarget { return (t.ids, text) }
+        return store.resolveDirectedPrompt(text)
+    }
+
+    /// Keep the picker in step with the text, and turn "@name " typed straight through into the
+    /// chip the moment the space lands.
+    private func handlePromptChange(_ new: String) {
+        if let token = DirectedPrompt.completedMention(previous: lastPrompt, current: new),
+           let t = DirectedPrompt.target(for: token, in: store.directedCandidates()) {
+            acceptMention(t)
+            return
+        }
+        lastPrompt = new
+        if let q = DirectedPrompt.pendingMention(in: new) {
+            let opts = DirectedPrompt.options(store.directedCandidates(), query: q)
+            if opts != pickerOptions { pickerIndex = 0 }
+            pickerOptions = opts
+        } else {
+            pickerOptions = []
+        }
+    }
+
+    private func acceptMention(_ t: DirectedPrompt.Target) {
+        directedTarget = t
+        prompt = ""
+        lastPrompt = ""
+        pickerOptions = []
+        pickerIndex = 0
+        // Leave any dictionary state behind — the box is now a question for one AI.
+        commandResult = nil
+        isAutoDictionary = false
+        aiFallbackWord = nil
+    }
+
+    private func acceptHighlightedMention() {
+        guard !pickerOptions.isEmpty else { return }
+        acceptMention(pickerOptions[min(pickerIndex, pickerOptions.count - 1)])
     }
 
     /// The text to broadcast: the typed prompt plus any large pasted-text attachment (kept out of
@@ -605,9 +686,9 @@ struct QuickInputView: View {
         let typed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = composedBroadcastText()
         guard !text.isEmpty || attachedImage != nil else { return }
-        let directed = store.resolveDirectedPrompt(text)
-            store.broadcast(text: directed.text, images: attachedImage.map { [$0] } ?? [],
-                            source: .quickInput, targets: directed.targets)
+        let directed = directedRouting(for: text)
+        store.broadcast(text: directed.text, images: attachedImage.map { [$0] } ?? [],
+                        source: .quickInput, targets: directed.targets)
         if !typed.isEmpty { PromptHistory.add(typed) }
         historyIndex = nil
         prompt = ""
@@ -616,6 +697,7 @@ struct QuickInputView: View {
         commandResult = nil
         aiFallbackWord = nil
         isAutoDictionary = false
+        directedTarget = nil
         onSubmitCompleted()
     }
 
@@ -852,6 +934,25 @@ struct QuickInputView: View {
             let composing = ((kw?.firstResponder as? NSTextInputClient)?.hasMarkedText() == true)
                 || ((kw?.fieldEditor(false, for: nil) as? NSTextView)?.hasMarkedText() == true)
             if composing { return event }
+
+            // The @-mention picker owns ↑↓ / ↩ / ⇥ / ⎋ while it is showing.
+            if DirectedPrompt.pendingMention(in: prompt) != nil {
+                switch event.keyCode {
+                case 126: Task { @MainActor in pickerIndex = max(0, pickerIndex - 1) }; return nil
+                case 125: Task { @MainActor in pickerIndex = min(max(0, pickerOptions.count - 1), pickerIndex + 1) }; return nil
+                case UInt16(kVK_Return), UInt16(kVK_Tab):
+                    Task { @MainActor in acceptHighlightedMention() }; return nil
+                case UInt16(kVK_Escape):
+                    Task { @MainActor in prompt = "" }; return nil   // drop the half-typed mention, keep the panel
+                default: break
+                }
+            }
+            // Backspace with a mention chip and nothing typed → remove the chip (same rule as
+            // an attached image below).
+            if event.keyCode == UInt16(kVK_Delete), prompt.isEmpty, directedTarget != nil {
+                Task { @MainActor in directedTarget = nil }
+                return nil
+            }
 
             // Prompt history recall: ↑ at text start, ↓ at text end (otherwise move the caret).
             if event.keyCode == 126 {  // up arrow → older

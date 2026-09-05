@@ -5,16 +5,18 @@ final class DirectedPromptTests: XCTestCase {
     /// A typical on-screen set: three built-ins plus a web DeepSeek AND an API DeepSeek that
     /// share a display name (the case that makes exact-match multi-target necessary).
     private let panels: [DirectedPrompt.Candidate] = [
-        .init(id: "chatgpt", name: "ChatGPT"),
-        .init(id: "claude", name: "Claude"),
-        .init(id: "gemini", name: "Gemini"),
-        .init(id: "x_chat_deepseek_com", name: "DeepSeek"),
+        .init(id: "chatgpt", name: "ChatGPT", host: "chatgpt.com"),
+        .init(id: "claude", name: "Claude", host: "claude.ai"),
+        .init(id: "gemini", name: "Gemini", host: "gemini.google.com"),
+        .init(id: "x_chat_deepseek_com", name: "DeepSeek", host: "chat.deepseek.com"),
         .init(id: "api_deepseek", name: "DeepSeek"),
     ]
 
     private func resolve(_ s: String) -> (targets: Set<String>?, text: String) {
         DirectedPrompt.resolve(s, candidates: panels)
     }
+
+    // MARK: resolve — "@name question" typed straight through
 
     func testExactNameTargetsThatPanelAndStripsTheMention() {
         let r = resolve("@gemini 展开说说第二点")
@@ -76,5 +78,46 @@ final class DirectedPromptTests: XCTestCase {
         let onScreen = panels.filter { $0.id != "gemini" }
         let r = DirectedPrompt.resolve("@gemini 在吗", candidates: onScreen)
         XCTAssertNil(r.targets)
+    }
+
+    // MARK: options — what the picker lists
+
+    func testOptionsGroupSameNamedPanelsIntoOneRowInDisplayOrder() {
+        let all = DirectedPrompt.options(panels)
+        XCTAssertEqual(all.map(\.name), ["ChatGPT", "Claude", "Gemini", "DeepSeek"])
+        XCTAssertEqual(all.last?.ids, ["x_chat_deepseek_com", "api_deepseek"])
+        XCTAssertEqual(all.last?.key, "x_chat_deepseek_com")   // first seen supplies favicon/accent
+    }
+
+    func testOptionsFilterByPrefixCaseInsensitively() {
+        XCTAssertEqual(DirectedPrompt.options(panels, query: "C").map(\.name), ["ChatGPT", "Claude"])
+        XCTAssertEqual(DirectedPrompt.options(panels, query: "gem").map(\.name), ["Gemini"])
+        XCTAssertTrue(DirectedPrompt.options(panels, query: "zzz").isEmpty)
+    }
+
+    func testTargetForTokenMirrorsResolveRules() {
+        XCTAssertEqual(DirectedPrompt.target(for: "gem", in: panels)?.ids, ["gemini"])
+        XCTAssertNil(DirectedPrompt.target(for: "c", in: panels))
+        XCTAssertEqual(DirectedPrompt.target(for: "DEEPSEEK", in: panels)?.ids, ["x_chat_deepseek_com", "api_deepseek"])
+        XCTAssertNil(DirectedPrompt.target(for: "", in: panels))
+    }
+
+    // MARK: pending / completed — what drives the picker and the auto-chip
+
+    func testPendingMentionOnlyWhileTheTokenIsStillBeingTyped() {
+        XCTAssertEqual(DirectedPrompt.pendingMention(in: "@"), "")
+        XCTAssertEqual(DirectedPrompt.pendingMention(in: "@gem"), "gem")
+        XCTAssertEqual(DirectedPrompt.pendingMention(in: "  @gem"), "gem")
+        XCTAssertNil(DirectedPrompt.pendingMention(in: "@gemini "))
+        XCTAssertNil(DirectedPrompt.pendingMention(in: "hello @gem"))
+        XCTAssertNil(DirectedPrompt.pendingMention(in: "mail@example.com"))
+        XCTAssertNil(DirectedPrompt.pendingMention(in: "@" + String(repeating: "x", count: 31)))
+    }
+
+    func testCompletedMentionFiresOnTheSpaceRightAfterTheToken() {
+        XCTAssertEqual(DirectedPrompt.completedMention(previous: "@gemini", current: "@gemini "), "gemini")
+        XCTAssertNil(DirectedPrompt.completedMention(previous: "@gemini", current: "@gemini x"))
+        XCTAssertNil(DirectedPrompt.completedMention(previous: "@", current: "@ "))   // a bare "@" is nothing
+        XCTAssertNil(DirectedPrompt.completedMention(previous: "hi", current: "hi "))
     }
 }

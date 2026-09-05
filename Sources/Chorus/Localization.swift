@@ -146,6 +146,13 @@ let L10nTable: [String: [String: String]] = [
     "quick.notInDict": ["zh": "词典里没有「%@」。", "en": "“%@” isn't in your dictionaries."],
     "quick.askAll": ["zh": "问所有 AI", "en": "Ask all AIs"],
     "quick.googleSearch": ["zh": "在浏览器里 Google 一下", "en": "Open Google search in your browser"],
+    "quick.placeholderDirected": ["zh": "问 %@…", "en": "Ask %@…"],
+
+    // MARK: @-mention picker + chip (both composers)
+    "mention.chip": ["zh": "只问 %@", "en": "Only %@"],
+    "mention.chipRemove": ["zh": "取消，恢复问所有 AI", "en": "Remove — back to asking every AI"],
+    "mention.noMatch": ["zh": "没有叫这个名字的 AI", "en": "No AI by that name"],
+    "composer.placeholderDirected": ["zh": "问 %@…    ⌘↩ 发送", "en": "Ask %@…    ⌘↩ send"],
 
     // MARK: Settings — agent bridge
     "settings.section.agent": ["zh": "编程助手接入（实验）", "en": "Coding-agent access (experimental)"],

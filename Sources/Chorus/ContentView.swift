@@ -754,18 +754,25 @@ final class WebViewStore: ObservableObject {
         poll()
     }
 
-    /// Parse a leading "@name " prefix into a directed target — "@gemini 展开说说第二点" →
-    /// (["gemini"], "展开说说第二点"). Candidates are the ON-SCREEN panels (web + API); the
-    /// matching rules live in `DirectedPrompt.resolve` (pure, unit-tested).
-    func resolveDirectedPrompt(_ raw: String) -> (targets: Set<String>?, text: String) {
+    /// The ON-SCREEN panels as @-mention candidates: web panels in the user's display order,
+    /// then API panels. Hidden panels are excluded so a mention can never wake one.
+    func directedCandidates() -> [DirectedPrompt.Candidate] {
         let hidden = Set((UserDefaults.standard.string(forKey: "hiddenProviders") ?? "")
             .split(separator: ",").map(String.init))
-        let candidates =
-            ProviderRegistry.all().filter { !hidden.contains($0.key) }
-                .map { DirectedPrompt.Candidate(id: $0.key, name: $0.name) }
+        let order = (UserDefaults.standard.string(forKey: "providerOrder") ?? "")
+            .split(separator: ",").map(String.init)
+        let all = ProviderRegistry.all()
+        let web = order.compactMap { k in all.first { $0.key == k } } + all.filter { !order.contains($0.key) }
+        return web.filter { !hidden.contains($0.key) }
+                .map { DirectedPrompt.Candidate(id: $0.key, name: $0.name, host: $0.url.host ?? "") }
             + APIProviderRegistry.all().filter { !hidden.contains($0.id) }
                 .map { DirectedPrompt.Candidate(id: $0.id, name: $0.name) }
-        return DirectedPrompt.resolve(raw, candidates: candidates)
+    }
+
+    /// Parse a leading "@name " prefix into a directed target — "@gemini 展开说说第二点" →
+    /// (["gemini"], "展开说说第二点"). The matching rules live in `DirectedPrompt` (pure, tested).
+    func resolveDirectedPrompt(_ raw: String) -> (targets: Set<String>?, text: String) {
+        DirectedPrompt.resolve(raw, candidates: directedCandidates())
     }
 
     /// Record/clear a panel's load failure (called from the navigation delegate).
@@ -1058,6 +1065,14 @@ struct ContentView: View {
     // Prompt history (↑/↓ recall) browsing state.
     @State private var historyIndex: Int? = nil
     @State private var historyDraft: String = ""
+
+    // @-mention: the picked "only this AI" chip, the picker's rows while "@…" is being typed,
+    // and the previous text (macOS 13's onChange has no old-value form) for the space-to-chip
+    // conversion. See DirectedPrompt.
+    @State private var directedTarget: DirectedPrompt.Target? = nil
+    @State private var pickerOptions: [DirectedPrompt.Target] = []
+    @State private var pickerIndex: Int = 0
+    @State private var lastPrompt: String = ""
 
     private var orderedProviders: [Provider] {
         let storedKeys = providerOrderRaw.split(separator: ",").map(String.init)
@@ -1638,11 +1653,21 @@ struct ContentView: View {
             if !attachedImages.isEmpty {
                 imagePreviewRow()
             }
+            // The @-mention list sits ABOVE the field — the composer lives at the bottom of the
+            // window, so the list opens upward like a menu that has room to grow.
+            if pickerVisible {
+                MentionPicker(options: pickerOptions, selected: $pickerIndex,
+                              favicons: store.favicons) { acceptMention($0) }
+            }
 
             HStack(alignment: .center, spacing: 10) {
                 composerMenu
                 summarizeButton
                 layoutButton
+
+                if let t = directedTarget {
+                    DirectedChip(target: t) { directedTarget = nil }
+                }
 
                 // Vertical-axis TextField re-measures the WHOLE text on every keystroke — fine for
                 // normal prompts, but typing after pasting a long article lagged badly. Above a
@@ -1656,8 +1681,7 @@ struct ContentView: View {
                         .focused($promptFocused)
                         .onAppear { if !promptFocused { promptFocused = true } }
                 } else {
-                    TextField(minimalMode ? "" : L("composer.placeholder"),
-                              text: $prompt, axis: .vertical)
+                    TextField(composerPlaceholder, text: $prompt, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .focused($promptFocused)
@@ -1719,6 +1743,7 @@ struct ContentView: View {
         .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
                 radius: ChorusTheme.cardShadow(colorScheme).radius,
                 x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
+        .onChange(of: prompt) { handlePromptChange($0) }
         .onAppear {
             promptFocused = true
             installPasteMonitor()
@@ -1726,6 +1751,47 @@ struct ContentView: View {
         .onDisappear {
             removePasteMonitor()
         }
+    }
+
+    // MARK: @-mention picker + chip
+
+    private var pickerVisible: Bool { DirectedPrompt.pendingMention(in: prompt) != nil }
+
+    private var composerPlaceholder: String {
+        if minimalMode { return "" }
+        if let t = directedTarget { return Lf("composer.placeholderDirected", t.name) }
+        return L("composer.placeholder")
+    }
+
+    /// Keep the picker in step with the text, and turn "@name " typed straight through into the
+    /// chip the moment the space lands (the picker is for discovery; fast typists never open it).
+    private func handlePromptChange(_ new: String) {
+        if let token = DirectedPrompt.completedMention(previous: lastPrompt, current: new),
+           let t = DirectedPrompt.target(for: token, in: store.directedCandidates()) {
+            acceptMention(t)
+            return
+        }
+        lastPrompt = new
+        if let q = DirectedPrompt.pendingMention(in: new) {
+            let opts = DirectedPrompt.options(store.directedCandidates(), query: q)
+            if opts != pickerOptions { pickerIndex = 0 }
+            pickerOptions = opts
+        } else {
+            pickerOptions = []
+        }
+    }
+
+    private func acceptMention(_ t: DirectedPrompt.Target) {
+        directedTarget = t
+        prompt = ""
+        lastPrompt = ""
+        pickerOptions = []
+        pickerIndex = 0
+    }
+
+    private func acceptHighlightedMention() {
+        guard !pickerOptions.isEmpty else { return }
+        acceptMention(pickerOptions[min(pickerIndex, pickerOptions.count - 1)])
     }
 
     /// How many AIs to show at once, ChatHub-style: one click goes from three panels to six,
@@ -1971,6 +2037,26 @@ struct ContentView: View {
             // Only act when our prompt field has focus
             guard promptFocused else { return event }
 
+            // The @-mention picker owns ↑↓ / ↩ / ⇥ / ⎋ while it is showing — unless an input
+            // method is mid-composition, which must keep its keys (arrows move candidates,
+            // Enter commits).
+            let composing = (NSApp.keyWindow?.firstResponder as? NSTextInputClient)?.hasMarkedText() == true
+            if !composing, DirectedPrompt.pendingMention(in: prompt) != nil {
+                switch event.keyCode {
+                case 126: Task { @MainActor in self.pickerIndex = max(0, self.pickerIndex - 1) }; return nil
+                case 125: Task { @MainActor in self.pickerIndex = min(max(0, self.pickerOptions.count - 1), self.pickerIndex + 1) }; return nil
+                case 36, 48: Task { @MainActor in self.acceptHighlightedMention() }; return nil   // ↩ / ⇥
+                case 53: Task { @MainActor in self.prompt = "" }; return nil                      // ⎋ drops the half-typed mention
+                default: break
+                }
+            }
+            // Backspace with a mention chip and nothing typed → remove the chip (same rule the
+            // quick input applies to an attached image).
+            if event.keyCode == 51, prompt.isEmpty, directedTarget != nil {
+                Task { @MainActor in self.directedTarget = nil }
+                return nil
+            }
+
             // Prompt history recall: ↑ at text start, ↓ at text end (otherwise move the caret).
             if event.keyCode == 126 {  // up arrow → older
                 guard caretAtTextStart(),
@@ -2042,14 +2128,21 @@ struct ContentView: View {
     private func send() {
         dictator.stop()  // end any in-progress dictation
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        // ⌘↩ while the mention picker is up means "pick this one", not "send '@ge' to everyone".
+        if DirectedPrompt.pendingMention(in: text) != nil, !pickerOptions.isEmpty {
+            acceptHighlightedMention()
+            return
+        }
         guard canSend else { return }
-        let directed = store.resolveDirectedPrompt(text)
+        let directed: (targets: Set<String>?, text: String)
+        if let t = directedTarget { directed = (t.ids, text) } else { directed = store.resolveDirectedPrompt(text) }
         store.broadcast(text: directed.text, images: attachedImages.map(\.image), source: .mainWindow,
                         targets: directed.targets)
         PromptHistory.add(text)
         historyIndex = nil
         prompt = ""
         attachedImages = []
+        directedTarget = nil
     }
 }
 
