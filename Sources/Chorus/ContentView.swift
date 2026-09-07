@@ -996,9 +996,12 @@ struct ContentView: View {
     private func runSummary(provider: APIProvider, blocks: [(name: String, text: String)]) {
         let q = store.lastBroadcast.trimmingCharacters(in: .whitespacesAndNewlines)
         let joined = blocks.map { "【\($0.name)】\n\($0.text)" }.joined(separator: "\n\n———\n\n")
-        // The instruction goes to the summarizer MODEL, so it must follow the UI language —
-        // an English user handed a Chinese prompt gets a Chinese summary of English answers.
-        let prompt = currentLang() == "en"
+        // The summary is a reply to the QUESTION, so its language follows the question — not the
+        // UI. An English-UI user who asked in Chinese and got Chinese answers wants a Chinese
+        // summary (the quick-prompt chips follow the same rule). With no question to judge by
+        // (rare), the answers decide; with nothing at all, the UI language does.
+        let sample = q.isEmpty ? String(blocks.map(\.text).joined(separator: " ").prefix(2000)) : q
+        let prompt = !chipsAreChinese(for: sample)
             ? """
         Below are \(blocks.count) AI answers to \(q.isEmpty ? "the same question" : "the question “\(q)”"). Compare them in English and give me:
         1. Consensus — what they all agree on
