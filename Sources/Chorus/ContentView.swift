@@ -393,8 +393,16 @@ final class WebViewStore: ObservableObject {
         LinkRoutingDelegate.shared.pendingUploads = tmps
         chorusLog.notice("[Chorus.Gemini] armed pendingUploads=\(tmps.count)")
 
-        // Bring Chorus forward — some user-activation-gated paths only fire for the active app.
-        NSApp.activate(ignoringOtherApps: true)
+        // Gemini's file picker may only fire for the ACTIVE app, so this used to pull Chorus to
+        // the front unconditionally — overriding "don't switch to Chorus after a quick-input
+        // send". Now the setting is honoured: try in the background first, and if the picker has
+        // not consumed the armed files shortly after the menu was driven, fall back to activating
+        // and driving it once more. Worst case equals the old behaviour a few seconds later (the
+        // send script waits up to 20 s for the thumbnail, so the retry still lands).
+        let staysInBackground = !NSApp.isActive
+            && !(UserDefaults.standard.object(forKey: "foregroundMainOnSend") as? Bool ?? true)
+        if !staysInBackground { NSApp.activate(ignoringOtherApps: true) }
+        chorusLog.notice("[Chorus.Gemini] upload starting \(staysInBackground ? "in the background" : "with Chorus active", privacy: .public)")
 
         // Delay so ChatGPT/Claude finish their synthetic paste before we churn Gemini's UI.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
@@ -404,6 +412,19 @@ final class WebViewStore: ObservableObject {
                 // only need a short gap before kicking it off — it does the waiting internally.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     webView.evaluateJavaScript(js) { _, _ in }
+                }
+                guard staysInBackground else { return }
+                // Sequenced AFTER the first menu drive has finished, so the two can't fight.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    guard LinkRoutingDelegate.shared.pendingUploads == tmps else {
+                        chorusLog.notice("[Chorus.Gemini] picker fired in the background — no activation needed")
+                        return
+                    }
+                    chorusLog.notice("[Chorus.Gemini] picker did not fire in the background — activating and retrying")
+                    NSApp.activate(ignoringOtherApps: true)
+                    webView.evaluateJavaScript(Broadcaster.geminiUploadTriggerScript()) { retry, _ in
+                        chorusLog.notice("[Chorus.Gemini] retry trigger result=\(String(describing: retry), privacy: .public)")
+                    }
                 }
             }
         }
