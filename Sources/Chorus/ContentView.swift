@@ -390,15 +390,12 @@ final class WebViewStore: ObservableObject {
         }
 
         // Arm the open-panel auto-answer (single-shot, consumed by runOpenPanel — returns ALL N).
-        LinkRoutingDelegate.shared.pendingUploads = tmps
+        LinkRoutingDelegate.shared.armGeminiUploads(tmps)
         chorusLog.notice("[Chorus.Gemini] armed pendingUploads=\(tmps.count)")
 
-        // Gemini's file picker may only fire for the ACTIVE app, so this used to pull Chorus to
-        // the front unconditionally — overriding "don't switch to Chorus after a quick-input
-        // send". Now the setting is honoured: try in the background first, and if the picker has
-        // not consumed the armed files shortly after the menu was driven, fall back to activating
-        // and driving it once more. Worst case equals the old behaviour a few seconds later (the
-        // send script waits up to 20 s for the thumbnail, so the retry still lands).
+        // Honour "don't switch to Chorus after a quick-input send": the upload path no longer
+        // needs the app in front (verified with the panels in the hidden keeper window and with
+        // the main window key). Activation stays as a last-resort retry below.
         let staysInBackground = !NSApp.isActive
             && !(UserDefaults.standard.object(forKey: "foregroundMainOnSend") as? Bool ?? true)
         if !staysInBackground { NSApp.activate(ignoringOtherApps: true) }
@@ -412,16 +409,19 @@ final class WebViewStore: ObservableObject {
                 webView.evaluateJavaScript(js) { _, _ in }
             }
             self.driveGeminiUpload(in: webView, armed: tmps) { fired in
-                guard !fired, staysInBackground else { return }
+                guard !fired, staysInBackground else {
+                    LinkRoutingDelegate.shared.finishGeminiUploads()
+                    return
+                }
                 chorusLog.notice("[Chorus.Gemini] picker did not fire in the background — activating and retrying")
                 NSApp.activate(ignoringOtherApps: true)
-                self.driveGeminiUpload(in: webView, armed: tmps) { _ in }
+                self.driveGeminiUpload(in: webView, armed: tmps) { _ in LinkRoutingDelegate.shared.finishGeminiUploads() }
             }
         }
 
-        // Safety: if the menu nav never triggers the panel, don't leave a stale armed upload
-        // that would hijack the user's next manual file pick. Clear it after 10s.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+        // Safety: never leave an armed upload behind to hijack the user's next manual file pick.
+        // Longer than the whole drive (hidden selector ≤3 s, native fallback ≤~9 s, one retry).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
             if LinkRoutingDelegate.shared.pendingUploads == tmps {
                 LinkRoutingDelegate.shared.pendingUploads = []
                 chorusLog.notice("[Chorus.Gemini] cleared stale pendingUploads (panel never fired)")
@@ -436,17 +436,54 @@ final class WebViewStore: ObservableObject {
         }
     }
 
-    /// Open Gemini's upload menu, find the "Files" tile, and click it so its lazy
-    /// <input type=file> fires and WebKit calls runOpenPanel (answered with the armed files).
+    /// Get Gemini's file picker open so runOpenPanel can hand it the armed files.
     ///
-    /// The tile is clicked with a NATIVE mouse event first: a page can tell a synthetic click
-    /// (isTrusted=false, no user activation) from a real one and ignore it, and Gemini stopped
-    /// reacting to the synthetic one (the menu opened, "Files" was clicked, no picker). A native
-    /// event delivered to the WKWebView is a genuine user gesture as far as the page can see.
-    /// If that doesn't consume the armed files, the old synthetic click is tried as a fallback.
-    /// `done(true)` once the picker has taken the files.
+    /// Gemini's "Files" tile doesn't open the file input itself: its handler clicks a hidden
+    /// button (`hidden-local-file-image-selector-button`, present only while the upload menu is
+    /// open) whose handler calls input.click() — and WebKit opens a file chooser only under a
+    /// user gesture, which gets lost on the way. Observed with the main window on screen: a
+    /// trusted native click on the tile reached the page (pointerdown…click, all isTrusted),
+    /// Gemini clicked the hidden button, and no picker ever came; a synthetic tile click could
+    /// open the picker, yet the image never reached the composer. It only worked while the panels
+    /// sat in the hidden keeper window — which is why the first native-click fix passed its
+    /// probes and still failed from the quick input, where the main window is brought forward.
+    ///
+    /// So: open the menu, then click the hidden button from its own synchronous
+    /// evaluateJavaScript, which carries a user gesture. Verified with the main window key and
+    /// the app active: picker in ~20–55 ms, image in the composer, menu closes by itself. If
+    /// Gemini renames that button, fall back to a native click on the tile. No synthetic tile
+    /// click any more — it consumed the file without attaching it. `done(true)` once the picker
+    /// has taken the files.
     private func driveGeminiUpload(in webView: WKWebView, armed: [URL], done: @escaping (Bool) -> Void) {
-        let consumed = { LinkRoutingDelegate.shared.pendingUploads != armed }
+        let consumed = { LinkRoutingDelegate.shared.lastAutoSupplied == armed }
+        webView.callAsyncJavaScript(Broadcaster.geminiUploadMenuReadyBody(), arguments: [:], in: nil, in: .page) { result in
+            MainActor.assumeIsolated {
+                let info = (try? result.get()) as? [String: Any]
+                guard (info?["ready"] as? Bool) == true else {
+                    chorusLog.notice("[Chorus.Gemini] hidden file selector not available — \(String(describing: result), privacy: .public); falling back to a native click on the tile")
+                    self.nativeTileClick(in: webView, consumed: consumed, done: done)
+                    return
+                }
+                let start = Date()
+                webView.evaluateJavaScript(Broadcaster.geminiHiddenSelectorClickScript()) { clicked, _ in
+                    self.waitForConsumption(consumed, deadline: start.addingTimeInterval(3)) { ok in
+                        if ok {
+                            chorusLog.notice("[Chorus.Gemini] picker fired \(Int(Date().timeIntervalSince(start) * 1000), privacy: .public) ms after clicking the hidden file selector")
+                            done(true)
+                        } else {
+                            chorusLog.notice("[Chorus.Gemini] hidden file selector clicked=\((clicked as? Bool) ?? false, privacy: .public) but no picker — falling back to a native click on the tile")
+                            self.nativeTileClick(in: webView, consumed: consumed, done: done)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fallback: locate the "Files" tile and give it a real mouse click. Works with the panels in
+    /// the keeper window; with the main window on screen it may not (see driveGeminiUpload). On a
+    /// miss, logs every pointer/mouse event the page saw so the next change is diagnosable.
+    private func nativeTileClick(in webView: WKWebView, consumed: @escaping () -> Bool, done: @escaping (Bool) -> Void) {
         webView.callAsyncJavaScript(Broadcaster.geminiUploadLocateBody(), arguments: [:], in: nil, in: .page) { result in
             MainActor.assumeIsolated {
                 guard case .success(let value) = result, let info = value as? [String: Any],
@@ -456,24 +493,30 @@ final class WebViewStore: ObservableObject {
                     done(false)
                     return
                 }
-                chorusLog.notice("[Chorus.Gemini] tile \"\((info["label"] as? String) ?? "?", privacy: .public)\" at \(Int(x)),\(Int(y)) — native click")
+                chorusLog.notice("[Chorus.Gemini] tile \"\((info["label"] as? String) ?? "?", privacy: .public)\" at \(Int(x)),\(Int(y)) hitOnTile=\((info["hitOnTile"] as? Bool) ?? false, privacy: .public) — native click")
+                let clickedAt = Date()
                 self.nativeClick(in: webView, cssX: x, cssY: y)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    if consumed() {
-                        chorusLog.notice("[Chorus.Gemini] picker fired after the native click")
+                self.waitForConsumption(consumed, deadline: clickedAt.addingTimeInterval(4.5)) { ok in
+                    if ok {
+                        chorusLog.notice("[Chorus.Gemini] picker fired \(Int(Date().timeIntervalSince(clickedAt) * 1000), privacy: .public) ms after the native tile click")
                         done(true)
                         return
                     }
-                    chorusLog.notice("[Chorus.Gemini] native click did not open the picker — trying the synthetic click")
-                    webView.evaluateJavaScript(Broadcaster.geminiUploadTriggerScript()) { _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                            let ok = consumed()
-                            chorusLog.notice("[Chorus.Gemini] synthetic fallback — picker fired=\(ok, privacy: .public)")
-                            done(ok)
-                        }
+                    webView.evaluateJavaScript("(() => { const l = JSON.stringify(window.__chorusEvtLog || null); window.__chorusEvtLog = null; return l; })()") { log, _ in
+                        chorusLog.notice("[Chorus.Gemini] native tile click did not open the picker; events the page saw: \((log as? String) ?? "nil", privacy: .public)")
+                        done(false)
                     }
                 }
             }
+        }
+    }
+
+    /// Poll `consumed` every 100 ms until it is true or `deadline` passes.
+    private func waitForConsumption(_ consumed: @escaping () -> Bool, deadline: Date, done: @escaping (Bool) -> Void) {
+        if consumed() { done(true); return }
+        guard Date() < deadline else { done(false); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.waitForConsumption(consumed, deadline: deadline, done: done)
         }
     }
 
@@ -506,17 +549,18 @@ final class WebViewStore: ObservableObject {
               let png = rep.representation(using: .png, properties: [:]) else { return }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("chorus-probe-\(UUID().uuidString).png")
         guard (try? png.write(to: tmp)) != nil else { return }
-        LinkRoutingDelegate.shared.pendingUploads = [tmp]
-        clog("[probe] Gemini upload probe starting (window visible=\(webView.window?.isVisible ?? false), app active=\(NSApp.isActive))")
+        LinkRoutingDelegate.shared.armGeminiUploads([tmp])
+        clog("[probe] Gemini upload probe starting (window visible=\(webView.window?.isVisible ?? false), key=\(webView.window?.isKeyWindow ?? false), app active=\(NSApp.isActive))")
         driveGeminiUpload(in: webView, armed: [tmp]) { fired in
             clog("[probe] Gemini upload probe finished — picker fired=\(fired)")
+            LinkRoutingDelegate.shared.finishGeminiUploads()
             if LinkRoutingDelegate.shared.pendingUploads == [tmp] { LinkRoutingDelegate.shared.pendingUploads = [] }
             DispatchQueue.main.asyncAfter(deadline: .now() + 60) { try? FileManager.default.removeItem(at: tmp) }
             // Report what landed in the composer, then reload the panel — a reload drops unsent
             // attachments, which is the one cleanup that can't miss (Gemini's remove button is
-            // hover-only and unlabeled). The conversation URL is restored as usual.
+            // hover-only). The conversation URL is restored as usual.
             guard fired else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 self.debugRemoveGeminiAttachments(in: webView, remaining: 1)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     clog("[probe] reloading the Gemini panel to drop the probe image")

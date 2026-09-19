@@ -100,6 +100,26 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Gemini's file panel with all N files at once.
     var pendingUploads: [URL] = []
 
+    /// The files most recently handed to a page by the auto-answer — the precise "the picker took
+    /// them" signal (pendingUploads going empty is ambiguous: a safety timer also empties it).
+    private(set) var lastAutoSupplied: [URL] = []
+
+    /// While an automated Gemini upload is in flight, a SECOND file-chooser request from Gemini
+    /// (a fallback path firing after the first already succeeded) must not pop a real open
+    /// dialog in the user's face. Such requests are cancelled until this moment.
+    private var suppressGeminiDialogsUntil: Date = .distantPast
+
+    func armGeminiUploads(_ urls: [URL]) {
+        pendingUploads = urls
+        suppressGeminiDialogsUntil = Date().addingTimeInterval(40)
+    }
+
+    /// The drive is over; allow a short grace for a straggling duplicate request, then let manual
+    /// uploads in the Gemini panel show the normal dialog again.
+    func finishGeminiUploads() {
+        suppressGeminiDialogsUntil = Date().addingTimeInterval(3)
+    }
+
     /// Last auto-reload time per webview — guards against reloading in a tight crash loop.
     private var lastReloadAt: [ObjectIdentifier: Date] = [:]
 
@@ -233,8 +253,12 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
             if !self.pendingUploads.isEmpty, isGemini {
                 let pending = self.pendingUploads
                 self.pendingUploads = []  // single-shot
+                self.lastAutoSupplied = pending
                 chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) — auto-supplying \(pending.count) file(s) (no dialog)")
                 completionHandler(pending)
+            } else if isGemini, Date() < self.suppressGeminiDialogsUntil {
+                chorusLog.notice("[Chorus.OpenPanel] FIRED on \(host, privacy: .public) during an automated upload with nothing armed — cancelled instead of showing a dialog")
+                completionHandler(nil)
             } else {
                 // Either no pending upload, or a non-Gemini panel — show the real dialog and
                 // leave any armed Gemini upload intact for when Gemini's own panel fires.
@@ -1675,106 +1699,50 @@ enum Broadcaster {
         """
     }
 
-    /// Drives Gemini's "Upload & tools" → "Upload files" menu so it triggers its lazy
-    /// <input type=file>. WebKit then calls our runOpenPanel delegate, which feeds the
-    /// image silently. This script does NOT touch the file input itself — it just navigates
-    /// the menu. It also dumps the menu contents (so we can see the real item labels) and
-    /// logs each element's rect (so we can fall back to real CGEvent coordinate clicks if
-    /// synthetic clicks don't carry enough user-activation to open the picker).
-    static func geminiUploadTriggerScript() -> String {
+    /// Function BODY for `callAsyncJavaScript`: make sure Gemini's upload menu is open and its
+    /// hidden local-file selector button exists (it lives in the menu's template), opening the
+    /// menu with a synthetic click if needed — that part works fine. Returns { ready, waitedMs }
+    /// or { ready: false, why }. See WebViewStore.driveGeminiUpload for why the button matters.
+    static func geminiUploadMenuReadyBody() -> String {
         return """
         \(libScript())
-        (async () => {
-          const clog = (msg) => {
-            try { window.webkit?.messageHandlers?.chorusJSLog?.postMessage(location.hostname + ': ' + msg); } catch (_) {}
-          };
-          const deepQueryAll = window.__chorusLib.deepQueryAll;
-          const fullClick = (el) => {
-            const r = el.getBoundingClientRect();
-            const o = { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, button: 0, view: window };
-            try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (_) {}
-            el.dispatchEvent(new MouseEvent('mousedown', o));
-            try { el.dispatchEvent(new PointerEvent('pointerup', o)); } catch (_) {}
-            el.dispatchEvent(new MouseEvent('mouseup', o));
-            try { el.click(); } catch (_) {}
-          };
-          const rectOf = (el) => { const r = el.getBoundingClientRect(); return Math.round(r.x)+','+Math.round(r.y)+' '+Math.round(r.width)+'x'+Math.round(r.height); };
+        const q = window.__chorusLib.deepQueryAll;
+        const HIDDEN = ['button.hidden-local-file-image-selector-button', '[class*="hidden-local-file"]'];
+        const start = Date.now();
+        if (q(HIDDEN).length) return { ready: true, waitedMs: 0, alreadyOpen: true };
+        let btn = null;
+        for (let i = 0; i < 20 && !btn; i++) {
+          btn = q(['button[aria-label="Upload & tools"]', 'button[aria-label*="Upload" i]',
+                   'button[aria-label*="Add files" i]', 'button[aria-label*="上传" i]'])[0] || null;
+          if (!btn) await new Promise(r => setTimeout(r, 150));
+        }
+        if (!btn) return { ready: false, why: 'no upload button' };
+        btn.click();
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 150));
+          if (q(HIDDEN).length) return { ready: true, waitedMs: Date.now() - start };
+        }
+        return { ready: false, why: 'menu opened but no hidden file selector', waitedMs: Date.now() - start };
+        """
+    }
 
-          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-          const findButton = () => {
-            const b = deepQueryAll([
-              'button[aria-label="Upload & tools"]',
-              'button[aria-label*="Upload" i]',
-              'button[aria-label*="Add files" i]',
-              'button[aria-label*="上传" i]',
-            ]);
-            return b.length ? b[0] : null;
-          };
-          const findMenuItems = () => deepQueryAll([
-            '[role="menuitem"]', 'button[mat-menu-item]', '[mat-menu-item]',
-            '.mat-mdc-menu-panel button', '[role="menu"] button', '.cdk-overlay-pane button',
-            '.cdk-overlay-pane [role="menuitem"]',
-          ]);
-          // Files = upload-from-computer. EXCLUDE cloud/other sources — Gemini's menu is a
-          // grid (Files | Avatar | Drive | Photos | Notebooks); matching 'photo' once grabbed
-          // "Google Photos" (an in-page picker) instead of the local-file upload.
-          const isUploadItem = (raw) => {
-            const t = raw.toLowerCase();
-            if (t.includes('drive') || t.includes('photos') || t.includes('notebook') ||
-                t.includes('avatar') || t.includes('personal intelligence')) return false;
-            return /\\bfiles?\\b/.test(t) || t.includes('upload') ||
-                   t.includes('from computer') || t.includes('上传') ||
-                   t.includes('本地') || t.includes('文件');
-          };
-          const findUploadTile = () => {
-            for (const it of findMenuItems()) {
-              const t = ((it.textContent || '') + ' ' + (it.getAttribute('aria-label') || '')).trim();
-              if (t && isUploadItem(t)) return it;
-            }
-            return null;
-          };
-
-          // 1. Poll for the "Upload & tools" button — the composer may still be rendering
-          //    (cold start / slow machine), so don't assume it's there immediately.
-          let btn = null;
-          for (let i = 0; i < 20 && !btn; i++) { btn = findButton(); if (!btn) await sleep(150); }
-          if (!btn) { clog('geminiUpload: NO upload button after ~3s'); return 'no-btn'; }
-
-          // 2. Up to 2 attempts: click the button, then POLL (not a fixed sleep) for the
-          //    upload tile to appear, then click it. Polling absorbs menu-open latency;
-          //    the retry absorbs a missed first click / menu that opened then closed.
-          for (let attempt = 1; attempt <= 2; attempt++) {
-            clog('geminiUpload: attempt ' + attempt + ' — clicking upload btn (rect=' + rectOf(btn) + ')');
-            fullClick(btn);
-
-            let tile = null;
-            for (let i = 0; i < 27 && !tile; i++) { tile = findUploadTile(); if (!tile) await sleep(150); }
-
-            if (tile) {
-              clog('geminiUpload: clicking "' + (tile.textContent || '').trim().slice(0, 40) + '" (rect=' + rectOf(tile) + ')');
-              fullClick(tile);
-              return 'clicked-item';
-            }
-
-            // Miss — dump what's actually in the menu so a future UI change is debuggable.
-            const items = findMenuItems();
-            clog('geminiUpload: attempt ' + attempt + ' found no upload tile among ' + items.length + ' items');
-            items.slice(0, 12).forEach((it, i) => {
-              const t = ((it.textContent || '') + ' | ' + (it.getAttribute('aria-label') || '')).trim();
-              clog('  item[' + i + ']: "' + t.slice(0, 50) + '"');
-            });
-            await sleep(400);  // let any half-open menu settle before retrying
-          }
-          clog('geminiUpload: NO matching upload tile after 2 attempts');
-          return 'no-item';
+    /// Click Gemini's hidden local-file selector. Must stay SYNCHRONOUS: the click has to happen
+    /// inside evaluateJavaScript's own user gesture, or WebKit won't open the file chooser.
+    static func geminiHiddenSelectorClickScript() -> String {
+        return """
+        \(libScript())
+        (() => {
+          const b = window.__chorusLib.deepQueryAll(['button.hidden-local-file-image-selector-button', '[class*="hidden-local-file"]'])[0];
+          if (!b) return false;
+          b.click();
+          return true;
         })();
         """
     }
 
-    /// Function BODY for `callAsyncJavaScript`: opens Gemini's "Upload & tools" menu (a synthetic
-    /// click is enough for that) and returns where the local-file tile is, so the native side can
-    /// click it with a real mouse event. Same finders as `geminiUploadTriggerScript`.
+    /// Function BODY for `callAsyncJavaScript` (fallback path): opens Gemini's "Upload & tools"
+    /// menu and returns where the local-file tile is, so the native side can click it with a real
+    /// mouse event. Also arms a one-shot record of the pointer/mouse events the page sees next.
     static func geminiUploadLocateBody() -> String {
         return """
         \(libScript())
@@ -1818,8 +1786,29 @@ enum Broadcaster {
         }
         if (!tile) return { found: false, why: 'no upload tile', items: findMenuItems().slice(0, 10).map(i => labelOf(i).slice(0, 40)) };
         await sleep(250);                            // let the menu's open animation settle
+        // Record every pointer/mouse event that reaches the page next, so a native click that
+        // doesn't take can be diagnosed: did it arrive at all, where, on what, trusted or not.
+        window.__chorusEvtLog = [];
+        if (!window.__chorusEvtHooked) {
+          window.__chorusEvtHooked = true;
+          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            window.addEventListener(type, (e) => {
+              const log = window.__chorusEvtLog;
+              if (!log || log.length >= 12) return;
+              const t = e.target;
+              log.push({ type, trusted: e.isTrusted, x: Math.round(e.clientX), y: Math.round(e.clientY),
+                         target: t ? (t.tagName || '').toLowerCase() + (t.id ? '#' + t.id : '') + '.' + String(t.className || '').split(' ').slice(0, 2).join('.') : '',
+                         onTile: !!(window.__chorusTile && t && window.__chorusTile.contains(t)) });
+            }, true);
+          }
+        }
+        window.__chorusTile = tile;
         const r = tile.getBoundingClientRect();
-        return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2,
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        const hit = document.elementFromPoint(cx, cy);
+        return { found: true, x: cx, y: cy,
+                 hitOnTile: !!(hit && tile.contains(hit)),
+                 hit: hit ? (hit.tagName || '').toLowerCase() + '.' + String(hit.className || '').split(' ').slice(0, 2).join('.') : null,
                  label: labelOf(tile).slice(0, 40),
                  activation: (navigator.userActivation ? navigator.userActivation.isActive : null) };
         """

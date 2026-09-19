@@ -16,7 +16,9 @@ let scripts: [(String, String)] = [
   ("injection", Broadcaster.injectionScript(text: "hi \`edge\` \"quote\"\\nline2\\ttab", imagesBase64: ["QUJDREVG"], waitForGeminiUpload: false)),
   ("injection_wait", Broadcaster.injectionScript(text: "wait-upload variant", imagesBase64: [], waitForGeminiUpload: true)),
   ("watcher", Broadcaster.streamingWatcherScript()),
-  ("uploadTrigger", Broadcaster.geminiUploadTriggerScript()),
+  ("uploadHiddenClick", Broadcaster.geminiHiddenSelectorClickScript()),
+  ("uploadMenuReady", "(async () => {\\n" + Broadcaster.geminiUploadMenuReadyBody() + "\\n})"),
+  ("uploadLocate", "(async () => {\\n" + Broadcaster.geminiUploadLocateBody() + "\\n})"),
   ("busy", Broadcaster.busyCheckScript()),
   ("extract", Broadcaster.extractAnswerScript()),
 ]
