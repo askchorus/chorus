@@ -1967,16 +1967,11 @@ struct ContentView: View {
                 ForEach(allProviders) { p in
                     let isVisible = !hiddenKeys.contains(p.key)
                     let isLastVisible = isVisible && visibleProviders.count == 1
-                    Button {
-                        toggleHidden(p.key)
-                    } label: {
-                        if isVisible {
-                            Label(p.name, systemImage: "checkmark")
-                        } else {
-                            Text(p.name)
-                        }
-                    }
-                    .disabled(isLastVisible)
+                    // A Toggle, not a Button with a checkmark Label: AppKit then draws the tick in
+                    // the menu's own state column, which EVERY row reserves — so the names line
+                    // up. (An icon-label only exists on the checked rows and shoved them right.)
+                    Toggle(p.name, isOn: Binding(get: { isVisible }, set: { _ in toggleHidden(p.key) }))
+                        .disabled(isLastVisible)
                 }
             }
 
@@ -1986,15 +1981,7 @@ struct ContentView: View {
                 Section(L("settings.section.apiModels")) {
                     ForEach(apiProviders) { p in
                         let isVisible = !hiddenKeys.contains(p.id)
-                        Button {
-                            toggleHiddenAPI(p.id)
-                        } label: {
-                            if isVisible {
-                                Label(p.name, systemImage: "checkmark")
-                            } else {
-                                Text(p.name)
-                            }
-                        }
+                        Toggle(p.name, isOn: Binding(get: { isVisible }, set: { _ in toggleHiddenAPI(p.id) }))
                     }
                 }
             }
