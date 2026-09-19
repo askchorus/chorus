@@ -1598,14 +1598,26 @@ enum Broadcaster {
           const isChatGPT = location.hostname.includes('chatgpt') || location.hostname.includes('openai');
           const ERR_RE = /something went wrong|生成回答时出错|出错了|网络错误|an error occurred/i;
           const RETRY_RE = /retry|regenerate|重试|重新生成|try again/i;
-          let retries = 0, retryWindow = 0;
+          let retries = 0, retryWindow = 0, lastErrScan = 0;
           const maybeAutoRetry = () => {
             if (!isChatGPT) return;
-            const txt = (document.body && document.body.innerText) || '';
-            if (!ERR_RE.test(txt)) return;
+            // Scoped and rate-limited. This runs on every idle DOM mutation — i.e. on each
+            // keystroke in ChatGPT's own composer — and reading document.body.innerText forces a
+            // full-page layout: measured at ~19 ms per call (2.7 s on the first) on a 300-turn
+            // conversation, against 0.1 ms for the last turn alone. A generation error can only
+            // appear at the tail of the conversation or in an alert, so that is all we read.
             const now = Date.now();
+            if (now - lastErrScan < 3000) return;
+            lastErrScan = now;
+            const turns = document.querySelectorAll('article, [data-testid^="conversation-turn"]');
+            const scopes = [];
+            if (turns.length) scopes.push(turns[turns.length - 1]);
+            else { const m = document.querySelector('main'); if (m) scopes.push(m); }   // layout changed — still bounded by the rate limit
+            document.querySelectorAll('[role="alert"]').forEach(a => scopes.push(a));
+            if (!scopes.some(el => ERR_RE.test(el.innerText || ''))) return;
             if (now - retryWindow > 90000) { retryWindow = now; retries = 0; }  // reset window
             if (retries >= 2) return;                                            // cap: 2 / 90s
+            // Only reached once an error is on screen (rare), so a document-wide button scan is fine.
             for (const b of document.querySelectorAll('button')) {
               const label = ((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
               if (RETRY_RE.test(label)) {
