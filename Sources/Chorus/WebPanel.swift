@@ -141,15 +141,27 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
         decisionHandler(.cancel)
     }
 
-    // target=_blank and window.open() — never open these inside the panel.
-    nonisolated func webView(_ webView: WKWebView,
-                             createWebViewWith configuration: WKWebViewConfiguration,
-                             for navigationAction: WKNavigationAction,
-                             windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url {
-            Task { @MainActor in Self.openExternally(url) }
+    // target=_blank and window.open(). Clicked links go to the real browser; script-opened
+    // dialogs (sign-in popups above all) get an in-app child window wired to `window.opener`
+    // — see PopupPolicy for the rule and why handing those to the browser breaks sign-in.
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let url = navigationAction.request.url
+        let sized = windowFeatures.width != nil || windowFeatures.height != nil
+        if PopupPolicy.opensInApp(linkActivated: navigationAction.navigationType == .linkActivated,
+                                  hasWindowSize: sized, targetURL: url) {
+            return PopupWindowManager.shared.open(configuration: configuration,
+                                                  features: windowFeatures, opener: webView)
         }
+        if let url { Self.openExternally(url) }
         return nil
+    }
+
+    // A popup's page called window.close() — how a sign-in popup normally ends.
+    func webViewDidClose(_ webView: WKWebView) {
+        PopupWindowManager.shared.close(webView)
     }
 
     // Each finished navigation: remember this panel's current URL so we can reopen the

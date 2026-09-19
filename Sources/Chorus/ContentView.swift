@@ -2037,8 +2037,10 @@ struct ContentView: View {
     private func installPasteMonitor() {
         guard pasteMonitor == nil else { return }
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Only act when our prompt field has focus
-            guard promptFocused else { return event }
+            // Only act when our prompt field has focus — and never while a panel-type window
+            // (a sign-in popup, the quick input) is key: a stale focus flag there would make
+            // this monitor swallow Return inside a password field.
+            guard promptFocused, !(NSApp.keyWindow is NSPanel) else { return event }
 
             // The @-mention picker owns ↑↓ / ↩ / ⇥ / ⎋ while it is showing — unless an input
             // method is mid-composition, which must keep its keys (arrows move candidates,
