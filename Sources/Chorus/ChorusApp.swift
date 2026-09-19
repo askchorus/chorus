@@ -58,6 +58,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // One line a minute at most, to the local log only — see MemoryHeartbeat for why.
         MemoryHeartbeat.shared.start()
 
+        // Debug probes, reachable from outside the app ONLY while the `debugHooksEnabled`
+        // default is on (it is off for everyone unless set by hand). Lets a site's automation be
+        // exercised without sending real messages.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.smiletalker.chorus.debug.geminiUploadProbe"),
+            object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                guard UserDefaults.standard.bool(forKey: "debugHooksEnabled") else { return }
+                WebViewStore.shared.debugProbeGeminiUpload()
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.smiletalker.chorus.debug.geminiClearAttachments"),
+            object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                guard UserDefaults.standard.bool(forKey: "debugHooksEnabled") else { return }
+                WebViewStore.shared.debugClearGeminiAttachments()
+            }
+        }
+
         // Keeper triggers for the two window-level paths that hide pages WITHOUT hiding the app:
         // minimize (yellow button) and close (red button, app stays in the menu bar). Restore is
         // driven by applicationDidBecomeActive/didUnhide + windowDidDeminiaturize below.

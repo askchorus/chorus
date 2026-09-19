@@ -406,26 +406,16 @@ final class WebViewStore: ObservableObject {
 
         // Delay so ChatGPT/Claude finish their synthetic paste before we churn Gemini's UI.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            webView.evaluateJavaScript(Broadcaster.geminiUploadTriggerScript()) { result, _ in
-                chorusLog.notice("[Chorus.Gemini] upload trigger result=\(String(describing: result), privacy: .public)")
-                // The send script polls for the uploaded thumbnail itself (WAIT_UPLOAD), so we
-                // only need a short gap before kicking it off — it does the waiting internally.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    webView.evaluateJavaScript(js) { _, _ in }
-                }
-                guard staysInBackground else { return }
-                // Sequenced AFTER the first menu drive has finished, so the two can't fight.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    guard LinkRoutingDelegate.shared.pendingUploads == tmps else {
-                        chorusLog.notice("[Chorus.Gemini] picker fired in the background — no activation needed")
-                        return
-                    }
-                    chorusLog.notice("[Chorus.Gemini] picker did not fire in the background — activating and retrying")
-                    NSApp.activate(ignoringOtherApps: true)
-                    webView.evaluateJavaScript(Broadcaster.geminiUploadTriggerScript()) { retry, _ in
-                        chorusLog.notice("[Chorus.Gemini] retry trigger result=\(String(describing: retry), privacy: .public)")
-                    }
-                }
+            // The send script polls for the uploaded thumbnail itself (WAIT_UPLOAD, up to 20 s),
+            // so it can start as soon as the menu drive is under way.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                webView.evaluateJavaScript(js) { _, _ in }
+            }
+            self.driveGeminiUpload(in: webView, armed: tmps) { fired in
+                guard !fired, staysInBackground else { return }
+                chorusLog.notice("[Chorus.Gemini] picker did not fire in the background — activating and retrying")
+                NSApp.activate(ignoringOtherApps: true)
+                self.driveGeminiUpload(in: webView, armed: tmps) { _ in }
             }
         }
 
@@ -443,6 +433,133 @@ final class WebViewStore: ObservableObject {
         let toClean = tmps
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
             for url in toClean { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    /// Open Gemini's upload menu, find the "Files" tile, and click it so its lazy
+    /// <input type=file> fires and WebKit calls runOpenPanel (answered with the armed files).
+    ///
+    /// The tile is clicked with a NATIVE mouse event first: a page can tell a synthetic click
+    /// (isTrusted=false, no user activation) from a real one and ignore it, and Gemini stopped
+    /// reacting to the synthetic one (the menu opened, "Files" was clicked, no picker). A native
+    /// event delivered to the WKWebView is a genuine user gesture as far as the page can see.
+    /// If that doesn't consume the armed files, the old synthetic click is tried as a fallback.
+    /// `done(true)` once the picker has taken the files.
+    private func driveGeminiUpload(in webView: WKWebView, armed: [URL], done: @escaping (Bool) -> Void) {
+        let consumed = { LinkRoutingDelegate.shared.pendingUploads != armed }
+        webView.callAsyncJavaScript(Broadcaster.geminiUploadLocateBody(), arguments: [:], in: nil, in: .page) { result in
+            MainActor.assumeIsolated {
+                guard case .success(let value) = result, let info = value as? [String: Any],
+                      (info["found"] as? Bool) == true,
+                      let x = info["x"] as? Double, let y = info["y"] as? Double else {
+                    chorusLog.notice("[Chorus.Gemini] upload tile not located — \(String(describing: result), privacy: .public)")
+                    done(false)
+                    return
+                }
+                chorusLog.notice("[Chorus.Gemini] tile \"\((info["label"] as? String) ?? "?", privacy: .public)\" at \(Int(x)),\(Int(y)) — native click")
+                self.nativeClick(in: webView, cssX: x, cssY: y)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    if consumed() {
+                        chorusLog.notice("[Chorus.Gemini] picker fired after the native click")
+                        done(true)
+                        return
+                    }
+                    chorusLog.notice("[Chorus.Gemini] native click did not open the picker — trying the synthetic click")
+                    webView.evaluateJavaScript(Broadcaster.geminiUploadTriggerScript()) { _, _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            let ok = consumed()
+                            chorusLog.notice("[Chorus.Gemini] synthetic fallback — picker fired=\(ok, privacy: .public)")
+                            done(ok)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Deliver a real left click to the page at a CSS-pixel point (viewport coordinates).
+    private func nativeClick(in webView: WKWebView, cssX: Double, cssY: Double) {
+        guard let window = webView.window else { return }
+        let local = webView.isFlipped ? NSPoint(x: cssX, y: cssY)
+                                      : NSPoint(x: cssX, y: Double(webView.bounds.height) - cssY)
+        let inWindow = webView.convert(local, to: nil)
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: inWindow, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: window.windowNumber, context: nil,
+                               eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return }
+        webView.mouseDown(with: down)
+        webView.mouseUp(with: up)
+    }
+
+    /// DEBUG: exercise the Gemini upload path WITHOUT sending anything — arms a tiny image,
+    /// drives the menu, reports whether the picker took it. If it works the image ends up
+    /// attached (unsent) in Gemini's composer. Triggered by a distributed notification, and only
+    /// when the `debugHooksEnabled` default is on (see AppDelegate).
+    func debugProbeGeminiUpload() {
+        guard let webView = cache["gemini"] else { clog("[probe] no Gemini panel is open"); return }
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        image.lockFocus(); NSColor.systemOrange.setFill(); NSRect(x: 0, y: 0, width: 16, height: 16).fill(); image.unlockFocus()
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("chorus-probe-\(UUID().uuidString).png")
+        guard (try? png.write(to: tmp)) != nil else { return }
+        LinkRoutingDelegate.shared.pendingUploads = [tmp]
+        clog("[probe] Gemini upload probe starting (window visible=\(webView.window?.isVisible ?? false), app active=\(NSApp.isActive))")
+        driveGeminiUpload(in: webView, armed: [tmp]) { fired in
+            clog("[probe] Gemini upload probe finished — picker fired=\(fired)")
+            if LinkRoutingDelegate.shared.pendingUploads == [tmp] { LinkRoutingDelegate.shared.pendingUploads = [] }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { try? FileManager.default.removeItem(at: tmp) }
+            // Report what landed in the composer, then reload the panel — a reload drops unsent
+            // attachments, which is the one cleanup that can't miss (Gemini's remove button is
+            // hover-only and unlabeled). The conversation URL is restored as usual.
+            guard fired else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                self.debugRemoveGeminiAttachments(in: webView, remaining: 1)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    clog("[probe] reloading the Gemini panel to drop the probe image")
+                    webView.reload()
+                }
+            }
+        }
+    }
+
+    /// DEBUG: report / clear whatever is attached in Gemini's composer (no upload, no send).
+    func debugClearGeminiAttachments() {
+        guard let webView = cache["gemini"] else { clog("[probe] no Gemini panel is open"); return }
+        debugRemoveGeminiAttachments(in: webView, remaining: 5)
+    }
+
+    private func debugRemoveGeminiAttachments(in webView: WKWebView, remaining: Int) {
+        guard remaining > 0 else { return }
+        let body = """
+        \(Broadcaster.libScript())
+        const q = window.__chorusLib.deepQueryAll;
+        const btn = q(['button[aria-label*="Remove" i]', 'button[aria-label*="移除" i]', 'button[aria-label*="删除" i]',
+                       'button[aria-label*="Cancel" i]', 'button[data-test-id*="cancel" i]', 'button[data-test-id*="remove" i]'])[0];
+        if (!btn) {
+          // Say what IS there, so a selector miss is diagnosable from the log.
+          const thumbs = q(['img[src^="blob:"]', 'img[src^="data:image"]']).length;
+          const chips = q(['uploader-file-preview', '[class*="file-preview" i]', '[class*="attachment" i]', '[class*="upload" i] img']).length;
+          const labels = q(['button[aria-label]']).map(b => b.getAttribute('aria-label')).filter(l => /remove|cancel|delete|close|clear|移除|删除|取消/i.test(l)).slice(0, 8);
+          return { left: 0, thumbs, chips, labels };
+        }
+        const r = btn.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return { left: 1, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        btn.click();
+        return { left: 1, synthetic: true };
+        """
+        webView.callAsyncJavaScript(body, arguments: [:], in: nil, in: .page) { result in
+            MainActor.assumeIsolated {
+                guard case .success(let v) = result, let info = v as? [String: Any], (info["left"] as? Int) == 1 else {
+                    clog("[probe] no (more) removable attachment — state: \(String(describing: result))")
+                    return
+                }
+                if let x = info["x"] as? Double, let y = info["y"] as? Double { self.nativeClick(in: webView, cssX: x, cssY: y) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.debugRemoveGeminiAttachments(in: webView, remaining: remaining - 1) }
+            }
         }
     }
 

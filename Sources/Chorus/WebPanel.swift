@@ -1772,6 +1772,59 @@ enum Broadcaster {
         """
     }
 
+    /// Function BODY for `callAsyncJavaScript`: opens Gemini's "Upload & tools" menu (a synthetic
+    /// click is enough for that) and returns where the local-file tile is, so the native side can
+    /// click it with a real mouse event. Same finders as `geminiUploadTriggerScript`.
+    static func geminiUploadLocateBody() -> String {
+        return """
+        \(libScript())
+        const deepQueryAll = window.__chorusLib.deepQueryAll;
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const fullClick = (el) => {
+          const r = el.getBoundingClientRect();
+          const o = { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, button: 0, view: window };
+          try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (_) {}
+          el.dispatchEvent(new MouseEvent('mousedown', o));
+          try { el.dispatchEvent(new PointerEvent('pointerup', o)); } catch (_) {}
+          el.dispatchEvent(new MouseEvent('mouseup', o));
+          try { el.click(); } catch (_) {}
+        };
+        const findButton = () => deepQueryAll([
+          'button[aria-label="Upload & tools"]', 'button[aria-label*="Upload" i]',
+          'button[aria-label*="Add files" i]', 'button[aria-label*="上传" i]',
+        ])[0] || null;
+        const findMenuItems = () => deepQueryAll([
+          '[role="menuitem"]', 'button[mat-menu-item]', '[mat-menu-item]',
+          '.mat-mdc-menu-panel button', '[role="menu"] button', '.cdk-overlay-pane button',
+          '.cdk-overlay-pane [role="menuitem"]',
+        ]);
+        const isUploadItem = (raw) => {
+          const t = raw.toLowerCase();
+          if (t.includes('drive') || t.includes('photos') || t.includes('notebook') ||
+              t.includes('avatar') || t.includes('personal intelligence')) return false;
+          return /\\bfiles?\\b/.test(t) || t.includes('upload') || t.includes('from computer') ||
+                 t.includes('上传') || t.includes('本地') || t.includes('文件');
+        };
+        const labelOf = (it) => ((it.textContent || '') + ' ' + (it.getAttribute('aria-label') || '')).trim();
+        const findTile = () => findMenuItems().find(it => { const t = labelOf(it); return t && isUploadItem(t); }) || null;
+
+        let tile = findTile();                       // menu may already be open (a retry)
+        if (!tile) {
+          let btn = null;
+          for (let i = 0; i < 20 && !btn; i++) { btn = findButton(); if (!btn) await sleep(150); }
+          if (!btn) return { found: false, why: 'no upload button' };
+          fullClick(btn);
+          for (let i = 0; i < 27 && !tile; i++) { tile = findTile(); if (!tile) await sleep(150); }
+        }
+        if (!tile) return { found: false, why: 'no upload tile', items: findMenuItems().slice(0, 10).map(i => labelOf(i).slice(0, 40)) };
+        await sleep(250);                            // let the menu's open animation settle
+        const r = tile.getBoundingClientRect();
+        return { found: true, x: r.left + r.width / 2, y: r.top + r.height / 2,
+                 label: labelOf(tile).slice(0, 40),
+                 activation: (navigator.userActivation ? navigator.userActivation.isActive : null) };
+        """
+    }
+
     // MARK: - Warm web-page tint (optional, cosmetic)
 
     /// The cream we multiply over each page. Multiply blend means: white → this cream,
