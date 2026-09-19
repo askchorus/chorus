@@ -103,6 +103,7 @@ final class WebViewStore: ObservableObject {
         let initialURL = restore ? (savedSessionURL(for: key) ?? url) : url
         let webView = WebViewFactory.make(url: initialURL)
         cache[key] = webView
+        MemoryHeartbeat.shared.note("webview created \(key)")
         // Record the conversation URL whenever it changes. `didFinish` only fires on full
         // navigations, so in-app conversation switches done as SPA history.pushState (Gemini,
         // Claude, ChatGPT) were never captured — the saved session stayed on the initial page
@@ -267,6 +268,7 @@ final class WebViewStore: ObservableObject {
     /// answers keep counting for summarize/vote exactly as they stood.
     func broadcast(text: String, images: [NSImage] = [], source: BroadcastSource = .mainWindow,
                    targets: Set<String>? = nil) {
+        MemoryHeartbeat.shared.note("broadcast chars=\(text.count) images=\(images.count) source=\(source) targets=\(targets.map { String($0.count) } ?? "all")")
         if targets == nil {
             lastBroadcast = text          // remembered so "summarize" can include the question
             answeredLastBroadcast = []    // new question → prior answers no longer count
@@ -574,6 +576,7 @@ final class WebViewStore: ObservableObject {
         // defensively only when the app is NOT hidden.
         if !win.isVisible && !NSApp.isHidden { win.orderFrontRegardless() }
         clog("keeper: adopted \(moved) webviews (main window hidden/minimized)")
+        MemoryHeartbeat.shared.note("keeper adopted \(moved)")
     }
 
     func restoreFromKeeper() {
@@ -612,6 +615,7 @@ final class WebViewStore: ObservableObject {
         }
         objectWillChange.send()
         clog("keeper: restored \(restored), released \(released), still kept \(stillKept)")
+        MemoryHeartbeat.shared.note("keeper restored \(restored)")
     }
 
     // MARK: - Native completion watchdog
@@ -847,6 +851,7 @@ final class WebViewStore: ObservableObject {
 
     /// Drop a webview (used when a custom provider is removed) so it stops consuming memory.
     func removeWebView(key: String) {
+        MemoryHeartbeat.shared.note("webview removed \(key)")
         urlObservers.removeValue(forKey: key)?.invalidate()
         loadingObservers.removeValue(forKey: key)?.invalidate()
         cache[key]?.removeFromSuperview()
@@ -981,6 +986,7 @@ struct ContentView: View {
     /// Collect the currently-displayed answers (history included) and open the share-card preview,
     /// where the user picks a desktop or mobile size and copies/saves the rendered image.
     private func generateShareCard() {
+        MemoryHeartbeat.shared.note("share card")
         gatherAnswers(freshOnly: false) { blocks in
             shareCardData = blocks.isEmpty ? nil
                 : ShareCardData(question: store.lastBroadcast,
@@ -994,6 +1000,7 @@ struct ContentView: View {
     }
 
     private func runSummary(provider: APIProvider, blocks: [(name: String, text: String)]) {
+        MemoryHeartbeat.shared.note("summary blocks=\(blocks.count) chars=\(blocks.reduce(0) { $0 + $1.text.count })")
         let q = store.lastBroadcast.trimmingCharacters(in: .whitespacesAndNewlines)
         let joined = blocks.map { "【\($0.name)】\n\($0.text)" }.joined(separator: "\n\n———\n\n")
         // The summary is a reply to the QUESTION, so its language follows the question — not the
@@ -1873,6 +1880,7 @@ struct ContentView: View {
         // cream cover across the change like the hide/show reflow does.
         reflowing = true
         panelColumns = columns
+        MemoryHeartbeat.shared.note("layout count=\(count) columns=\(columns)")
         DispatchQueue.main.async {
             hiddenProvidersRaw = hidden.sorted().joined(separator: ",")
             for key in newlyHiddenWeb { store.scheduleTeardownIfStillHidden(key: key) }

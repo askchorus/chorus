@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // once by Sparkle itself); a dev build without a reachable appcast just stays quiet.
         _ = UpdateManager.shared
 
+        // One line a minute at most, to the local log only — see MemoryHeartbeat for why.
+        MemoryHeartbeat.shared.start()
+
         // Keeper triggers for the two window-level paths that hide pages WITHOUT hiding the app:
         // minimize (yellow button) and close (red button, app stays in the menu bar). Restore is
         // driven by applicationDidBecomeActive/didUnhide + windowDidDeminiaturize below.

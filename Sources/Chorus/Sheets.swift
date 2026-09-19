@@ -196,6 +196,7 @@ struct ShareCardSheet: View {
 
     @MainActor private func render() {
         guard let data else { rendered = nil; return }
+        MemoryHeartbeat.shared.note("share card render width=\(Int(size.px)) answers=\(data.answers.count)")
         let r = ImageRenderer(content: ShareCardView(question: data.question, answers: data.answers, width: size.px))
         r.scale = 2
         rendered = r.nsImage
