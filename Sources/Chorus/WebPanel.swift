@@ -103,6 +103,19 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     /// Last auto-reload time per webview — guards against reloading in a tight crash loop.
     private var lastReloadAt: [ObjectIdentifier: Date] = [:]
 
+    /// One log line per webview with the User-Agent the page really sees — the ground truth when
+    /// a site starts treating the panels as an unsupported or suspicious browser.
+    private var loggedUserAgent: Set<ObjectIdentifier> = []
+    private func logUserAgentOnce(_ webView: WKWebView) {
+        let id = ObjectIdentifier(webView)
+        guard !loggedUserAgent.contains(id) else { return }
+        loggedUserAgent.insert(id)
+        let host = webView.url?.host ?? "?"
+        webView.evaluateJavaScript("navigator.userAgent") { result, _ in
+            chorusLog.notice("[Chorus.WebKit] UA \(host, privacy: .public) — \((result as? String) ?? "nil", privacy: .public)")
+        }
+    }
+
     // Plain link clicks (anchor tags, no target=_blank).
     nonisolated func webView(_ webView: WKWebView,
                              decidePolicyFor navigationAction: WKNavigationAction,
@@ -143,6 +156,7 @@ final class LinkRoutingDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
     // last conversation on next launch (gated by the "restore session" setting at read time).
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            self.logUserAgentOnce(webView)
             WebViewStore.shared.noteNavigationFinished(webView)
             WebViewStore.shared.recoverIfDeadConversation(webView)
             WebViewStore.shared.recordSessionURL(for: webView)
@@ -298,20 +312,18 @@ final class CompletionScriptHandler: NSObject, WKScriptMessageHandler {
 /// Builds and caches WKWebViews. Used by `WebViewStore` to keep webview instances
 /// alive across SwiftUI view rebuilds.
 enum WebViewFactory {
-    // Standard Safari macOS UA — used by ChatGPT and Claude.
-    private static let safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
-
-    // Chrome macOS UA — used for Google services. Google's serving tier historically
-    // ships a heavier / legacy JS bundle to non-Chrome UAs (Polymer/Shadow-DOM-v0
-    // incident in 2018, ongoing through Gemini era). UA-Client-Hints sometimes
-    // sees through this, but a Chrome UA still has ~30-40% chance of unlocking
-    // the optimized code path.
-    private static let chromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-
     @MainActor
     static func make(url: URL) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // persistent: cookies/login survive app restart
+
+        // Identify as the Safari that matches this machine's WebKit. Every panel gets it,
+        // Google included: a Chrome UA on the WebKit engine is a fingerprint MISMATCH — Cloudflare
+        // flags it as a bot (ChatGPT's "verify you are human" loop) and Google sign-in refuses
+        // it as "this browser or app may not be secure". WebKit builds the UA prefix itself; we
+        // supply only Safari's suffix, versioned from the installed Safari so it can't go stale
+        // (see SafariUserAgent). Must be set on the configuration, before the view exists.
+        config.applicationNameForUserAgent = SafariUserAgent.applicationName
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
         // Public API (macOS 14+): keep the page scheduler running even when the webview
@@ -396,15 +408,6 @@ enum WebViewFactory {
         // completing 1.7s after unhide (while native evaluateJavaScript kept answering fine).
         // These WKPreferences SPIs turn that visibility-based suppression off.
         disableBackgroundThrottling(config)
-
-        // EVERYONE gets the real Safari UA now, including Google. A Chrome UA on the WebKit
-        // engine is a fingerprint MISMATCH (claims AppleWebKit/537.36 + Chrome but the engine is
-        // WebKit 605): Cloudflare flags it as a bot (ChatGPT "verify you are human" loop) and —
-        // the reason for this change — Google's sign-in flags it as "此浏览器或应用可能不安全 /
-        // this browser or app may not be secure" and BLOCKS login. An authentic Safari UA matches
-        // the engine, so sign-in is far more likely to be allowed. (We lose the ~30–40% chance of
-        // Google serving Gemini its Chrome-optimized bundle, but being able to log in wins.)
-        webView.customUserAgent = safariUA
 
         if #available(macOS 13.3, *) {
             webView.isInspectable = true
