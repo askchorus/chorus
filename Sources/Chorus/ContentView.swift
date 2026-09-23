@@ -320,6 +320,7 @@ final class WebViewStore: ObservableObject {
                 totalCount: trackKeys.count,
                 lastActivityAt: Date()
             )
+            SleepGuard.shared.sync(pendingBatches: pendingBatches.count)
             clog("batch \(batchID.uuidString.prefix(8)) created — source=\(source), waiting on \(trackKeys) (onScreen=\(onScreen), mode=\(everyVisible ? "all-visible" : "manual-list"))")
             scheduleBatchFallback(batchID: batchID)
             startCompletionWatchdogIfNeeded()   // native busy→idle detection survives minimize
@@ -328,6 +329,7 @@ final class WebViewStore: ObservableObject {
             // Mirrors the JS poll's 15-minute maxWait.
             DispatchQueue.main.asyncAfter(deadline: .now() + 900) { [weak self] in
                 self?.pendingBatches.removeValue(forKey: batchID)
+                SleepGuard.shared.sync(pendingBatches: self?.pendingBatches.count ?? 0)
             }
         } else {
             clog("broadcast skipped completion tracking — no providers to wait for (onScreen=\(onScreen), mode=\(everyVisible ? "all-visible" : "manual-list"))")
@@ -653,6 +655,7 @@ final class WebViewStore: ObservableObject {
                 }
             }
         }
+        SleepGuard.shared.sync(pendingBatches: pendingBatches.count)
         for batch in completedBatches {
             CompletionNotifier.shared.handleBatchComplete(source: batch.source)
         }
@@ -684,6 +687,7 @@ final class WebViewStore: ObservableObject {
                     return
                 }
                 self.pendingBatches.removeValue(forKey: batchID)
+                SleepGuard.shared.sync(pendingBatches: self.pendingBatches.count)
                 clog("batch \(batchID.uuidString.prefix(8)) fallback-fired — undetected completion for \(batch.pendingKeys)")
                 CompletionNotifier.shared.handleBatchComplete(source: batch.source)
             }
@@ -828,10 +832,12 @@ final class WebViewStore: ObservableObject {
         guard !pendingBatches.isEmpty else {
             completionWatchdog?.invalidate(); completionWatchdog = nil
             watchdogWasBusy = [:]; watchdogIdleTicks = [:]
+            SleepGuard.shared.sync(pendingBatches: 0)
             clog("watchdog disarmed — no pending batches")
             return
         }
         watchdogTickCount += 1
+        SleepGuard.shared.sync(pendingBatches: pendingBatches.count)   // also enforces the ceiling
         let keys = Set(pendingBatches.values.flatMap { $0.pendingKeys })
         let heartbeat = watchdogTickCount % 15 == 1   // every ~30s
         if heartbeat {

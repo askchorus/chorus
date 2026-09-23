@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// background WKWebViews responsive to streaming AI responses — otherwise WebContent
     /// processes get throttled when the window is occluded and the page JS doesn't process
     /// SSE chunks until the window is brought to the front again.
+    /// Deliberately does NOT prevent system sleep — see the options below and SleepGuard.
     private var antiNapToken: NSObjectProtocol?
 
     /// Menu-bar status item (built manually — SwiftUI's MenuBarExtra doesn't reliably render
@@ -26,8 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Apply saved appearance (System / Light / Dark) before windows show.
         AppearanceManager.apply(UserDefaults.standard.string(forKey: "appearance") ?? "light")
 
+        // NOT `.userInitiated`: that option bundles IdleSystemSleepDisabled, so simply having
+        // Chorus open stopped the Mac from ever idle-sleeping (caught holding it for 62 hours).
+        // This variant keeps App Nap away — the whole point — and leaves sleep alone; SleepGuard
+        // blocks sleep for the minutes an answer is actually in flight.
         antiNapToken = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiated, .automaticTerminationDisabled],
+            options: [.userInitiatedAllowingIdleSystemSleep, .automaticTerminationDisabled],
             reason: "Keep AI streaming alive when Chorus is in the background"
         )
 
@@ -61,6 +66,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Debug probes, reachable from outside the app ONLY while the `debugHooksEnabled`
         // default is on (it is off for everyone unless set by hand). Lets a site's automation be
         // exercised without sending real messages.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.smiletalker.chorus.debug.powerHold"),
+            object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                guard UserDefaults.standard.bool(forKey: "debugHooksEnabled") else { return }
+                SleepGuard.shared.sync(pendingBatches: 1)
+                clog("[probe] sleep hold engaged=\(SleepGuard.shared.isHolding) — releasing in 8s")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    SleepGuard.shared.sync(pendingBatches: 0)
+                    clog("[probe] sleep hold released=\(!SleepGuard.shared.isHolding)")
+                }
+            }
+        }
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.smiletalker.chorus.debug.geminiUploadProbe"),
             object: nil, queue: .main) { _ in
