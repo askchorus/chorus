@@ -376,7 +376,7 @@ struct QuickInputView: View {
                         .font(.system(size: 16))
                         // Calm accent-color breathing pulse while listening (consistent with the
                         // card "thinking" pulse) — not an alarming red.
-                        .foregroundColor(dictator.isRecording ? .accentColor : .secondary)
+                        .foregroundColor(dictator.isRecording ? ChorusTheme.brandOrange : .secondary)
                         .opacity(dictator.isRecording ? (micPulse ? 0.45 : 1.0) : 1.0)
                         .animation(dictator.isRecording
                                    ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
@@ -476,7 +476,7 @@ struct QuickInputView: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 0) {
                     Text(Lf("quick.notInDict", word))
-                        .font(.system(size: 14))
+                        .font(.chorus(14))
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 18)
                         .padding(.top, 12)
@@ -827,7 +827,7 @@ struct QuickInputView: View {
                 .padding(.horizontal, 6)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06)))
             Text(label)
-                .font(.system(size: 14))
+                .font(.chorus(14, .medium))
                 .foregroundColor(.primary)
             Spacer(minLength: 0)
         }
@@ -875,9 +875,9 @@ struct QuickInputView: View {
     // menu-bar mark); contextual modes (help, dictionary) keep their meaningful SF Symbol.
     @ViewBuilder private var leadingIcon: some View {
         if iconForCurrentInput() == "sparkles" {
-            Image(nsImage: ChorusGlyph.circle(size: 21, filled: true))
-                .renderingMode(.template)
-                .foregroundColor(.secondary)
+            InkCharacter(kind: .circle)   // the film's quick input carries the circle character
+                .frame(width: 22, height: 26)
+                .padding(.top, -3)
         } else {
             Image(systemName: iconForCurrentInput())
                 .font(.system(size: 19))

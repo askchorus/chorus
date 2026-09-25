@@ -13,8 +13,8 @@ struct SummarySheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").foregroundColor(.secondary)
-                Text(L("summary.title")).font(.headline)
+                SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 15, height: 15)
+                Text(L("summary.title")).font(.chorus(16, .bold)).foregroundColor(ChorusTheme.brandOrange)
                 if streaming {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
@@ -29,11 +29,11 @@ struct SummarySheet: View {
                 // read as a blank/stuck sheet, so make the working state CENTERED and unmissable.
                 VStack(spacing: 14) {
                     Spacer()
-                    ProgressView().scaleEffect(1.3)
+                    InkLineup(thinking: true).frame(height: 104)
                     Text(L("summary.working"))
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.chorus(15, .semibold))
                     Text(L("summary.workingHint"))
-                        .font(.system(size: 12))
+                        .font(.chorus(12))
                         .foregroundColor(.secondary)
                     Spacer()
                 }
@@ -86,12 +86,12 @@ private struct ShareCardView: View {
         VStack(alignment: .leading, spacing: 16) {
             if !question.trimmingCharacters(in: .whitespaces).isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Q").font(.system(size: 15, weight: .heavy))
+                    Text("Q").font(.chorus(15, .heavy))
                         .foregroundColor(.white)
                         .frame(width: 22, height: 22)
                         .background(Circle().fill(ChorusTheme.brandOrange))
                     Text(question)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.chorus(18, .semibold))
                         .foregroundColor(.black.opacity(0.85))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -103,7 +103,7 @@ private struct ShareCardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 7) {
                         Circle().fill(a.color).frame(width: 9, height: 9)
-                        Text(a.name).font(.system(size: 14, weight: .bold))
+                        Text(a.name).font(.chorus(14, .bold))
                             .foregroundColor(.black.opacity(0.8))
                     }
                     Text(a.text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -114,9 +114,9 @@ private struct ShareCardView: View {
                 }
             }
 
-            HStack(spacing: 5) {
-                Image(systemName: "sparkles").font(.system(size: 11))
-                Text(L("share.brand")).font(.system(size: 11, weight: .medium))
+            HStack(spacing: 6) {
+                InkLineup().frame(height: 20).environment(\.colorScheme, .light)   // the card is always light
+                Text(L("share.brand")).font(.chorus(11, .semibold))
                 Spacer()
             }
             .foregroundColor(.black.opacity(0.4))
@@ -237,24 +237,21 @@ struct WelcomeSheet: View {
         let hotkey = formatHotkey(keyCode: hotkeyKeyCode, modifiers: hotkeyModifiers)
         return VStack(spacing: 0) {
             VStack(spacing: 16) {
-                if let icon = NSApp.applicationIconImage {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 76, height: 76)
-                        .shadow(color: .black.opacity(0.18), radius: 7, y: 3)
-                }
+                InkLineup(hello: true)
+                    .frame(height: 104)
+                    .environment(\.colorScheme, .light)   // this sheet is always the light cream card
                 VStack(spacing: 7) {
                     Text(L("welcome.title"))
-                        .font(.system(size: 27, weight: .bold))
+                        .font(.chorus(27, .bold))
                         .foregroundColor(.black.opacity(0.85))
                     Text(L("welcome.subtitle"))
-                        .font(.system(size: 14.5))
+                        .font(.chorus(14.5))
                         .foregroundColor(.black.opacity(0.55))
                         .multilineTextAlignment(.center)
                 }
             }
-            .padding(.top, 44)
-            .padding(.bottom, 30)
+            .padding(.top, 36)
+            .padding(.bottom, 28)
 
             VStack(alignment: .leading, spacing: 22) {
                 step("person.crop.circle.fill", L("welcome.step1.title"), L("welcome.step1.desc"))
@@ -273,7 +270,7 @@ struct WelcomeSheet: View {
                     .foregroundColor(.black.opacity(0.4))
                     .padding(.top, 1)
                 Text(L("welcome.privacy"))
-                    .font(.system(size: 11.5))
+                    .font(.chorus(11.5))
                     .foregroundColor(.black.opacity(0.45))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -281,19 +278,21 @@ struct WelcomeSheet: View {
 
             Spacer(minLength: 16)
 
+            // The film's (and the landing page's) button: orange, inked outline, hard shadow.
             Button(action: onStart) {
                 Text(L("welcome.start"))
-                    .font(.system(size: 15.5, weight: .semibold))
-                    .foregroundColor(.white)
+                    .font(.chorus(15.5, .bold))
+                    .foregroundColor(Ink.ink)
                     .frame(maxWidth: .infinity)
                     .frame(height: 46)
-                    .background(accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .background(Capsule().fill(accent))
+                    .overlay(Capsule().strokeBorder(Ink.ink, lineWidth: 2))
+                    .background(Capsule().fill(Ink.ink).offset(y: 4))
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
             .padding(.horizontal, 40)
-            .padding(.bottom, 30)
+            .padding(.bottom, 34)
         }
         .frame(width: 470, height: 560)
         .background(
@@ -309,8 +308,8 @@ struct WelcomeSheet: View {
                 Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundColor(accent)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 16, weight: .semibold)).foregroundColor(.black.opacity(0.82))
-                Text(desc).font(.system(size: 13.5)).foregroundColor(.black.opacity(0.55))
+                Text(title).font(.chorus(16, .semibold)).foregroundColor(.black.opacity(0.82))
+                Text(desc).font(.chorus(13.5)).foregroundColor(.black.opacity(0.55))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)

@@ -13,7 +13,7 @@ struct DirectedChip: View {
             Image(systemName: "arrow.turn.down.right")
                 .font(.system(size: 10, weight: .bold))
             Text(Lf("mention.chip", target.name))
-                .font(.system(size: 12, weight: .medium))
+                .font(.chorus(12, .semibold))
                 .lineLimit(1)
             Button(action: onRemove) {
                 Image(systemName: "xmark.circle.fill")
@@ -45,7 +45,7 @@ struct MentionPicker: View {
         VStack(spacing: 2) {
             if options.isEmpty {
                 Text(L("mention.noMatch"))
-                    .font(.system(size: 13))
+                    .font(.chorus(13))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -76,11 +76,11 @@ struct MentionPicker: View {
                 }
             }
             .frame(width: 14, height: 14)
-            Text(t.name).font(.system(size: 13))
+            Text(t.name).font(.chorus(13, .medium))
             Spacer(minLength: 0)
             if highlighted {
                 Text("↩")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.chorus(11, .medium))
                     .foregroundColor(.secondary)
                     .padding(.vertical, 2)
                     .padding(.horizontal, 5)

@@ -35,6 +35,23 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT/scripts/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/scripts/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+# The rounded Chinese UI face (Resource Han Rounded, SIL OFL — licence alongside), cut down to the
+# app's own strings. Warn when a string now uses a character the cut lacks: it would fall back to
+# PingFang mid-word until scripts/build-ui-font.py is rerun.
+cp "$ROOT/scripts/fonts/ChorusRound-Medium.ttf" "$ROOT/scripts/fonts/ChorusRound-Bold.ttf" \
+   "$ROOT/scripts/fonts/OFL-ResourceHanRounded.txt" "$RESOURCES_DIR/"
+python3 - "$ROOT" <<'PYEOF'
+import glob, os, re, sys
+root = sys.argv[1]
+have = set(open(os.path.join(root, "scripts/fonts/ChorusRound.chars.txt"), encoding="utf-8").read().strip())
+used = set()
+for path in glob.glob(os.path.join(root, "Sources/Chorus/*.swift")):
+    for lit in re.findall(r'"((?:[^"\\\n]|\\.)*)"', open(path, encoding="utf-8").read()):
+        used |= {c for c in lit if "\u3000" <= c <= "\u9fff" or "\uff00" <= c <= "\uffef"}
+missing = "".join(sorted(used - have))
+if missing:
+    print("⚠️  UI font lacks %d character(s): %s — run scripts/build-ui-font.py" % (len(missing), missing))
+PYEOF
 
 echo "==> Embedding Sparkle.framework..."
 # SPM links the binary against @rpath/Sparkle.framework; the manually-assembled bundle must

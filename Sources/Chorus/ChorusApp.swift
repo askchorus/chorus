@@ -80,6 +80,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.smiletalker.chorus.debug.fakeStreaming"),
+            object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {
+                guard UserDefaults.standard.bool(forKey: "debugHooksEnabled") else { return }
+                let key = (note.object as? String) ?? "chatgpt"
+                clog("[probe] fake streaming on \(key)")
+                WebViewStore.shared.debugFakeStreaming(key: key)
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.smiletalker.chorus.debug.geminiUploadProbe"),
             object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
@@ -265,9 +275,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateStatusIcon() {
-        // The brand glyph (app-icon circle character). Busy state is conveyed by the menu's status
-        // line + the in-app streaming dots, so the menu-bar mark stays constant and recognizable.
-        let img = ChorusGlyph.circle(size: 18, filled: true)
+        // The brand glyph (app-icon circle character). While any AI is answering it sings — the
+        // same open mouth the panels' characters show — and closes it when they're all done.
+        let img = ChorusGlyph.circle(size: 18, filled: true, singing: !WebViewStore.shared.streamingKeys.isEmpty)
         img.accessibilityDescription = "Chorus"
         statusItem?.button?.image = img
     }
@@ -319,6 +329,12 @@ extension Notification.Name {
 struct ChorusApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = WebViewStore.shared
+
+    init() {
+        // Before any view asks for a font: ChorusFont caches what it builds, and a face built
+        // before registration would miss the rounded Chinese cascade for good.
+        ChorusFont.register()
+    }
 
     var body: some Scene {
         WindowGroup(id: "main") {

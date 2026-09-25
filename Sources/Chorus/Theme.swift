@@ -21,7 +21,8 @@ enum ChorusTheme {
                                      Color(red: 0.956, green: 0.925, blue: 0.862)]
 
     static func cardBorder(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.10)
+        // Warm ink, as in the film, rather than neutral black.
+        scheme == .dark ? Color.white.opacity(0.09) : Color(red: 0.149, green: 0.129, blue: 0.102).opacity(0.14)
     }
 
     static func canvas(_ scheme: ColorScheme) -> LinearGradient {
@@ -100,21 +101,16 @@ enum ProviderStyle {
     }
 }
 
-/// Thin brand-color bar across the top of a card. Pulses while that AI is streaming.
+/// Thin brand-color bar across the top of a card — which AI this is, at a glance. (It used to
+/// pulse while streaming; the header's singing character says that now.)
 struct AccentBar: View {
     let color: Color
-    let active: Bool
-    @State private var pulse = false
 
     var body: some View {
         Rectangle()
             .fill(color)
             .frame(height: 2)
-            .opacity(active ? (pulse ? 0.3 : 1.0) : 0.85)
-            .animation(active ? .easeInOut(duration: 0.9).repeatForever(autoreverses: true) : .default,
-                       value: pulse)
-            .onAppear { pulse = active }
-            .onChange(of: active) { newValue in pulse = newValue }
+            .opacity(0.85)
     }
 }
 

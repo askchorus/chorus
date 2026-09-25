@@ -539,6 +539,18 @@ final class WebViewStore: ObservableObject {
         webView.mouseUp(with: up)
     }
 
+    /// DEBUG: mark one panel as "answering" for a few seconds, then as answered — drives the
+    /// header character's singing / ^ ^ states and the menu-bar glyph without sending anything.
+    /// Distributed notification, `debugHooksEnabled` only (see AppDelegate).
+    func debugFakeStreaming(key: String, seconds: Double = 6) {
+        streamingKeys.insert(key)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self else { return }
+            self.answeredLastBroadcast.insert(key)
+            self.streamingKeys.remove(key)
+        }
+    }
+
     /// DEBUG: exercise the Gemini upload path WITHOUT sending anything — arms a tiny image,
     /// drives the menu, reports whether the picker took it. If it works the image ends up
     /// attached (unsent) in Gemini's composer. Triggered by a distributed notification, and only
@@ -1491,27 +1503,26 @@ struct ContentView: View {
     }
 
     /// Shown over a panel whose page failed to load — the webview itself would just be white.
-    private func loadErrorCard(name: String, reason: String, retry: @escaping () -> Void) -> some View {
+    private func loadErrorCard(name: String, reason: String, kind: InkCast, retry: @escaping () -> Void) -> some View {
         VStack(spacing: 10) {
-            Image(systemName: "wifi.exclamationmark")
-                .font(.system(size: 22, weight: .light))
-                .foregroundColor(.secondary)
+            InkCharacter(kind: kind, pose: InkPose(lookX: -0.35, lookY: 0.9))
+                .frame(height: 58)
             Text(Lf("panel.loadFailed", name))
-                .font(.system(size: 13, weight: .semibold))
+                .font(.chorus(13, .semibold))
             Text(reason)
-                .font(.system(size: 11))
+                .font(.chorus(11))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
                 .padding(.horizontal, 18)
             Text(L("panel.loadFailed.hint"))
-                .font(.system(size: 10.5))
+                .font(.chorus(10.5))
                 .foregroundColor(.secondary.opacity(0.75))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 18)
             Button(action: retry) {
                 Text(L("panel.retry"))
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.chorus(12, .semibold))
                     .padding(.horizontal, 14).padding(.vertical, 6)
                     .background(Capsule().fill(Color.primary.opacity(0.08)))
             }
@@ -1524,14 +1535,15 @@ struct ContentView: View {
 
     private func card(for p: Provider) -> some View {
         VStack(spacing: 0) {
-            AccentBar(color: ProviderStyle.accent(key: p.key, host: p.url.host ?? ""),
-                      active: store.streamingKeys.contains(p.key))
-            slimHeader(for: p)
+            AccentBar(color: ProviderStyle.accent(key: p.key, host: p.url.host ?? ""))
+            slimHeader(for: p, cast: .forPanel(panelIndex("w_" + p.key)))
             WebPanel(webView: store.getOrCreate(key: p.key, url: p.url), reflowing: reflowing)
                 .overlay(alignment: .center) {
                     // A failed load renders as a blank white webview; say so instead.
                     if let reason = store.loadErrors[p.key] {
-                        loadErrorCard(name: p.name, reason: reason) { store.retryLoad(key: p.key) }
+                        loadErrorCard(name: p.name, reason: reason, kind: .forPanel(panelIndex("w_" + p.key))) {
+                            store.retryLoad(key: p.key)
+                        }
                     }
                 }
         }
@@ -1539,7 +1551,7 @@ struct ContentView: View {
         .overlay(
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
                 .strokeBorder(
-                    dropTargetKey == p.key ? Color.accentColor.opacity(0.9) : ChorusTheme.cardBorder(colorScheme),
+                    dropTargetKey == p.key ? ChorusTheme.brandOrange.opacity(0.9) : ChorusTheme.cardBorder(colorScheme),
                     lineWidth: dropTargetKey == p.key ? 3 : 1
                 )
         )
@@ -1549,7 +1561,7 @@ struct ContentView: View {
         .overlay {
             if dropTargetKey == p.key {
                 RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
+                    .fill(ChorusTheme.brandOrange.opacity(0.10))
                     .allowsHitTesting(false)
             }
         }
@@ -1562,9 +1574,8 @@ struct ContentView: View {
     /// of a WKWebView.
     private func apiCard(for p: APIProvider) -> some View {
         VStack(spacing: 0) {
-            AccentBar(color: ProviderStyle.accent(key: p.id, host: ""),
-                      active: apiStore.isStreaming(p.id))
-            apiSlimHeader(for: p)
+            AccentBar(color: ProviderStyle.accent(key: p.id, host: ""))
+            apiSlimHeader(for: p, cast: .forPanel(panelIndex("a_" + p.id)))
             APIPanelView(provider: p)
         }
         .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
@@ -1579,30 +1590,31 @@ struct ContentView: View {
 
     /// Slim header for an API card: brand dot, name + model, a stop button while streaming, and
     /// a "new chat" on hover. (No hide button — API panels are added/removed in Settings.)
-    private func apiSlimHeader(for p: APIProvider) -> some View {
+    private func apiSlimHeader(for p: APIProvider, cast: InkCast) -> some View {
         HStack(spacing: 7) {
             Circle()
                 .fill(ProviderStyle.accent(key: p.id, host: ""))
                 .frame(width: 8, height: 8)
             Text(p.name)
-                .font(.system(size: 12, weight: .medium))
+                .font(.chorus(12, .semibold))
                 .foregroundColor(.primary.opacity(0.9))
             // Marks this as a native API panel — disambiguates from a web panel of the same name.
             Text("API")
-                .font(.system(size: 8.5, weight: .bold))
+                .font(.chorus(8.5, .bold))
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
                 .background(Capsule().fill(Color.primary.opacity(0.08)))
             if !p.model.isEmpty {
                 Text(p.model)
-                    .font(.system(size: 10))
+                    .font(.chorus(10))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(-1)   // shrink the long model name first, keep the buttons clear
             }
             Spacer(minLength: 8)
+            statusCharacter(cast, key: p.id, singing: apiStore.isStreaming(p.id))
             winnerTrophy(key: p.id, accentHost: "", name: p.name)
             if apiStore.isStreaming(p.id) {
                 Button { apiStore.stop(p.id) } label: {
@@ -1654,13 +1666,13 @@ struct ContentView: View {
             Button {
                 pickWinner(key)
             } label: {
-                Image(systemName: isWinner ? "trophy.fill" : "trophy")
-                    .font(.system(size: 13, weight: .semibold))
-                    // One gold for the award everywhere, NOT each panel's brand color: the trophy
-                    // is a verdict, not part of that AI's identity, and per-panel colors made the
-                    // winner blend into its own card instead of standing out across the row.
-                    // Unselected stays neutral so exactly one gold mark is visible per round.
-                    .foregroundColor(isWinner ? ChorusTheme.trophyGold : Color.secondary.opacity(0.45))
+                // The film's trophy. One gold for the award everywhere, NOT each panel's brand
+                // color: the trophy is a verdict, not part of that AI's identity, and per-panel
+                // colors made the winner blend into its own card instead of standing out across
+                // the row. Unselected stays an outline so exactly one gold mark shows per round.
+                TrophyGlyph(won: isWinner)
+                    .frame(width: 16, height: 15)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(isWinner ? Lf("vote.chosen", name) : Lf("vote.choose", name))
@@ -1680,7 +1692,20 @@ struct ContentView: View {
                        question: store.lastBroadcast, contenders: contenders, names: names)
     }
 
-    private func slimHeader(for p: Provider) -> some View {
+    /// Where a panel sits among the visible ones — it picks the panel's character (circle,
+    /// square, triangle, then round again), the same order as the film and the app icon.
+    private func panelIndex(_ id: String) -> Int {
+        visiblePanels.firstIndex { $0.id == id } ?? 0
+    }
+
+    /// The panel's character: sings while its AI answers, ^ ^ when it's done.
+    private func statusCharacter(_ cast: InkCast, key: String, singing: Bool) -> some View {
+        PanelStatusCharacter(kind: cast, singing: singing, answered: store.answeredLastBroadcast.contains(key))
+            .frame(width: 18, height: 21)
+            .padding(.top, 1)
+    }
+
+    private func slimHeader(for p: Provider, cast: InkCast) -> some View {
         HStack(spacing: 7) {
             if let icon = store.favicons[p.key] {
                 Image(nsImage: icon)
@@ -1695,9 +1720,10 @@ struct ContentView: View {
                     .frame(width: 8, height: 8)
             }
             Text(p.name)
-                .font(.system(size: 12, weight: .medium))
+                .font(.chorus(12, .semibold))
                 .foregroundColor(.primary.opacity(0.9))
             Spacer()
+            statusCharacter(cast, key: p.key, singing: store.streamingKeys.contains(p.key))
             winnerTrophy(key: p.key, accentHost: p.url.host ?? "", name: p.name)
             // Loading spinner — always visible (not hover-gated) while the page reloads, so a
             // reload tap visibly registers and the user waits instead of clicking again.
@@ -1781,7 +1807,7 @@ struct ContentView: View {
             ZStack {
                 Rectangle().fill(.ultraThinMaterial)
                 if dropTargetKey == p.key {
-                    Rectangle().fill(Color.accentColor.opacity(0.25))
+                    Rectangle().fill(ChorusTheme.brandOrange.opacity(0.25))
                 } else if hoveredHeaderKey == p.key {
                     Rectangle().fill(Color.primary.opacity(0.05))
                 }
@@ -1801,7 +1827,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color.accentColor)
+            .background(ChorusTheme.brandOrange)
             .foregroundColor(.white)
             .cornerRadius(6)
         }
@@ -1898,7 +1924,7 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: dictator.isRecording ? "mic.fill" : "mic")
                         .font(.system(size: 15))
-                        .foregroundColor(dictator.isRecording ? .accentColor : .secondary)
+                        .foregroundColor(dictator.isRecording ? ChorusTheme.brandOrange : .secondary)
                         .opacity(dictator.isRecording ? (micPulse ? 0.45 : 1.0) : 1.0)
                         .animation(dictator.isRecording
                                    ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
@@ -1914,13 +1940,7 @@ struct ContentView: View {
                 Button {
                     send()
                 } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 30, height: 30)
-                        .background(
-                            Circle().fill(canSend ? Color.accentColor : Color.secondary.opacity(0.3))
-                        )
+                    InkSendButtonLabel(enabled: canSend, size: 30)   // the film's orange send disc
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
@@ -2076,6 +2096,20 @@ struct ContentView: View {
         }
     }
 
+    /// The film's orange "✦", drawn once as an image a menu label can carry.
+    private static let sparkleImage: NSImage = {
+        let img = NSImage(size: NSSize(width: 13, height: 13), flipped: true) { rect in
+            let path = InkDraw.sparklePath(center: CGPoint(x: rect.midX, y: rect.midY), r: 6.3).cgPath
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.addPath(path)
+            ctx.setFillColor(NSColor(ChorusTheme.brandOrange).cgColor)
+            ctx.fillPath()
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }()
+
     /// "Summarize all answers" — a one-click composer button (was buried in the … menu). Click
     /// the sparkles → pick which API model synthesizes the comparison.
     private var summarizeButton: some View {
@@ -2091,19 +2125,25 @@ struct ContentView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkles").font(.system(size: 14))
+            // An AppKit-rendered menu label keeps only an image and a string, so the sparkle is a
+            // pre-drawn image and the chip's capsule is drawn around the menu, not inside it.
+            HStack(spacing: 5) {
+                Image(nsImage: Self.sparkleImage)
                 if !minimalMode {
-                    Text(L("summary.button")).font(.system(size: 12, weight: .medium))
+                    Text(L("summary.button")).font(.chorus(12, .semibold))
                 }
             }
-            .foregroundColor(.secondary)
-            .frame(height: 26)
-            .contentShape(Rectangle())
+            .foregroundColor(ChorusTheme.brandOrange)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .tint(ChorusTheme.brandOrange)   // an AppKit menu label takes its colour from the tint
         .fixedSize()
+        .padding(.horizontal, minimalMode ? 7 : 10)
+        .frame(height: 26)
+        .background(Capsule().fill(ChorusTheme.brandOrange.opacity(0.12)))
+        .overlay(Capsule().strokeBorder(ChorusTheme.brandOrange.opacity(0.32)))
+        .contentShape(Capsule())
         .help(L("summary.help"))
     }
 

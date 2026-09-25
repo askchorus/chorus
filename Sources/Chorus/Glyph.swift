@@ -8,17 +8,18 @@ import AppKit
 /// `filled` = solid disc with knocked-out (transparent) eyes — bold, survives 16px.
 /// else = line-art outline with solid dot eyes — matches the app icon's stroke style.
 enum ChorusGlyph {
-    static func circle(size: CGFloat, filled: Bool = true, template: Bool = true) -> NSImage {
+    /// `singing` opens its mouth (the menu bar shows this while an AI is answering).
+    static func circle(size: CGFloat, filled: Bool = true, singing: Bool = false, template: Bool = true) -> NSImage {
         let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            draw(ctx, box: rect, filled: filled)
+            draw(ctx, box: rect, filled: filled, singing: singing)
             return true
         }
         img.isTemplate = template
         return img
     }
 
-    private static func draw(_ ctx: CGContext, box: CGRect, filled: Bool) {
+    private static func draw(_ ctx: CGContext, box: CGRect, filled: Bool, singing: Bool) {
         let s = box.width
         let black = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
 
@@ -48,16 +49,22 @@ enum ChorusGlyph {
             }
         }
 
+        // The film's singing mouth: an upright oval under the eyes.
+        func addMouth() {
+            let w = s * 0.11, h = s * 0.13
+            ctx.addEllipse(in: CGRect(x: cx - w / 2, y: eyeY - s * 0.085 - h, width: w, height: h))
+        }
+
         if filled {
             ctx.addEllipse(in: body); addFeet()      // body + feet = one solid silhouette
             ctx.setFillColor(black); ctx.fillPath()
-            ctx.setBlendMode(.clear); addEyes(); ctx.fillPath(); ctx.setBlendMode(.normal)
+            ctx.setBlendMode(.clear); addEyes(); if singing { addMouth() }; ctx.fillPath(); ctx.setBlendMode(.normal)
         } else {
             ctx.addEllipse(in: body); ctx.setStrokeColor(black)
             ctx.setLineWidth(max(1, s * 0.08)); ctx.strokePath()
             ctx.setFillColor(black)
             addFeet(); ctx.fillPath()
-            addEyes(); ctx.fillPath()
+            addEyes(); if singing { addMouth() }; ctx.fillPath()
         }
     }
 }
