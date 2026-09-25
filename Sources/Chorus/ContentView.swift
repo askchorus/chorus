@@ -1592,9 +1592,7 @@ struct ContentView: View {
     /// a "new chat" on hover. (No hide button — API panels are added/removed in Settings.)
     private func apiSlimHeader(for p: APIProvider, cast: InkCast) -> some View {
         HStack(spacing: 7) {
-            Circle()
-                .fill(ProviderStyle.accent(key: p.id, host: ""))
-                .frame(width: 8, height: 8)
+            statusCharacter(cast, key: p.id, singing: apiStore.isStreaming(p.id))
             Text(p.name)
                 .font(.chorus(12, .semibold))
                 .foregroundColor(.primary.opacity(0.9))
@@ -1614,7 +1612,6 @@ struct ContentView: View {
                     .layoutPriority(-1)   // shrink the long model name first, keep the buttons clear
             }
             Spacer(minLength: 8)
-            statusCharacter(cast, key: p.id, singing: apiStore.isStreaming(p.id))
             winnerTrophy(key: p.id, accentHost: "", name: p.name)
             if apiStore.isStreaming(p.id) {
                 Button { apiStore.stop(p.id) } label: {
@@ -1701,29 +1698,20 @@ struct ContentView: View {
     /// The panel's character: sings while its AI answers, ^ ^ when it's done.
     private func statusCharacter(_ cast: InkCast, key: String, singing: Bool) -> some View {
         PanelStatusCharacter(kind: cast, singing: singing, answered: store.answeredLastBroadcast.contains(key))
-            .frame(width: 18, height: 21)
+            .frame(width: 19, height: 22)
             .padding(.top, 1)
     }
 
     private func slimHeader(for p: Provider, cast: InkCast) -> some View {
         HStack(spacing: 7) {
-            if let icon = store.favicons[p.key] {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 15, height: 15)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-            } else {
-                // No favicon yet — fall back to a brand-color dot.
-                Circle()
-                    .fill(ProviderStyle.accent(key: p.key, host: p.url.host ?? ""))
-                    .frame(width: 8, height: 8)
-            }
+            // The panel's character stands where the site's favicon used to: in the film each
+            // character IS one AI, singing its answer. The name beside it and the accent bar
+            // above still say which AI this is.
+            statusCharacter(cast, key: p.key, singing: store.streamingKeys.contains(p.key))
             Text(p.name)
                 .font(.chorus(12, .semibold))
                 .foregroundColor(.primary.opacity(0.9))
             Spacer()
-            statusCharacter(cast, key: p.key, singing: store.streamingKeys.contains(p.key))
             winnerTrophy(key: p.key, accentHost: p.url.host ?? "", name: p.name)
             // Loading spinner — always visible (not hover-gated) while the page reloads, so a
             // reload tap visibly registers and the user waits instead of clicking again.
@@ -1922,15 +1910,15 @@ struct ContentView: View {
                         dictator.start { text in prompt = dictationBase + text }
                     }
                 } label: {
-                    Image(systemName: dictator.isRecording ? "mic.fill" : "mic")
-                        .font(.system(size: 15))
-                        .foregroundColor(dictator.isRecording ? ChorusTheme.brandOrange : .secondary)
+                    InkMicGlyph(recording: dictator.isRecording)
+                        .frame(width: 17, height: 17)
                         .opacity(dictator.isRecording ? (micPulse ? 0.45 : 1.0) : 1.0)
                         .animation(dictator.isRecording
                                    ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
                                    : .default, value: micPulse)
-                        .frame(width: 26, height: 26)
-                        .contentShape(Rectangle())
+                        .frame(width: 32, height: 26)
+                        .inkChip(orange: dictator.isRecording)
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .help(dictator.permissionDenied ? L("quick.micDenied")
@@ -2032,10 +2020,11 @@ struct ContentView: View {
         return Button {
             showLayoutPicker.toggle()
         } label: {
-            LayoutGlyph(cols: current?.columns ?? panelColumns, rows: current?.rows ?? 1)
-                .foregroundColor(.secondary)
-                .frame(height: 26)
-                .contentShape(Rectangle())
+            LayoutGlyph(cols: current?.columns ?? panelColumns, rows: current?.rows ?? 1, lineWidth: 1.5)
+                .foregroundColor(Ink.line(colorScheme))
+                .frame(width: 32, height: 26)
+                .inkChip()
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .help(L("layout.help"))
@@ -2096,20 +2085,6 @@ struct ContentView: View {
         }
     }
 
-    /// The film's orange "✦", drawn once as an image a menu label can carry.
-    private static let sparkleImage: NSImage = {
-        let img = NSImage(size: NSSize(width: 13, height: 13), flipped: true) { rect in
-            let path = InkDraw.sparklePath(center: CGPoint(x: rect.midX, y: rect.midY), r: 6.3).cgPath
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            ctx.addPath(path)
-            ctx.setFillColor(NSColor(ChorusTheme.brandOrange).cgColor)
-            ctx.fillPath()
-            return true
-        }
-        img.isTemplate = false
-        return img
-    }()
-
     /// "Summarize all answers" — a one-click composer button (was buried in the … menu). Click
     /// the sparkles → pick which API model synthesizes the comparison.
     private var summarizeButton: some View {
@@ -2128,7 +2103,7 @@ struct ContentView: View {
             // An AppKit-rendered menu label keeps only an image and a string, so the sparkle is a
             // pre-drawn image and the chip's capsule is drawn around the menu, not inside it.
             HStack(spacing: 5) {
-                Image(nsImage: Self.sparkleImage)
+                Image(nsImage: InkImages.sparkle)
                 if !minimalMode {
                     Text(L("summary.button")).font(.chorus(12, .semibold))
                 }
@@ -2139,10 +2114,10 @@ struct ContentView: View {
         .menuIndicator(.hidden)
         .tint(ChorusTheme.brandOrange)   // an AppKit menu label takes its colour from the tint
         .fixedSize()
-        .padding(.horizontal, minimalMode ? 7 : 10)
+        .padding(.horizontal, minimalMode ? 9 : 10)
+        .frame(minWidth: 32)
         .frame(height: 26)
-        .background(Capsule().fill(ChorusTheme.brandOrange.opacity(0.12)))
-        .overlay(Capsule().strokeBorder(ChorusTheme.brandOrange.opacity(0.32)))
+        .inkChip(orange: true)
         .contentShape(Capsule())
         .help(L("summary.help"))
     }
@@ -2205,15 +2180,14 @@ struct ContentView: View {
                 } label: { Label(L("menu.settings"), systemImage: "gearshape") }
             }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.secondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
+            Image(nsImage: InkImages.dots)   // AppKit draws menu labels: an image, not a view
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .frame(width: 32, height: 26)
+        .inkChip()
+        .contentShape(Capsule())
         .help(L("menu.actions"))
     }
 

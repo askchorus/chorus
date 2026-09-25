@@ -59,16 +59,35 @@ final class InkSnapshotTests: XCTestCase {
                     InkSendButtonLabel(enabled: false)
                     SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 14, height: 14)
                 }
-                // A panel header as the app lays it out.
-                HStack(spacing: 7) {
-                    Circle().fill(Color.black.opacity(0.8)).frame(width: 15, height: 15)
-                    Text("ChatGPT").font(.chorus(12, .semibold))
-                    Spacer()
-                    InkCharacter(kind: .circle, pose: InkPose(mouth: 0.7)).frame(width: 18, height: 21)
-                    TrophyGlyph(won: true).frame(width: 16, height: 15)
+                // Six panel headers as the app lays them out: each panel's character on the left.
+                VStack(spacing: 4) {
+                    ForEach(InkCast.allCases, id: \.rawValue) { kind in
+                        HStack(spacing: 7) {
+                            InkCharacter(kind: kind, pose: InkPose(happy: kind == .circle, mouth: kind == .square ? 0.7 : 0))
+                                .frame(width: 19, height: 22)
+                            Text(["Gemini", "ChatGPT", "DeepSeek", "Claude", "Kimi", "Grok"][kind.rawValue]).font(.chorus(12, .semibold))
+                            Spacer()
+                            TrophyGlyph(won: kind == .triangle).frame(width: 17, height: 16)
+                        }
+                        .padding(.horizontal, 11).frame(width: 360, height: 30)
+                        .background(Rectangle().fill(.ultraThinMaterial))
+                    }
                 }
-                .padding(.horizontal, 11).frame(width: 360, height: 30)
-                .background(Rectangle().fill(.ultraThinMaterial))
+                // The composer's controls: "…", "✦", layout · · · mic, send.
+                HStack(spacing: 10) {
+                    Image(nsImage: InkImages.dots).renderingMode(.template).foregroundColor(Ink.line(scheme))
+                        .frame(width: 32, height: 26).inkChip()
+                    Image(nsImage: InkImages.sparkle).frame(width: 32, height: 26).inkChip(orange: true)
+                    LayoutGlyph(cols: 3, rows: 1, lineWidth: 1.5).foregroundColor(Ink.line(scheme))
+                        .frame(width: 32, height: 26).inkChip()
+                    Text("有问题，尽管问").font(.system(size: 13)).foregroundColor(.secondary)
+                    Spacer()
+                    InkMicGlyph().frame(width: 17, height: 17).frame(width: 32, height: 26).inkChip()
+                    InkMicGlyph(recording: true).frame(width: 17, height: 17).frame(width: 32, height: 26).inkChip(orange: true)
+                    InkSendButtonLabel(enabled: true)
+                }
+                .padding(.horizontal, 14).frame(width: 460, height: 46)
+                .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
                 // The Compare chip (drawn the way ContentView draws around its menu).
                 HStack(spacing: 5) {
                     SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 12, height: 12)

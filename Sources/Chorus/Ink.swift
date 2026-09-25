@@ -141,12 +141,15 @@ enum InkGeometry {
     }
 }
 
-// MARK: - The three characters
+// MARK: - The characters
 
-/// Circle, square, triangle — the app icon's line-up. Panels take them in turn by position.
+/// Circle, square, triangle — the app icon's line-up — and, for panels four to six, three more
+/// drawn the same way (a loaf, a pill, a diamond) so no two on-screen panels share one.
 enum InkCast: Int, CaseIterable {
-    case circle, square, triangle
-    static func forPanel(_ index: Int) -> InkCast { InkCast(rawValue: ((index % 3) + 3) % 3) ?? .circle }
+    case circle, square, triangle, loaf, pill, diamond
+    /// The film's and the icon's trio (line-ups, the welcome sheet, the share card).
+    static let trio: [InkCast] = [.circle, .square, .triangle]
+    static func forPanel(_ index: Int) -> InkCast { InkCast(rawValue: ((index % 6) + 6) % 6) ?? .circle }
 
     static let leg: CGFloat = 34
     var bodySize: CGSize {
@@ -154,12 +157,17 @@ enum InkCast: Int, CaseIterable {
         case .circle: return CGSize(width: 196, height: 196)
         case .square: return CGSize(width: 186, height: 178)
         case .triangle: return CGSize(width: 208, height: 184)
+        case .loaf: return CGSize(width: 206, height: 150)
+        case .pill: return CGSize(width: 128, height: 206)
+        case .diamond: return CGSize(width: 200, height: 188)
         }
     }
     var height: CGFloat { Self.leg + bodySize.height }
-    fileprivate var eyeY: CGFloat { [-Self.leg - 102, -Self.leg - 87, -Self.leg - 184 * 0.32][rawValue] }
-    fileprivate var eyeDX: CGFloat { [15, 15, 14][rawValue] }
-    fileprivate var legDX: CGFloat { [16, 16, 18][rawValue] }
+    fileprivate var eyeY: CGFloat {
+        [-Self.leg - 102, -Self.leg - 87, -Self.leg - 184 * 0.32, -Self.leg - 75, -Self.leg - 120, -Self.leg - 94][rawValue]
+    }
+    fileprivate var eyeDX: CGFloat { [15, 15, 14, 16, 12, 14][rawValue] }
+    fileprivate var legDX: CGFloat { [16, 16, 18, 18, 14, 10][rawValue] }
     fileprivate var contour: [InkGeometry.Pt] { Self.contours[rawValue] }
     private static let contours: [[InkGeometry.Pt]] = InkCast.allCases.map { c in
         let b = c.bodySize, top = -leg - b.height, bot = -leg
@@ -169,6 +177,17 @@ enum InkCast: Int, CaseIterable {
         case .triangle:
             return InkGeometry.roundedPoly([CGPoint(x: 0, y: top), CGPoint(x: b.width / 2, y: bot), CGPoint(x: -b.width / 2, y: bot)],
                                            [34, 22, 22], n: 110)
+        case .loaf:      // rounded shoulders, flat feet
+            return InkGeometry.roundedPoly([CGPoint(x: -b.width / 2, y: top), CGPoint(x: b.width / 2, y: top),
+                                            CGPoint(x: b.width / 2, y: bot), CGPoint(x: -b.width / 2, y: bot)],
+                                           [96, 96, 20, 20], n: 120)
+        case .pill:
+            return InkGeometry.rrect(-b.width / 2, top, b.width, b.height, 64, n: 120)
+        case .diamond:   // the bottom vertex sits low enough that its rounding just meets the legs
+            let low = bot + 11.6, high = low - 200
+            return InkGeometry.roundedPoly([CGPoint(x: 0, y: high), CGPoint(x: 100, y: high + 100),
+                                            CGPoint(x: 0, y: low), CGPoint(x: -100, y: high + 100)],
+                                           [28, 24, 28, 24], n: 120)
         }
     }
 }
@@ -312,20 +331,34 @@ struct InkCharacter: View {
     var shadow = false
     @Environment(\.colorScheme) private var scheme
 
-    /// Units of the drawing box: every character fits the same box, so a line-up stays in scale.
-    static let box = CGRect(x: -118, y: -262, width: 236, height: 282)
+    /// Each character fills its own frame — side by side in panel headers they should read as the
+    /// same size. (A shared box kept the icon's line-up proportions, where the circle is biggest
+    /// and the triangle smallest; that belongs to InkLineup, not to single characters.)
+    static func box(_ kind: InkCast) -> CGRect {
+        let w = kind.bodySize.width, h = kind.height
+        return CGRect(x: -w / 2 - 12, y: -h - 20, width: w + 24, height: h + 36)
+    }
+    /// Pointed and narrow shapes carry less ink than a circle at the same height; nudge them up so
+    /// the set looks even.
+    static func optical(_ kind: InkCast) -> CGFloat {
+        switch kind {
+        case .triangle: return 1.1
+        case .diamond: return 1.06
+        case .square: return 0.97
+        default: return 1
+        }
+    }
 
     var body: some View {
         Canvas { gc, size in
-            let k = min(size.width / Self.box.width, size.height / Self.box.height)
+            let box = Self.box(kind)
+            let k = min(size.width / box.width, size.height / box.height) * Self.optical(kind)
             var c = gc
-            c.translateBy(x: (size.width - Self.box.width * k) / 2 - Self.box.minX * k,
-                          y: (size.height - Self.box.height * k) / 2 - Self.box.minY * k)
+            c.translateBy(x: size.width / 2 - box.midX * k, y: size.height / 2 - box.midY * k)
             c.scaleBy(x: k, y: k)
             InkDraw.character(c, kind, pose, t: t, line: Ink.line(scheme), fill: Ink.fill(scheme),
                               boost: InkCharacter.boost(scale: k), shadow: shadow)
         }
-        .aspectRatio(Self.box.width / Self.box.height, contentMode: .fit)
         .accessibilityHidden(true)
     }
 
@@ -399,7 +432,7 @@ struct InkLineup: View {
                           y: (size.height - Self.view.height * k) / 2 - Self.view.minY * k)
             c.scaleBy(x: k, y: k)
             let boost = InkCharacter.boost(scale: k * Self.scale)
-            for kind in InkCast.allCases {
+            for kind in InkCast.trio {
                 var p = poses[kind.rawValue]
                 if hello {   // one hop each, in turn, like the film's pop-in
                     let t0 = 0.25 + Double(kind.rawValue) * 0.14, u = max(0, min(1, (t - t0) / 0.32))
@@ -443,8 +476,9 @@ struct TrophyGlyph: View {
             var c = gc
             c.translateBy(x: size.width / 2, y: size.height / 2 + 2 * k)
             c.scaleBy(x: k, y: k)
-            let line = won ? Ink.line(scheme) : Ink.line(scheme).opacity(0.5)
-            InkDraw.trophy(c, fill: won ? Ink.gold : .clear, line: line, lw: max(7, 1.4 / k))
+            // Same line and fill as the characters beside it, so it reads as one of the cast's
+            // props rather than a system icon; gold once it's awarded.
+            InkDraw.trophy(c, fill: won ? Ink.gold : Ink.fill(scheme), line: Ink.line(scheme), lw: max(8, 1.6 / k))
         }
         .aspectRatio(112 / 102, contentMode: .fit)
         .accessibilityHidden(true)
@@ -479,6 +513,78 @@ struct InkSendButtonLabel: View {
                      style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
         }
         .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The composer's chips share one shape: a capsule — cream with a faint ink edge for "…",
+/// layout and mic; orange for "✦ 汇总".
+struct InkChipBackground: ViewModifier {
+    var orange = false
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .background(Capsule().fill(orange ? Ink.orange.opacity(0.12)
+                                              : Ink.fill(scheme).opacity(scheme == .dark ? 0.55 : 0.92)))
+            .overlay(Capsule().strokeBorder(orange ? Ink.orange.opacity(0.32) : Ink.line(scheme).opacity(0.18)))
+    }
+}
+
+extension View {
+    func inkChip(orange: Bool = false) -> some View { modifier(InkChipBackground(orange: orange)) }
+}
+
+/// Images for AppKit-rendered menu labels (which keep only an image and a string).
+enum InkImages {
+    /// "…" as three ink dots — the film's thinking dots. Template: follows light / dark.
+    static let dots: NSImage = {
+        let img = NSImage(size: NSSize(width: 16, height: 16), flipped: true) { _ in
+            NSColor.black.setFill()
+            for x in [3.2, 8.0, 12.8] as [CGFloat] { NSBezierPath(ovalIn: NSRect(x: x - 1.8, y: 6.2, width: 3.6, height: 3.6)).fill() }
+            return true
+        }
+        img.isTemplate = true
+        return img
+    }()
+
+    /// The film's orange "✦".
+    static let sparkle: NSImage = {
+        let img = NSImage(size: NSSize(width: 13, height: 13), flipped: true) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.addPath(InkDraw.sparklePath(center: CGPoint(x: rect.midX, y: rect.midY), r: 6.3).cgPath)
+            ctx.setFillColor(NSColor(ChorusTheme.brandOrange).cgColor)
+            ctx.fillPath()
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }()
+}
+
+/// A microphone in the ink line; orange (and filled) while listening.
+struct InkMicGlyph: View {
+    var recording = false
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Canvas { gc, size in
+            let k = min(size.width, size.height) / 20
+            var c = gc
+            c.translateBy(x: size.width / 2, y: size.height / 2)
+            c.scaleBy(x: k, y: k)
+            let color = recording ? Ink.orange : Ink.line(scheme)
+            let style = StrokeStyle(lineWidth: max(1.7, 1.3 / k), lineCap: .round, lineJoin: .round)
+            let capsule = Path(roundedRect: CGRect(x: -3.4, y: -8.2, width: 6.8, height: 11.6), cornerRadius: 3.4)
+            if recording { c.fill(capsule, with: .color(color)) }
+            c.stroke(capsule, with: .color(color), style: style)
+            var stand = Path()
+            stand.move(to: CGPoint(x: -6.4, y: -1.2))
+            stand.addQuadCurve(to: CGPoint(x: 6.4, y: -1.2), control: CGPoint(x: 0, y: 11.6))
+            stand.move(to: CGPoint(x: 0, y: 5.2)); stand.addLine(to: CGPoint(x: 0, y: 8.6))
+            stand.move(to: CGPoint(x: -3.4, y: 8.6)); stand.addLine(to: CGPoint(x: 3.4, y: 8.6))
+            c.stroke(stand, with: .color(color), style: style)
+        }
         .accessibilityHidden(true)
     }
 }

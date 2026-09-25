@@ -372,8 +372,8 @@ struct QuickInputView: View {
                         dictator.start { text in prompt = dictationBase + text }
                     }
                 } label: {
-                    Image(systemName: dictator.isRecording ? "mic.fill" : "mic")
-                        .font(.system(size: 16))
+                    InkMicGlyph(recording: dictator.isRecording)
+                        .frame(width: 18, height: 18)
                         // Calm accent-color breathing pulse while listening (consistent with the
                         // card "thinking" pulse) — not an alarming red.
                         .foregroundColor(dictator.isRecording ? ChorusTheme.brandOrange : .secondary)
