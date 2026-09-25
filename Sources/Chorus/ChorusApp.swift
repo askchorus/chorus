@@ -80,6 +80,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.smiletalker.chorus.debug.fillComposer"),
+            object: nil, queue: .main) { note in
+            MainActor.assumeIsolated {   // fills the composer only — sending stays a real click
+                guard UserDefaults.standard.bool(forKey: "debugHooksEnabled"), let text = note.object as? String else { return }
+                clog("[probe] fill composer")
+                NotificationCenter.default.post(name: .chorusDebugFillComposer, object: text)
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.smiletalker.chorus.debug.newChatAll"),
+            object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {   // the menu-bar menu's New chat, for scripted screenshots
+                guard UserDefaults.standard.bool(forKey: "debugHooksEnabled") else { return }
+                clog("[probe] new chat in every visible panel")
+                self.mbNewChatAll()
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.smiletalker.chorus.debug.fakeStreaming"),
             object: nil, queue: .main) { note in
             MainActor.assumeIsolated {
@@ -323,6 +341,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 extension Notification.Name {
     /// Posted by the 使用指引 menu item; ContentView re-presents the welcome sheet.
     static let chorusShowGuide = Notification.Name("chorusShowGuide")
+    /// Debug probe: put text in the main composer (nothing is sent).
+    static let chorusDebugFillComposer = Notification.Name("chorusDebugFillComposer")
 }
 
 @main

@@ -1483,6 +1483,9 @@ struct ContentView: View {
                 CompletionNotifier.shared.requestAuthorizationIfNeeded()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .chorusDebugFillComposer)) { note in
+            if let text = note.object as? String { prompt = text }   // debug probe (see AppDelegate)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .chorusShowGuide)) { _ in
             showWelcome = true   // 菜单 → 使用指引
         }
