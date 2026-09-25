@@ -27,6 +27,8 @@
 <button id="play">&#9654; Play with sound</button>
 <script>
 "use strict";
+
+
 /*
   Chorus promo. Every frame is drawn by draw(ctx, t): the picture at time t is a pure function of
   t — nothing carried between frames, no image files — and the soundtrack is synthesized from a
@@ -226,7 +228,110 @@ function drawPaper(ctx) {
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
 }
 
-// ---------------------------------------------------------------- layout: the Chorus window
+// ================================================================ THE FILM
+// Seven beats, one continuous timeline. Everything below is a function of the global time t.
+
+// ---------------------------------------------------------------- timeline anchors (seconds)
+const T = {
+  end: 37.0,
+  // 1 — the problem: three tabs, the same question three times
+  type0: [0.95, 1.4], paste: [1.72, 2.32], fluster: 2.62,
+  merge0: 3.75, merge1: 4.65,
+  // 2 — ask once
+  typeQ: [5.5, 6.65], send: 6.88,
+  cardPop: 7.0, burst: 7.23, depart: [7.26, 7.36, 7.56], arrive: [8.0, 8.05, 8.1],
+  answer: [8.6, 8.95, 9.3], chord: 9.9,
+  // 3 — compare
+  cmpClick: 13.1, cmpIn: 13.3, cmpLine: [14.0, 14.65], cmpOut: 16.85,
+  // 4 — crown
+  trophyIcons: 17.4, crownClick: 18.3, crownLand: 18.9,
+  // 5 — from anywhere, ask just one
+  away: 21.45, keys: 22.3, qiOpen: 22.8, at: 23.25, pick: [23.3, 23.65, 23.95], choose: 24.25,
+  typeQ2: [24.5, 25.3], send2: 25.5, back: 25.75, soloDepart: 26.35, soloArrive: 26.85, solo: 27.35,
+  // 6 — your own accounts
+  acct: 28.7, pills: [29.0, 29.2, 29.4], key: 30.2, strike: 30.65, drop: 31.2,
+  // 7 — curtain call
+  gather: 32.3, bow: 33.6, word: 34.05,
+};
+
+const Q1 = "What should I name my new kitten?";
+const Q2 = "More names like Sir Pounce?";
+const NAMES = ["Mochi!", "Biscuit!", "Sir Pounce!"];
+const SOLO_NAME = "Baron Floof!";
+
+const CAPTIONS = [
+  [0.9, 3.7, [{ text: "Asking the same thing " }, { text: "three times", underline: true }, { text: "?" }]],
+  [4.2, 5.45, [{ text: "One window. " }, { text: "Every AI.", underline: true }]],
+  [9.95, 12.95, [{ text: "Ask " }, { text: "once", underline: true }, { text: ". They all answer." }]],
+  [13.45, 17.05, [{ text: "See where they " }, { text: "agree", underline: true }, { text: ", and where they don't." }]],
+  [17.95, 21.25, [{ text: "Crown the " }, { text: "best", underline: true }, { text: " answer." }]],
+  [22.25, 28.5, [{ text: "Ask from " }, { text: "anywhere", underline: true }, { text: ". Or ask just one." }]],
+  [28.95, 32.15, [{ text: "Your own AI accounts. " }, { text: "No API keys.", underline: true }]],
+];
+
+// ---------------------------------------------------------------- helpers
+function keyframes(t, ks, ease = easeInOutCubic) {
+  if (t <= ks[0][0]) return ks[0].slice(1);
+  for (let i = 1; i < ks.length; i++) {
+    if (t < ks[i][0]) {
+      const a = ks[i - 1], b = ks[i], k = ease(seg(t, a[0], b[0]));
+      return a.slice(1).map((v, j) => lerp(v, b[j + 1], k));
+    }
+  }
+  return ks[ks.length - 1].slice(1);
+}
+function typeTimes(str, t0, t1, seed) {
+  const r = mulberry32(seed), ws = [];
+  let sum = 0;
+  for (const ch of str) { const w = 0.7 + r() * 0.6 + (ch === " " ? 0.45 : 0); ws.push(w); sum += w; }
+  let acc = t0;
+  return ws.map(w => (acc += (w / sum) * (t1 - t0)));
+}
+const typed = (times, t) => { let n = 0; for (const x of times) if (x <= t) n++; return n; };
+const TT_TAB0 = typeTimes(Q1, T.type0[0], T.type0[1], 3);
+const TT_Q1 = typeTimes(Q1, T.typeQ[0], T.typeQ[1], 42);
+const TT_Q2 = typeTimes(Q2, T.typeQ2[0], T.typeQ2[1], 7);
+function bez3(p0, p1, p2, p3, k) {
+  const u = 1 - k, a = u * u * u, b = 3 * u * u * k, c = 3 * u * k * k, d = k * k * k;
+  return [a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1]];
+}
+function text(ctx, str, x, y, size, weight = 800, color = C.ink, align = "left") {
+  ctx.font = `${weight} ${size}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "alphabetic";
+  ctx.fillText(str, x, y);
+  ctx.textAlign = "left";
+}
+function checkMark(ctx, x, y, s, color, lw = 6, p = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-12, 0);
+  const k1 = clamp(p * 2), k2 = clamp(p * 2 - 1);
+  ctx.lineTo(-12 + 8 * k1, 9 * k1);
+  if (k2 > 0) ctx.lineTo(-4 + 18 * k2, 9 - 22 * k2);
+  ctx.stroke(); ctx.restore();
+}
+function sparkleGlyph(ctx, x, y, r, color) {
+  ctx.save(); ctx.translate(x, y); ctx.fillStyle = color; ctx.beginPath();
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * TAU - Math.PI / 2, b = a + TAU / 8;
+    ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    ctx.lineTo(Math.cos(b) * r * 0.32, Math.sin(b) * r * 0.32);
+  }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+
+// A soft drop shadow under a rounded rect. Skipped when the layer is (nearly) invisible: WebKit
+// draws a shadowed fill at FULL opacity when globalAlpha is exactly 0 (a fading window left a
+// solid ghost of itself on the end card), while any alpha above zero behaves.
+function softShadow(ctx, x, y, w, h, r, fill, blur, oy, color) {
+  if (ctx.globalAlpha < 0.002) return;
+  ctx.save();
+  ctx.shadowColor = color; ctx.shadowBlur = blur; ctx.shadowOffsetY = oy;
+  ctx.fillStyle = fill; rrPath(ctx, x, y, w, h, r); ctx.fill();
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- layout
 const LAY = (() => {
   const win = { x: 240, y: 86, w: 1440, h: 720, r: 38 };
   const pad = 28, gap = 24, top = 60, ph = 520;
@@ -235,17 +340,29 @@ const LAY = (() => {
   const comp = { x: win.x + pad, y: win.y + win.h - pad - 70, w: win.w - pad * 2, h: 70, r: 35 };
   return { win, panels, comp };
 })();
+const WIN_C = [LAY.win.x + LAY.win.w / 2, LAY.win.y + LAY.win.h / 2];
 const WIN_PTS = rrect(LAY.win.x, LAY.win.y, LAY.win.w, LAY.win.h, LAY.win.r, 190);
-const PANEL_PTS = LAY.panels.map(p => rrect(p.x, p.y, p.w, p.h, p.r, 150));
 const COMP_PTS = rrect(LAY.comp.x, LAY.comp.y, LAY.comp.w, LAY.comp.h, LAY.comp.r, 160);
+const TEXT_X = LAY.comp.x + 196;                                   // composer text starts right of "Compare"
+const SEND_XY = [LAY.comp.x + LAY.comp.w - 40, LAY.comp.y + 35];
+const CMP_XY = [LAY.comp.x + 97, LAY.comp.y + 35];
 
-// ---------------------------------------------------------------- the three characters (the app icon)
+// Scene 1 tabs: three separate browser windows that later become the three panels.
+const TABS = [0, 1, 2].map(i => ({ x: 110 + i * 590, y: 166, w: 520, h: 580, r: 26, rot: [-0.035, 0.022, -0.028][i] }));
+const mergeK = t => easeInOutCubic(seg(t, T.merge0, T.merge1));
+function rectAt(i, t) {
+  const m = mergeK(t), a = TABS[i], b = LAY.panels[i];
+  return { x: lerp(a.x, b.x, m), y: lerp(a.y, b.y, m), w: lerp(a.w, b.w, m), h: lerp(a.h, b.h, m), r: lerp(a.r, b.r, m), rot: a.rot * (1 - m), m };
+}
+function toGlobal(r, lx, ly) {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2, dx = lx - cx, dy = ly - cy, c = Math.cos(r.rot), s = Math.sin(r.rot);
+  return [cx + dx * c - dy * s, cy + dx * s + dy * c];
+}
+const TAB_IN = [0, 1, 2].map(i => toGlobal(rectAt(i, 0), TABS[i].x + 96, TABS[i].y + TABS[i].h - 49));
+
+// ---------------------------------------------------------------- characters
 const LW = 11, LEG = 34;
-const BODY = [
-  { kind: "circle", w: 196, h: 196 },
-  { kind: "rect", w: 186, h: 178, r: 36 },
-  { kind: "tri", w: 208, h: 184 },
-];
+const BODY = [{ kind: "circle", w: 196, h: 196 }, { kind: "rect", w: 186, h: 178, r: 36 }, { kind: "tri", w: 208, h: 184 }];
 const BODY_PTS = BODY.map(b => {
   const top = -LEG - b.h, bot = -LEG;
   if (b.kind === "circle") return sampleCircle(0, -LEG - b.h / 2, b.h / 2, 96);
@@ -257,203 +374,48 @@ const EYE_DX = [15, 15, 14], LEG_DX = [16, 16, 18];
 const CX = LAY.panels.map(p => p.x + p.w / 2);
 const FEET = LAY.panels[0].y + LAY.panels[0].h - 30;
 const headTop = i => FEET - LEG - BODY[i].h;
+const FORM = [[806, 664], [960, 664], [1114, 664]];      // the app-icon line-up for the curtain call
 
-// s: { x, y (feet), sx, sy, rot, eye (0 shut..1 open), lx, ly (look), mouth, hop, alpha }
 function drawChar(ctx, i, s, t, opt = {}) {
-  if ((s.alpha === undefined ? 1 : s.alpha) <= 0) return;
-  const lw = opt.lw || LW, hop = s.hop || 0;
+  const alpha = s.alpha === undefined ? 1 : s.alpha;
+  if (alpha <= 0) return;
+  const lw = opt.lw || LW, hop = s.hop || 0, sc = s.scale || 1;
   ctx.save();
-  ctx.globalAlpha *= s.alpha === undefined ? 1 : s.alpha;
+  ctx.globalAlpha *= alpha;
   if (!opt.noShadow) {
-    const k = 1 - clamp(hop / 110) * 0.55;
+    const k = (1 - clamp(hop / 110) * 0.55) * sc;
     ctx.fillStyle = "rgba(38,33,26,0.08)";
     ctx.beginPath(); ctx.ellipse(s.x, s.y + 5, 74 * k, 9 * k, 0, 0, TAU); ctx.fill();
   }
-  ctx.translate(s.x, s.y - hop);
+  ctx.translate(s.x, s.y - hop * sc);
   ctx.rotate(s.rot || 0);
-  ctx.scale(s.sx || 1, s.sy || 1);
+  ctx.scale((s.sx || 1) * sc, (s.sy || 1) * sc);
   const id = 100 + i * 10, tuck = clamp(hop / 40) * 9;
   for (const side of [-1, 1]) {
     wline(ctx, side * LEG_DX[i], -LEG + 6, side * LEG_DX[i], -tuck, { id: id + (side < 0 ? 1 : 2), t, amp: 0.8, lw, stroke: C.ink });
   }
   shape(ctx, BODY_PTS[i], { id, t, amp: opt.amp === undefined ? 1.4 : opt.amp, fill: C.fill, fillAlpha: 1, stroke: C.ink, lw });
-  const eo = clamp(s.eye === undefined ? 1 : s.eye, 0.14, 1);
   const ex = (s.lx || 0) * 6, ey = (s.ly || 0) * 7;
-  ctx.fillStyle = C.ink;
-  for (const side of [-1, 1]) {
-    const w = 11, h = 25 * eo;
-    rrPath(ctx, side * EYE_DX[i] - w / 2 + ex, EYE_Y[i] - h / 2 + ey, w, h, Math.min(w, h) / 2);
-    ctx.fill();
+  ctx.fillStyle = C.ink; ctx.strokeStyle = C.ink;
+  if ((s.happy || 0) > 0.5) {
+    ctx.lineWidth = 5.5; ctx.lineCap = "round";
+    for (const side of [-1, 1]) { ctx.beginPath(); ctx.arc(side * EYE_DX[i] + ex, EYE_Y[i] + 6 + ey, 8, Math.PI * 1.12, Math.PI * 1.88); ctx.stroke(); }
+  } else {
+    const eo = clamp(s.eye === undefined ? 1 : s.eye, 0.14, 1);
+    for (const side of [-1, 1]) {
+      const w = 11, h = 25 * eo;
+      rrPath(ctx, side * EYE_DX[i] - w / 2 + ex, EYE_Y[i] - h / 2 + ey, w, h, Math.min(w, h) / 2);
+      ctx.fill();
+    }
   }
   const m = s.mouth || 0;
-  if (m > 0.04) {
-    ctx.beginPath();
-    ctx.ellipse(ex * 0.6, EYE_Y[i] + 32 + ey * 0.5, 4 + 5 * m, 2 + 9 * m, 0, 0, TAU);
-    ctx.fill();
-  }
+  if (m > 0.04) { ctx.beginPath(); ctx.ellipse(ex * 0.6, EYE_Y[i] + 32 + ey * 0.5, 4 + 5 * m, 2 + 9 * m, 0, 0, TAU); ctx.fill(); }
   ctx.restore();
 }
-
-// ---------------------------------------------------------------- props
-function drawWindow(ctx, t, pw, pp, pc) {
-  const w = LAY.win;
-  if (pw > 0.5) {
-    ctx.save();
-    ctx.globalAlpha = smooth(seg(pw, 0.5, 1));
-    ctx.shadowColor = "rgba(90,66,30,0.16)"; ctx.shadowBlur = 50; ctx.shadowOffsetY = 18;
-    ctx.fillStyle = C.win; rrPath(ctx, w.x, w.y, w.w, w.h, w.r); ctx.fill();
-    ctx.restore();
-  }
-  shape(ctx, WIN_PTS, { id: 1, t, amp: 1.6, fill: C.win, stroke: C.ink, lw: 6, draw: pw });
-  for (let k = 0; k < 3; k++) {
-    const p = seg(pw, 0.55 + k * 0.1, 0.8 + k * 0.1);
-    if (p > 0) shape(ctx, sampleCircle(w.x + 32 + k * 28, w.y + 30, 8, 28), { id: 2 + k, t, amp: 0.5, stroke: C.ink, lw: 3.5, draw: easeOutCubic(p) });
-  }
-  LAY.panels.forEach((p, i) => {
-    shape(ctx, PANEL_PTS[i], { id: 10 + i, t, amp: 1.3, fill: C.fill, stroke: C.ink, lw: 4.5, draw: pp[i] });
-    const h = smooth(seg(pp[i], 0.6, 1));
-    if (h > 0) {
-      ctx.save(); ctx.globalAlpha *= h;
-      wline(ctx, p.x + 18, p.y + 50, p.x + p.w - 18, p.y + 50, { id: 30 + i, t, amp: 0.8, lw: 3, stroke: C.hair });
-      ctx.save(); ctx.translate(p.x + 32, p.y + 25); ctx.scale(0.12, 0.12); ctx.translate(0, LEG + BODY[i].h / 2 + 8);
-      drawChar(ctx, i, { x: 0, y: 0 }, t, { lw: 30, noShadow: true, amp: 0 });
-      ctx.restore();
-      scribble(ctx, p.x + 58, p.y + 25, 92, { id: 40 + i, t, amp: 2.2, wave: 22, lw: 5, stroke: C.faint, draw: h });
-      ctx.restore();
-    }
-  });
-  shape(ctx, COMP_PTS, { id: 20, t, amp: 1.3, fill: C.fill, stroke: C.ink, lw: 4.5, draw: pc });
-}
-
-function drawBubble(ctx, i, t, p, t0, lines) {
-  if (p <= 0) return;
-  const s = easeOutBack(clamp(p), 1.6), w = 330, h = 150, tail = 26, tip = headTop(i) - 16;
-  const x = CX[i];
-  ctx.save();
-  ctx.translate(x, tip); ctx.scale(s, s);
-  const pts = roundedPoly([[-w / 2, -tail - h], [w / 2, -tail - h], [w / 2, -tail], [16, -tail], [-4, 0], [-28, -tail], [-w / 2, -tail]],
-                          [30, 30, 30, 10, 6, 10, 30], 170);
-  shape(ctx, pts, { id: 200 + i, t, amp: 1.3, fill: C.fill, fillAlpha: 1, stroke: C.ink, lw: 6 });
-  lines.forEach((f, k) => {
-    const d = easeInOutCubic(seg(t, t0 + 0.12 + k * 0.12, t0 + 0.34 + k * 0.12));
-    scribble(ctx, -w / 2 + 36, -tail - h + 42 + k * 33, (w - 72) * f, { id: 210 + i * 5 + k, t, amp: 2.6, wave: 30, lw: 6, alpha: 0.78, draw: d });
-  });
+function miniChar(ctx, i, x, y, s, t) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.translate(0, LEG + BODY[i].h / 2 + 8);
+  drawChar(ctx, i, { x: 0, y: 0 }, t, { lw: Math.min(34, 3.6 / s), noShadow: true, amp: 0 });
   ctx.restore();
-}
-
-function drawThinking(ctx, i, t, t0, t1) {
-  const vis = smooth(seg(t, t0, t0 + 0.1)) * (1 - smooth(seg(t, t1 - 0.05, t1 + 0.05)));
-  if (vis <= 0) return;
-  for (let k = 0; k < 3; k++) {
-    const p = easeOutBack(seg(t, t0 + 0.1 + k * 0.12, t0 + 0.3 + k * 0.12), 2);
-    if (p <= 0) continue;
-    const bob = 4 * Math.sin(TAU * (t * 2.2 + k * 0.33));
-    ctx.save(); ctx.globalAlpha *= vis * 0.8; ctx.fillStyle = C.ink;
-    ctx.beginPath(); ctx.arc(CX[i] - 28 + 28 * k, headTop(i) - 34 + bob, 7.5 * p, 0, TAU); ctx.fill();
-    ctx.restore();
-  }
-}
-
-function drawNote(ctx, x, y, s, alpha) {
-  if (alpha <= 0) return;
-  ctx.save();
-  ctx.translate(x, y); ctx.scale(s, s); ctx.globalAlpha *= alpha;
-  ctx.fillStyle = C.orange; ctx.strokeStyle = C.orange; ctx.lineWidth = 5; ctx.lineCap = "round";
-  ctx.save(); ctx.rotate(-0.35); ctx.beginPath(); ctx.ellipse(0, 0, 13, 9.5, 0, 0, TAU); ctx.fill(); ctx.restore();
-  ctx.beginPath(); ctx.moveTo(11, -4); ctx.lineTo(11, -46); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(11, -46); ctx.quadraticCurveTo(29, -38, 24, -20); ctx.stroke();
-  ctx.restore();
-}
-
-const CARD_PTS = rrect(-60, -40, 120, 80, 14, 70);
-function drawCard(ctx, x, y, s, rot, t, id) {
-  if (s <= 0) return;
-  ctx.save();
-  ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
-  shape(ctx, CARD_PTS, { id, t, amp: 1, fill: C.fill, fillAlpha: 1, stroke: C.orange, lw: 6 });
-  scribble(ctx, -38, -12, 76, { id: id + 1, t, amp: 2, wave: 22, lw: 5, stroke: C.orange });
-  scribble(ctx, -38, 12, 48, { id: id + 2, t, amp: 2, wave: 22, lw: 5, stroke: C.orange });
-  ctx.restore();
-}
-
-function sparkle(ctx, x, y, p) {
-  if (p <= 0 || p >= 1) return;
-  ctx.save();
-  ctx.strokeStyle = C.orange; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.globalAlpha *= 1 - p;
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * TAU + 0.3, r1 = 16 + 30 * p, r2 = r1 + 8 + 12 * (1 - p);
-    ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1); ctx.lineTo(x + Math.cos(a) * r2, y + Math.sin(a) * r2); ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function caption(ctx, t, t0, parts) {
-  const p = seg(t, t0, t0 + 0.4);
-  if (p <= 0) return;
-  ctx.save();
-  ctx.globalAlpha *= smooth(p);
-  ctx.font = `800 72px ${FONT}`; ctx.textBaseline = "alphabetic"; ctx.fillStyle = C.ink;
-  const widths = parts.map(q => ctx.measureText(q.text).width), total = widths.reduce((a, b) => a + b, 0);
-  let x = W / 2 - total / 2;
-  const y = 962 + (1 - easeOutCubic(p)) * 22;
-  parts.forEach((q, k) => {
-    ctx.fillText(q.text, x, y);
-    if (q.underline) scribble(ctx, x + 4, y + 20, widths[k] - 8, { id: 900 + k, t, amp: 3, wave: 44, lw: 8, stroke: C.orange, draw: easeInOutCubic(seg(t, t0 + 0.25, t0 + 0.7)) });
-    x += widths[k];
-  });
-  ctx.restore();
-}
-
-// ---------------------------------------------------------------- scene: ask once, all answer
-const QUESTION = "Should I learn Python or JavaScript first?";
-const TYPE_T0 = 2.05, TYPE_T1 = 3.4, SEND_T = 3.6;
-const TYPE_TIMES = (() => {
-  const r = mulberry32(42), ws = [];
-  let sum = 0;
-  for (const ch of QUESTION) { const w = 0.7 + r() * 0.6 + (ch === " " ? 0.45 : 0); ws.push(w); sum += w; }
-  let acc = TYPE_T0;
-  return ws.map(w => (acc += (w / sum) * (TYPE_T1 - TYPE_T0)));
-})();
-const POP = [0.95, 1.1, 1.25];
-const ARRIVE = [4.72, 4.77, 4.82];
-const ANSWER = [5.35, 5.7, 6.05];
-const CHORD = 6.65;
-const BUBBLE_LINES = [[0.86, 0.62, 0.78], [0.72, 0.9, 0.5], [0.9, 0.68, 0.58]];
-let TYPED_W = 600;   // measured once the font is in
-
-// The question leaves through the send button, bursts into three, and each copy arcs over the
-// top of the window to land on its character's head. Paths are cubic Béziers chosen so no card
-// ever crosses a face: they rise to the right of the triangle, travel above the heads, drop in.
-const SEND_XY = [LAY.comp.x + LAY.comp.w - 40, LAY.comp.y + 35];
-const BURST_T = 3.95;
-const DEPART = [3.98, 4.08, 4.28];
-const BURST = [[-46, -70], [0, -86], [40, -68]];        // offsets from the send button at the burst
-const BURST_ROT = [-0.25, 0, 0.25];
-const FLIGHT = [                                          // [P1, P2] control points per character
-  [[1660, 240], [760, 60]],
-  [[1660, 300], [1150, 120]],
-  [[1650, 420], [1540, 230]],
-];
-const landY = i => headTop(i) - 10;
-function bez3(p0, p1, p2, p3, k) {
-  const u = 1 - k, a = u * u * u, b2 = 3 * u * u * k, c = 3 * u * k * k, d = k * k * k;
-  return [a * p0[0] + b2 * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b2 * p1[1] + c * p2[1] + d * p3[1]];
-}
-function cardPos(i, t) {
-  const [bx, by] = SEND_XY;
-  if (t < 3.72) return { x: bx, y: by, s: 0, rot: 0, vis: false };
-  if (t < BURST_T) {
-    const k = seg(t, 3.72, BURST_T);
-    return { x: bx, y: by - 62 * easeOutCubic(k), s: easeOutBack(k, 2.2) * 0.95, rot: 0, vis: true };
-  }
-  const f = easeOutBack(seg(t, BURST_T, BURST_T + 0.14), 2);
-  const P0 = [bx + BURST[i][0], by + BURST[i][1]];
-  const bob = 4 * Math.sin(TAU * 3 * (t - BURST_T));
-  if (t < DEPART[i]) return { x: lerp(bx, P0[0], f), y: lerp(by - 62, P0[1], f) + bob * seg(t, BURST_T + 0.1, BURST_T + 0.2), s: 0.95, rot: BURST_ROT[i] * f, vis: true };
-  const k = easeInOutCubic(seg(t, DEPART[i], ARRIVE[i]));
-  const [x, y] = bez3(P0, FLIGHT[i][0], FLIGHT[i][1], [CX[i], landY(i)], k);
-  const s = lerp(0.95, 0.6, k) * (1 - smooth(seg(t, ARRIVE[i], ARRIVE[i] + 0.08)));
-  return { x, y, s, rot: lerp(BURST_ROT[i], 0, k) - 0.22 * Math.sin(Math.PI * k), vis: t < ARRIVE[i] + 0.08 };
 }
 
 function hopAt(t, t0, dur, h) {
@@ -463,146 +425,740 @@ function hopAt(t, t0, dur, h) {
   o.sq += 0.06 * bump(t, t0 + dur - 0.02, 0.16);
   return o;
 }
-
 function singing(t, t0, dur) {
   const m = smooth(seg(t, t0, t0 + 0.08)) * (1 - smooth(seg(t, t0 + dur - 0.3, t0 + dur)));
   return m * (0.85 + 0.15 * Math.sin(TAU * 6 * (t - t0)));
 }
+const cursorXY = t => cursorState(t).slice(0, 2);
+const cmpCard = [960, 282];
 
-function charStateAsk(i, t) {
-  const s = { x: CX[i], y: FEET, sx: 1, sy: 1, rot: 0, eye: 1, lx: 0, ly: 0, mouth: 0, hop: 0, alpha: 1, rise: 0 };
-  const pop = POP[i];
-  if (t < pop) { s.alpha = 0; return s; }
-  const pr = seg(t, pop, pop + 0.42);
-  s.rise = (1 - easeOutBack(pr, 1.5)) * 300;
-  let sq = 0.11 * bump(t, pop + 0.4, 0.22) - 0.08 * (1 - pr);
-  // hops: card lands on the head, then the answer, then the chord
-  const hops = [hopAt(t, ARRIVE[i] + 0.04, 0.24, 12), hopAt(t, ANSWER[i], 0.34, 26), hopAt(t, CHORD, 0.36, 18)];
+const BLINKS = [
+  [1.9, 5.2, 11.4, 15.1, 20.2, 23.6, 30.8, 35.6],
+  [2.4, 6.0, 12.1, 15.9, 21.0, 24.1, 31.5, 36.1],
+  [2.1, 5.6, 11.9, 16.4, 20.6, 24.4, 29.9, 32.0, 36.4],
+];
+function lookSegs(i) {
+  const toward = (x, y) => t => { const [fx, fy] = feetXY(i, t); return [clamp((x - fx) / 360, -1, 1), clamp((y - (fy - 130)) / 220, -1, 1)]; };
+  const atCursor = t => { const [x, y] = cursorXY(t); return toward(x, y)(t); };
+  const segs = [
+    [[0.95, 1.45], [1.7, 2.05], [2.28, 2.6]][i].concat([t => [-0.3, 1]]),
+    [2.7, 3.6, atCursor],
+    [T.typeQ[0] - 0.1, T.send, t => toward(TEXT_X + TT_W, LAY.comp.y + 35)(t)],
+    [T.send, T.arrive[i], t => { const c = flight(i, t, T.cardPop, T.depart[i], T.arrive[i], true); return c ? toward(c.x, c.y)(t) : [0, 0]; }],
+    [T.arrive[i], T.answer[i], t => [0.3 * Math.sin(TAU * 0.6 * t), -1]],
+    [T.chord, T.chord + 1.1, t => [[0.9, 0, -0.9][i], 0]],
+    [12.55, T.cmpIn, atCursor],
+    [T.cmpIn, T.cmpOut + 0.1, t => toward(cmpCard[0], cmpCard[1])(t)],
+    [17.7, T.crownClick + 0.1, atCursor],
+    [T.crownClick + 0.1, T.crownLand + 0.2, t => toward(TROPHY_LAND[0], TROPHY_LAND[1])(t)],
+    [T.away + 0.4, T.send2, t => [-0.8, 0.5]],
+    [T.pills[i], T.key - 0.1, t => [0, -1]],
+    [T.key, T.drop + 0.6, t => toward(960, 236)(t)],
+    [T.gather, T.gather + 1.0, t => [[0.8, 0, -0.8][i], 0]],
+  ];
+  if (i === 2) {
+    segs.push([T.crownLand + 0.2, 21.2, t => [0, -0.2]]);
+    segs.push([T.soloDepart - 0.2, T.soloArrive, t => { const c = flight(2, t, T.soloDepart - 0.18, T.soloDepart, T.soloArrive, false); return c ? toward(c.x, c.y)(t) : [0, 0]; }]);
+    segs.push([T.soloArrive, T.solo, t => [0.3 * Math.sin(TAU * 0.6 * t), -1]]);
+  } else {
+    segs.push([T.crownLand + 0.2, 21.2, t => [i === 0 ? 1 : 1, 0]]);
+  }
+  return segs;
+}
+const LOOKS = [0, 1, 2].map(lookSegs);
+function lookAt(i, t) {
+  let lx = 0, ly = 0;
+  for (const [a, b, f] of LOOKS[i]) {
+    const w = smooth(seg(t, a - 0.15, a + 0.05)) * (1 - smooth(seg(t, b - 0.05, b + 0.15)));
+    if (w > 0.001) { const [x, y] = f(t); lx += w * x; ly += w * y; }
+  }
+  return [clamp(lx, -1, 1), clamp(ly, -1, 1)];
+}
+
+function feetXY(i, t) {
+  const r = rectAt(i, t);
+  let [x, y] = toGlobal(r, r.x + r.w / 2, r.y + r.h - lerp(106, 30, r.m));
+  const g = easeInOutCubic(seg(t, T.gather + 0.1, T.gather + 1.0));
+  if (g > 0) { x = lerp(x, FORM[i][0], g); y = lerp(y, FORM[i][1], g); }
+  return [x, y];
+}
+
+function charState(i, t) {
+  const r = rectAt(i, t);
+  const [x, y] = feetXY(i, t);
+  const s = { x, y, sx: 1, sy: 1, rot: r.rot, eye: 1, lx: 0, ly: 0, mouth: 0, hop: 0, alpha: 1, happy: 0, scale: 1 };
+  const a0 = 0.38 + i * 0.12;
+  s.alpha = smooth(seg(t, a0, a0 + 0.12));
+  s.scale = clamp(easeOutBack(seg(t, a0, a0 + 0.36), 1.8), 0, 1.3) * lerp(1, 1.18, easeInOutCubic(seg(t, T.gather + 0.1, T.gather + 1.0)));
+  let sq = 0;
+  const hops = [
+    hopAt(t, [T.type0[1], T.paste[0], T.paste[1]][i] + 0.02, 0.22, 10),
+    hopAt(t, T.merge1 - 0.05 + i * 0.06, 0.3, 20),
+    hopAt(t, T.arrive[i] + 0.04, 0.24, 12),
+    hopAt(t, T.answer[i], 0.34, 26),
+    hopAt(t, T.chord, 0.36, 18),
+    hopAt(t, T.gather + 1.0, 0.3, 14),
+  ];
+  if (i === 2) hops.push(hopAt(t, T.crownLand + 0.03, 0.3, 30), hopAt(t, T.crownLand + 0.4, 0.3, 24), hopAt(t, T.soloArrive + 0.04, 0.24, 12), hopAt(t, T.solo, 0.34, 26));
+  else hops.push(hopAt(t, T.crownLand + 0.14, 0.3, 18), hopAt(t, T.acct, 0.26, 12));
+  hops.push(hopAt(t, T.pills[i], 0.26, 12));
   for (const h of hops) { s.hop += h.hop; sq += h.sq; }
+  // bow at the curtain call
+  const bow = bump(t, T.bow, 0.9);
+  sq += 0.1 * bow;
   s.sy = (1 - sq) * (1 + 0.012 * Math.sin(TAU * (t * 0.8 + i * 0.37)));
   s.sx = 1 + sq * 0.7;
   // eyes
-  for (const b of [[2.25, 7.7], [2.6, 7.9], [1.95, 7.6]][i]) s.eye = Math.min(s.eye, 1 - bump(t, b, 0.16));
-  const tx = LAY.comp.x + 34 + TYPED_W, cp = cardPos(i, t);
-  const wType = smooth(seg(t, 1.9, 2.2)) * (1 - smooth(seg(t, 3.62, 3.8)));
-  const wCard = smooth(seg(t, 3.62, 3.8)) * (1 - smooth(seg(t, ARRIVE[i], ARRIVE[i] + 0.12)));
-  const wUp = smooth(seg(t, ARRIVE[i], ARRIVE[i] + 0.12)) * (1 - smooth(seg(t, ANSWER[i] - 0.05, ANSWER[i] + 0.1)));
-  const wChord = smooth(seg(t, CHORD, CHORD + 0.2)) * (1 - smooth(seg(t, CHORD + 0.9, CHORD + 1.2)));
-  const bodyY = FEET - LEG - BODY[i].h / 2;
-  s.lx = wType * clamp((tx - CX[i]) / 420, -1, 1) + wCard * clamp((cp.x - CX[i]) / 260, -1, 1)
-       + wUp * 0.3 * Math.sin(TAU * 0.6 * t) + wChord * [0.9, 0, -0.9][i];
-  s.ly = wType * 1 + wCard * clamp((cp.y - bodyY) / 220, -1, 1) - wUp * 1;
-  // singing: the answer, then all three together
-  s.mouth = Math.max(singing(t, ANSWER[i], 0.95), singing(t, CHORD, 1.65));
-  s.rot = 0.04 * Math.sin(TAU * 0.9 * (t - CHORD)) * smooth(seg(t, CHORD, CHORD + 0.3));
+  for (const b of BLINKS[i]) s.eye = Math.min(s.eye, 1 - bump(t, b, 0.16));
+  if (i !== 2) {
+    const asleep = smooth(seg(t, T.away + 3.2, T.away + 3.6)) * (1 - smooth(seg(t, T.acct - 0.15, T.acct)));
+    s.eye = Math.min(s.eye, 1 - 0.86 * asleep);
+  }
+  s.happy = (i === 2 && t > T.crownLand && t < 21.0 ? 1 : 0) + (t > T.bow - 0.05 && t < T.bow + 1.0 ? 1 : 0);
+  [s.lx, s.ly] = lookAt(i, t);
+  s.mouth = Math.max(singing(t, T.answer[i], 0.95), singing(t, T.chord, 1.65), singing(t, T.bow, 2.3), i === 2 ? singing(t, T.solo, 1.0) : 0);
+  s.rot += 0.04 * Math.sin(TAU * 0.9 * (t - T.chord)) * smooth(seg(t, T.chord, T.chord + 0.3)) * (1 - smooth(seg(t, T.chord + 1.6, T.chord + 2.0)));
+  s.rot += 0.035 * Math.sin(TAU * 0.9 * (t - T.bow)) * smooth(seg(t, T.bow + 0.6, T.bow + 0.9));
   return s;
 }
 
-const NOTES = [[0, 5.4], [1, 5.75], [2, 6.1], [0, 6.7], [1, 6.73], [2, 6.76], [0, 7.35], [1, 7.4], [2, 7.45]];
+// ---------------------------------------------------------------- the question card in flight
+const BURST = [[-46, -70], [0, -86], [40, -68]], BURST_ROT = [-0.25, 0, 0.25];
+const FLIGHT = [[[1660, 240], [760, 60]], [[1660, 300], [1150, 120]], [[1650, 420], [1540, 230]]];
+const landY = i => headTop(i) - 10;
+function flight(i, t, tPop, tDepart, tArrive, burst) {
+  const [bx, by] = SEND_XY;
+  if (t < tPop || t >= tArrive + 0.08) return null;
+  const tHold = burst ? T.burst : tDepart;
+  if (t < tHold) { const k = seg(t, tPop, tHold); return { x: bx, y: by - 62 * easeOutCubic(k), s: easeOutBack(k, 2.2) * 0.95, rot: 0 }; }
+  let P0 = [bx, by - 62], rot0 = 0;
+  if (burst) {
+    const f = easeOutBack(seg(t, T.burst, T.burst + 0.14), 2);
+    P0 = [bx + BURST[i][0], by + BURST[i][1]]; rot0 = BURST_ROT[i];
+    if (t < tDepart) return { x: lerp(bx, P0[0], f), y: lerp(by - 62, P0[1], f) + 4 * Math.sin(TAU * 3 * (t - T.burst)) * seg(t, T.burst + 0.1, T.burst + 0.2), s: 0.95, rot: rot0 * f };
+  }
+  const k = easeInOutCubic(seg(t, tDepart, tArrive));
+  const [x, y] = bez3(P0, FLIGHT[i][0], FLIGHT[i][1], [CX[i], landY(i)], k);
+  return { x, y, s: lerp(0.95, 0.6, k) * (1 - smooth(seg(t, tArrive, tArrive + 0.08))), rot: lerp(rot0, 0, k) - 0.22 * Math.sin(Math.PI * k) };
+}
+const CARD_PTS = rrect(-60, -40, 120, 80, 14, 70);
+function drawCard(ctx, c, t, id) {
+  if (!c || c.s <= 0) return;
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.rot); ctx.scale(c.s, c.s);
+  shape(ctx, CARD_PTS, { id, t, amp: 1, fill: C.fill, fillAlpha: 1, stroke: C.orange, lw: 6 });
+  scribble(ctx, -38, -12, 76, { id: id + 1, t, amp: 2, wave: 22, lw: 5, stroke: C.orange });
+  scribble(ctx, -38, 12, 48, { id: id + 2, t, amp: 2, wave: 22, lw: 5, stroke: C.orange });
+  ctx.restore();
+}
+function sparkle(ctx, x, y, p, color = C.orange) {
+  if (p <= 0 || p >= 1) return;
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.globalAlpha *= 1 - p;
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * TAU + 0.3, r1 = 16 + 30 * p, r2 = r1 + 8 + 12 * (1 - p);
+    ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1); ctx.lineTo(x + Math.cos(a) * r2, y + Math.sin(a) * r2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- speech bubbles
+const BUB = { w: 330, h: 150, tail: 26 };
+const BUB_PTS = roundedPoly([[-BUB.w / 2, -BUB.tail - BUB.h], [BUB.w / 2, -BUB.tail - BUB.h], [BUB.w / 2, -BUB.tail], [16, -BUB.tail], [-4, 0], [-28, -BUB.tail], [-BUB.w / 2, -BUB.tail]],
+                            [30, 30, 30, 10, 6, 10, 30], 170);
+const bubbleTip = i => [CX[i], headTop(i) - 16];
+const TROPHY_LAND = [CX[2] + BUB.w / 2 - 20, headTop(2) - 16 - BUB.tail - BUB.h - 4];
+function bubbleState(i, t) {
+  const solo = i === 2 && t >= T.solo;
+  const t0 = solo ? T.solo : T.answer[i];
+  let p = seg(t, t0, t0 + 0.34);
+  let alpha = 1, dx = 0, dy = 0, mul = 1;
+  if (!solo) {
+    const toCard = easeInOutCubic(seg(t, T.cmpIn - 0.05 + i * 0.05, T.cmpIn + 0.4 + i * 0.05));
+    const fromCard = easeInOutCubic(seg(t, T.cmpOut + 0.1 + i * 0.05, T.cmpOut + 0.55 + i * 0.05));
+    const k = toCard * (1 - fromCard);
+    const [tx, ty] = bubbleTip(i), cy = ty - BUB.tail - BUB.h / 2;
+    dx = (cmpCard[0] - tx) * k; dy = (cmpCard[1] - cy) * k; mul = lerp(1, 0.35, k); alpha = 1 - smooth(seg(k, 0.5, 1));
+    alpha *= 1 - smooth(seg(t, T.away, T.away + 0.25));
+  } else {
+    alpha = 1;
+  }
+  alpha *= 1 - smooth(seg(t, T.acct, T.acct + 0.25));
+  const gold = i === 2 && !solo && t >= T.crownLand;
+  return { p, alpha, dx, dy, mul, t0, name: solo ? SOLO_NAME : NAMES[i], gold };
+}
+function drawBubble(ctx, i, t) {
+  const b = bubbleState(i, t);
+  if (b.p <= 0 || b.alpha <= 0.001) return;
+  const s = easeOutBack(clamp(b.p), 1.6) * b.mul, [x, y] = bubbleTip(i);
+  ctx.save();
+  ctx.globalAlpha *= b.alpha;
+  ctx.translate(x + b.dx, y + b.dy); ctx.scale(s, s);
+  shape(ctx, BUB_PTS, { id: 200 + i + (b.name === SOLO_NAME ? 7 : 0), t, amp: 1.3, fill: C.fill, fillAlpha: 1, stroke: b.gold ? C.gold : C.ink, lw: b.gold ? 7 : 6 });
+  const top = -BUB.tail - BUB.h, left = -BUB.w / 2 + 34;
+  const reveal = easeInOutCubic(seg(t, b.t0 + 0.12, b.t0 + 0.42));
+  if (reveal > 0) {
+    ctx.save(); ctx.beginPath(); ctx.rect(left - 4, top, (BUB.w - 60) * reveal + 4, 80); ctx.clip();
+    text(ctx, b.name, left, top + 58, 40, 900, C.ink); ctx.restore();
+  }
+  [0.82, 0.56].forEach((f, k) => {
+    const d = easeInOutCubic(seg(t, b.t0 + 0.4 + k * 0.12, b.t0 + 0.62 + k * 0.12));
+    scribble(ctx, left, top + 94 + k * 30, (BUB.w - 68) * f, { id: 220 + i * 5 + k, t, amp: 2.4, wave: 28, lw: 5.5, alpha: 0.55, draw: d });
+  });
+  ctx.restore();
+}
+function drawThinking(ctx, i, t, t0, t1) {
+  const vis = smooth(seg(t, t0, t0 + 0.1)) * (1 - smooth(seg(t, t1 - 0.05, t1 + 0.05)));
+  if (vis <= 0) return;
+  for (let k = 0; k < 3; k++) {
+    const p = easeOutBack(seg(t, t0 + 0.1 + k * 0.12, t0 + 0.3 + k * 0.12), 2);
+    if (p <= 0) continue;
+    ctx.save(); ctx.globalAlpha *= vis * 0.8; ctx.fillStyle = C.ink;
+    ctx.beginPath(); ctx.arc(CX[i] - 28 + 28 * k, headTop(i) - 34 + 4 * Math.sin(TAU * (t * 2.2 + k * 0.33)), 7.5 * p, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+function drawNote(ctx, x, y, s, alpha) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.globalAlpha *= alpha;
+  ctx.fillStyle = C.orange; ctx.strokeStyle = C.orange; ctx.lineWidth = 5; ctx.lineCap = "round";
+  ctx.save(); ctx.rotate(-0.35); ctx.beginPath(); ctx.ellipse(0, 0, 13, 9.5, 0, 0, TAU); ctx.fill(); ctx.restore();
+  ctx.beginPath(); ctx.moveTo(11, -4); ctx.lineTo(11, -46); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(11, -46); ctx.quadraticCurveTo(29, -38, 24, -20); ctx.stroke();
+  ctx.restore();
+}
+const NOTES = [
+  [0, T.answer[0] + 0.05], [1, T.answer[1] + 0.05], [2, T.answer[2] + 0.05],
+  [0, T.chord + 0.05], [1, T.chord + 0.08], [2, T.chord + 0.11], [0, T.chord + 0.7], [1, T.chord + 0.75], [2, T.chord + 0.8],
+  [2, T.solo + 0.05], [2, T.solo + 0.55],
+];
+
+// ---------------------------------------------------------------- scene 1: tabs, and the window they become
+function drawTabsAndPanels(ctx, t) {
+  for (let i = 0; i < 3; i++) {
+    const r = rectAt(i, t), m = r.m;
+    const drawIn = easeInOutCubic(seg(t, 0.05 + i * 0.12, 0.7 + i * 0.12));
+    if (drawIn <= 0) continue;
+    ctx.save();
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    ctx.translate(cx, cy); ctx.rotate(r.rot); ctx.translate(-cx, -cy);
+    const shadowA = (1 - m) * smooth(seg(drawIn, 0.5, 1));
+    if (shadowA > 0.01) {
+      ctx.save(); ctx.globalAlpha *= shadowA;
+      softShadow(ctx, r.x, r.y, r.w, r.h, r.r, C.fill, 36, 14, "rgba(90,66,30,0.15)");
+      ctx.restore();
+    }
+    shape(ctx, rrect(r.x, r.y, r.w, r.h, r.r, 150), { id: 10 + i, t, amp: 1.3, fill: C.fill, stroke: C.ink, lw: lerp(5.5, 4.5, m), draw: drawIn });
+    const chrome = smooth(seg(drawIn, 0.6, 1)) * (1 - smooth(seg(m, 0, 0.45)));
+    if (chrome > 0) {
+      ctx.save(); ctx.globalAlpha *= chrome;
+      for (let k = 0; k < 3; k++) shape(ctx, sampleCircle(r.x + 26 + k * 21, r.y + 25, 6, 24), { id: 50 + i * 3 + k, t, amp: 0.4, stroke: C.ink, lw: 3 });
+      ctx.lineWidth = 3; ctx.strokeStyle = C.faint; rrPath(ctx, r.x + 96, r.y + 13, r.w - 126, 24, 12); ctx.stroke();
+      scribble(ctx, r.x + 112, r.y + 25, 120, { id: 60 + i, t, amp: 1.6, wave: 18, lw: 4, stroke: C.faint });
+      wline(ctx, r.x + 14, r.y + 48, r.x + r.w - 14, r.y + 48, { id: 64 + i, t, amp: 0.8, lw: 3, stroke: C.hair });
+      ctx.restore();
+    }
+    const header = smooth(seg(m, 0.55, 1));
+    if (header > 0) {
+      ctx.save(); ctx.globalAlpha *= header;
+      wline(ctx, r.x + 18, r.y + 50, r.x + r.w - 18, r.y + 50, { id: 30 + i, t, amp: 0.8, lw: 3, stroke: C.hair });
+      miniChar(ctx, i, r.x + 32, r.y + 25, 0.12, t);
+      scribble(ctx, r.x + 58, r.y + 25, 92, { id: 40 + i, t, amp: 2.2, wave: 22, lw: 5, stroke: C.faint });
+      drawHeaderTrophy(ctx, i, t, r);
+      ctx.restore();
+    }
+    const inputA = smooth(seg(drawIn, 0.6, 1)) * (1 - smooth(seg(m, 0, 0.35)));
+    if (inputA > 0) {
+      ctx.save(); ctx.globalAlpha *= inputA;
+      const ix = r.x + 20, iy = r.y + r.h - 76, iw = r.w - 40;
+      shape(ctx, rrect(ix, iy, iw, 54, 27, 110), { id: 70 + i, t, amp: 1, fill: C.fill, fillAlpha: 1, stroke: C.ink, lw: 4 });
+      const str = i === 0 ? Q1.slice(0, typed(TT_TAB0, t)) : (t >= T.paste[i - 1] ? Q1 : "");
+      if (str) {
+        const flash = i > 0 ? 1 - smooth(seg(t, T.paste[i - 1], T.paste[i - 1] + 0.5)) : 0;
+        ctx.font = `600 22px ${FONT}`;
+        if (flash > 0) { ctx.fillStyle = `rgba(219,128,66,${0.28 * flash})`; ctx.fillRect(ix + 20, iy + 12, ctx.measureText(str).width + 8, 30); }
+        text(ctx, str, ix + 24, iy + 35, 22, 600, C.ink);
+      } else {
+        text(ctx, "Ask anything…", ix + 24, iy + 35, 22, 600, C.faint);
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+}
+
+function drawWindowFrame(ctx, t) {
+  const p = easeInOutCubic(seg(t, T.merge0 + 0.2, T.merge1 + 0.2));
+  if (p <= 0) return;
+  const w = LAY.win;
+  if (p > 0.5) {
+    ctx.save(); ctx.globalAlpha *= smooth(seg(p, 0.5, 1));
+    softShadow(ctx, w.x, w.y, w.w, w.h, w.r, C.win, 50, 18, "rgba(90,66,30,0.16)");
+    ctx.restore();
+  }
+  shape(ctx, WIN_PTS, { id: 1, t, amp: 1.6, fill: C.win, stroke: C.ink, lw: 6, draw: p });
+  for (let k = 0; k < 3; k++) {
+    const q = seg(p, 0.55 + k * 0.1, 0.8 + k * 0.1);
+    if (q > 0) shape(ctx, sampleCircle(w.x + 32 + k * 28, w.y + 30, 8, 28), { id: 2 + k, t, amp: 0.5, stroke: C.ink, lw: 3.5, draw: easeOutCubic(q) });
+  }
+}
 
 function drawComposer(ctx, t) {
-  const c = LAY.comp, vis = smooth(seg(t, 0.8, 1.1));
+  const p = easeInOutCubic(seg(t, T.merge0 + 0.4, T.merge1 + 0.3));
+  if (p <= 0) return;
+  shape(ctx, COMP_PTS, { id: 20, t, amp: 1.3, fill: C.fill, stroke: C.ink, lw: 4.5, draw: p });
+  const vis = smooth(seg(t, T.merge1, T.merge1 + 0.3));
   if (vis <= 0) return;
-  const tx = c.x + 34, ty = c.y + 46, n = TYPE_TIMES.filter(x => x <= t).length;
-  ctx.save();
-  ctx.font = `600 30px ${FONT}`; ctx.textBaseline = "alphabetic";
-  const ph = 1 - smooth(seg(t, TYPE_T0 - 0.12, TYPE_T0));
-  if (ph > 0) { ctx.globalAlpha = vis * ph; ctx.fillStyle = C.faint; ctx.fillText("Ask every AI…", tx, ty); }
-  const go = seg(t, SEND_T, SEND_T + 0.2), fade = 1 - smooth(go);
-  if (n > 0 && fade > 0) {
-    const s = QUESTION.slice(0, n);
-    ctx.globalAlpha = vis * fade; ctx.fillStyle = C.ink; ctx.fillText(s, tx + 160 * go * go, ty);
-    const blink = t < TYPE_T1 + 0.05 || Math.floor((t - TYPE_T1) * 3) % 2 === 1;
-    if (t < SEND_T && blink) ctx.fillRect(tx + ctx.measureText(s).width + 4, ty - 27, 3, 33);
+  const c = LAY.comp, ty = c.y + 46;
+  ctx.save(); ctx.globalAlpha *= vis;
+  // "✦ Compare" — the summarize button
+  const press = 1 - 0.1 * bump(t, T.cmpClick - 0.03, 0.14);
+  ctx.save(); ctx.translate(CMP_XY[0], CMP_XY[1]); ctx.scale(press, press);
+  const lit = bump(t, T.cmpClick, 0.9);
+  ctx.fillStyle = `rgba(219,128,66,${0.1 + 0.18 * lit})`; rrPath(ctx, -79, -21, 158, 42, 21); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = `rgba(219,128,66,${0.45 + 0.4 * lit})`; ctx.stroke();
+  sparkleGlyph(ctx, -52, 0, 12, C.orange);
+  text(ctx, "Compare", -34, 8, 22, 800, C.orange);
+  ctx.restore();
+  // text: placeholder, the typed question, the caret
+  const n = typed(TT_Q1, t), go = seg(t, T.send, T.send + 0.2);
+  const showQ = n > 0 && go < 1;
+  const ph = (1 - smooth(seg(t, T.typeQ[0] - 0.12, T.typeQ[0]))) + smooth(seg(t, T.send + 0.4, T.send + 0.8));
+  if (!showQ && ph > 0) { ctx.save(); ctx.globalAlpha *= clamp(ph); text(ctx, "Ask every AI…", TEXT_X, ty, 30, 600, C.faint); ctx.restore(); }
+  if (showQ) {
+    const str = Q1.slice(0, n);
+    ctx.save(); ctx.globalAlpha *= 1 - smooth(go);
+    text(ctx, str, TEXT_X + 160 * go * go, ty, 30, 600, C.ink);
+    const blink = t < T.typeQ[1] + 0.05 || Math.floor((t - T.typeQ[1]) * 3) % 2 === 1;
+    if (t < T.send && blink) { ctx.font = `600 30px ${FONT}`; ctx.fillStyle = C.ink; ctx.fillRect(TEXT_X + ctx.measureText(str).width + 4, ty - 27, 3, 33); }
+    ctx.restore();
   }
-  const bx = c.x + c.w - 40, by = c.y + 35;
-  const press = 1 - 0.14 * bump(t, SEND_T - 0.04, 0.14) + 0.08 * bump(t, SEND_T + 0.08, 0.18);
-  ctx.globalAlpha = vis;
-  ctx.translate(bx, by); ctx.scale(press, press);
-  ctx.fillStyle = n > 0 ? C.orange : "rgba(38,33,26,0.16)";
+  // send button: grey when empty, orange with text; presses on send
+  const [bx, by] = SEND_XY;
+  const bp = 1 - 0.14 * bump(t, T.send - 0.04, 0.14) + 0.08 * bump(t, T.send + 0.08, 0.18);
+  ctx.save(); ctx.translate(bx, by); ctx.scale(bp, bp);
+  ctx.fillStyle = showQ ? C.orange : "rgba(38,33,26,0.16)";
   ctx.beginPath(); ctx.arc(0, 0, 23, 0, TAU); ctx.fill();
   ctx.strokeStyle = C.fill; ctx.lineWidth = 4.5; ctx.lineCap = "round"; ctx.lineJoin = "round";
   ctx.beginPath(); ctx.moveTo(0, 10); ctx.lineTo(0, -9); ctx.moveTo(-8, -1); ctx.lineTo(0, -9); ctx.lineTo(8, -1); ctx.stroke();
   ctx.restore();
+  ctx.restore();
 }
 
-function sceneAsk(ctx, t) {
-  const pw = easeInOutCubic(seg(t, 0, 0.85));
-  const pp = [0, 1, 2].map(i => easeInOutCubic(seg(t, 0.25 + i * 0.1, 0.9 + i * 0.1)));
-  drawWindow(ctx, t, pw, pp, easeInOutCubic(seg(t, 0.45, 1.1)));
-  drawComposer(ctx, t);
-  for (let i = 0; i < 3; i++) {
-    const s = charStateAsk(i, t);
-    if (s.alpha <= 0) continue;
-    const p = LAY.panels[i];
-    ctx.save();
-    rrPath(ctx, p.x + 3, p.y + 53, p.w - 6, p.h - 56, p.r - 3); ctx.clip();
-    drawChar(ctx, i, Object.assign({}, s, { y: s.y + s.rise }), t);
+// ---------------------------------------------------------------- scene 3: compare
+function drawSummary(ctx, t) {
+  const inP = seg(t, T.cmpIn + 0.2, T.cmpIn + 0.6), outP = seg(t, T.cmpOut, T.cmpOut + 0.3);
+  if (inP <= 0 || outP >= 1) return;
+  const s = easeOutBack(inP, 1.5) * (1 - easeInOutCubic(outP)), w = 1080, h = 214;
+  ctx.save();
+  ctx.translate(cmpCard[0], cmpCard[1]); ctx.scale(s, s);
+  softShadow(ctx, -w / 2, -h / 2, w, h, 30, C.fill, 40, 14, "rgba(90,66,30,0.18)");
+  shape(ctx, rrect(-w / 2, -h / 2, w, h, 30, 190), { id: 400, t, amp: 1.4, fill: C.fill, fillAlpha: 1, stroke: C.ink, lw: 6 });
+  const x0 = -w / 2 + 44;
+  sparkleGlyph(ctx, x0 + 12, -h / 2 + 44, 14, C.orange);
+  text(ctx, "Compared", x0 + 36, -h / 2 + 54, 28, 900, C.orange);
+  const rows = [["All three: short and cute.", "check"], ["Two picked snacks. One picked a knight.", "diff"]];
+  rows.forEach(([str, kind], k) => {
+    const p = seg(t, T.cmpLine[k], T.cmpLine[k] + 0.5);
+    if (p <= 0) return;
+    const y = -h / 2 + 118 + k * 58;
+    if (kind === "check") checkMark(ctx, x0 + 14, y - 12, 1.1, C.orange, 6, easeOutCubic(seg(p, 0, 0.5)));
+    else {
+      ctx.save(); ctx.strokeStyle = C.orange; ctx.lineWidth = 6; ctx.lineCap = "round"; ctx.globalAlpha *= smooth(seg(p, 0, 0.4));
+      ctx.beginPath(); ctx.moveTo(x0 + 2, y - 18); ctx.lineTo(x0 + 26, y - 18); ctx.moveTo(x0 + 2, y - 5); ctx.lineTo(x0 + 26, y - 5); ctx.moveTo(x0 + 20, y - 28); ctx.lineTo(x0 + 8, y + 5); ctx.stroke(); ctx.restore();
+    }
+    ctx.save(); ctx.beginPath(); ctx.rect(x0 + 44, y - 44, 960 * easeInOutCubic(p), 60); ctx.clip();
+    text(ctx, str, x0 + 48, y, 34, 700, C.ink); ctx.restore();
+  });
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- scene 4: crown
+function drawTrophy(ctx, x, y, s, fill, alpha = 1) {
+  if (s <= 0 || alpha <= 0) return;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.globalAlpha *= alpha;
+  ctx.lineWidth = 7; ctx.strokeStyle = C.ink; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.arc(-35, -22, 15, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
+  ctx.beginPath(); ctx.arc(35, -22, 15, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-36, -44); ctx.lineTo(36, -44); ctx.quadraticCurveTo(36, 10, 0, 12); ctx.quadraticCurveTo(-36, 10, -36, -44); ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(0, 28); ctx.stroke();
+  rrPath(ctx, -22, 28, 44, 14, 5); ctx.fillStyle = fill; ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function drawHeaderTrophy(ctx, i, t, r) {
+  const a = smooth(seg(t, T.trophyIcons, T.trophyIcons + 0.3)) * (1 - smooth(seg(t, T.away, T.away + 0.3)));
+  if (a <= 0) return;
+  const won = i === 2 && t >= T.crownClick;
+  const pop = 1 + 0.35 * bump(t, T.crownClick, 0.3) * (i === 2 ? 1 : 0);
+  drawTrophy(ctx, r.x + r.w - 42, r.y + 28, 0.32 * pop, won ? C.gold : C.fill, a);
+  if (i === 2) sparkle(ctx, r.x + r.w - 42, r.y + 24, seg(t, T.crownClick, T.crownClick + 0.4), C.gold);
+}
+function drawCrown(ctx, t) {
+  const a = 1 - smooth(seg(t, T.away, T.away + 0.3));
+  if (t < T.crownClick + 0.05 || a <= 0) return;
+  const p0 = [LAY.panels[2].x + LAY.panels[2].w - 42, LAY.panels[2].y + 28];
+  const k = easeInOutCubic(seg(t, T.crownClick + 0.05, T.crownLand));
+  const x = lerp(p0[0], TROPHY_LAND[0], k), y = lerp(p0[1], TROPHY_LAND[1], k) - 120 * Math.sin(Math.PI * k);
+  const land = hopAt(t, T.crownLand, 0.26, 16);
+  const s = lerp(0.32, 0.78, easeOutBack(seg(t, T.crownClick + 0.05, T.crownLand), 1.4));
+  drawTrophy(ctx, x, y - land.hop, s * (1 + land.sq * 0.5), C.gold, a);
+  sparkle(ctx, TROPHY_LAND[0], TROPHY_LAND[1] - 20, seg(t, T.crownLand, T.crownLand + 0.45), C.gold);
+  for (const i of [0, 1]) sparkle(ctx, CX[i], headTop(i) - 30, seg(t, T.crownLand + 0.14, T.crownLand + 0.55));
+}
+
+// ---------------------------------------------------------------- scene 5: another app, the quick input, @
+const NOTES_APP = { x: 170, y: 150, w: 1000, h: 640, r: 30 };
+const QI = { x: 490, y: 432, w: 940, h: 92, r: 46 };
+function winPose(t) {
+  const k = easeInOutCubic(seg(t, T.away, T.away + 0.6)) * (1 - easeInOutCubic(seg(t, T.back, T.back + 0.6)));
+  return { s: lerp(1, 0.46, k), cx: lerp(WIN_C[0], 1452, k), cy: lerp(WIN_C[1], 286, k), k };
+}
+function drawNotesApp(ctx, t) {
+  const inK = easeOutCubic(seg(t, T.away + 0.1, T.away + 0.7)), outK = easeInOutCubic(seg(t, T.send2 + 0.15, T.send2 + 0.65));
+  if (inK <= 0 || outK >= 1) return;
+  const dx = lerp(-1300, 0, inK) + lerp(0, -1300, outK), a = NOTES_APP;
+  ctx.save(); ctx.translate(dx, 0);
+  softShadow(ctx, a.x, a.y, a.w, a.h, a.r, "#FFFDF4", 44, 16, "rgba(90,66,30,0.16)");
+  shape(ctx, rrect(a.x, a.y, a.w, a.h, a.r, 170), { id: 500, t, amp: 1.4, fill: "#FFFDF4", fillAlpha: 1, stroke: C.ink, lw: 5.5 });
+  for (let k = 0; k < 3; k++) shape(ctx, sampleCircle(a.x + 32 + k * 26, a.y + 30, 7.5, 26), { id: 501 + k, t, amp: 0.4, stroke: C.ink, lw: 3.5 });
+  text(ctx, "Kitten plans", a.x + 60, a.y + 118, 44, 900, C.ink);
+  const lens = [0.62, 0.8, 0.44, 0.72, 0.58, 0.76, 0.36];
+  lens.forEach((f, k) => scribble(ctx, a.x + 62, a.y + 186 + k * 56, (a.w - 140) * f, { id: 510 + k, t, amp: 2.4, wave: 30, lw: 5, stroke: C.faint }));
+  ctx.restore();
+}
+function drawKeycaps(ctx, t) {
+  const a = smooth(seg(t, T.keys, T.keys + 0.15)) * (1 - smooth(seg(t, T.qiOpen + 0.05, T.qiOpen + 0.3)));
+  if (a <= 0) return;
+  const caps = ["⌘", "⇧", "C"];
+  caps.forEach((cap, k) => {
+    const x = 960 + (k - 1) * 96, y = 318;
+    const down = seg(t, T.keys + 0.1 + k * 0.1, T.keys + 0.16 + k * 0.1) * (1 - seg(t, T.qiOpen - 0.08, T.qiOpen));
+    ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y + 5 * down); ctx.scale(1 - 0.06 * down, 1 - 0.06 * down);
+    ctx.fillStyle = "rgba(38,33,26,0.12)"; rrPath(ctx, -38, -32, 76, 76, 16); ctx.fill();
+    ctx.translate(0, -6 * (1 - down));
+    shape(ctx, rrect(-38, -38, 76, 76, 16, 80), { id: 520 + k, t, amp: 0.8, fill: C.fill, fillAlpha: 1, stroke: C.ink, lw: 4.5 });
+    text(ctx, cap, 0, 14, 38, 800, C.ink, "center");
+    ctx.restore();
+  });
+}
+function drawQuickInput(ctx, t) {
+  const open = seg(t, T.qiOpen, T.qiOpen + 0.3), close = seg(t, T.send2 + 0.05, T.send2 + 0.25);
+  if (open <= 0 || close >= 1) return;
+  const s = easeOutBack(open, 1.6) * (1 - 0.2 * easeInOutCubic(close)), a = smooth(open) * (1 - smooth(close));
+  const q = QI, cx = q.x + q.w / 2, cy = q.y + q.h / 2;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(cx, cy); ctx.scale(s, s); ctx.translate(-cx, -cy);
+  softShadow(ctx, q.x, q.y, q.w, q.h, q.r, "#FBF6EC", 50, 18, "rgba(60,44,20,0.22)");
+  shape(ctx, rrect(q.x, q.y, q.w, q.h, q.r, 170), { id: 530, t, amp: 1.2, fill: "#FBF6EC", fillAlpha: 1, stroke: C.ink, lw: 5 });
+  miniChar(ctx, 0, q.x + 50, q.y + 44, 0.16, t);
+  const ty = q.y + 58;
+  let tx = q.x + 94;
+  if (t >= T.choose) {
+    const cp = easeOutBack(seg(t, T.choose, T.choose + 0.25), 2);
+    ctx.save(); ctx.translate(tx + 70, q.y + 46); ctx.scale(cp, cp);
+    ctx.fillStyle = "rgba(219,128,66,0.13)"; rrPath(ctx, -70, -24, 140, 48, 24); ctx.fill();
+    ctx.strokeStyle = "rgba(219,128,66,0.45)"; ctx.lineWidth = 3; ctx.stroke();
+    text(ctx, "Only", -52, 9, 24, 800, C.orange);
+    miniChar(ctx, 2, 36, -1, 0.14, t);
+    ctx.restore();
+    tx += 156;
+    const n = typed(TT_Q2, t);
+    if (n > 0) text(ctx, Q2.slice(0, n), tx, ty, 32, 600, C.ink);
+    ctx.font = `600 32px ${FONT}`;
+    const w = n > 0 ? ctx.measureText(Q2.slice(0, n)).width + 4 : 0;
+    if (t < T.send2 && (t < T.typeQ2[1] + 0.05 || Math.floor(t * 3) % 2 === 1)) { ctx.fillStyle = C.ink; ctx.fillRect(tx + w, ty - 28, 3, 35); }
+  } else if (t >= T.at) {
+    text(ctx, "@", tx, ty, 32, 700, C.ink);
+    ctx.font = `700 32px ${FONT}`;
+    if (Math.floor(t * 3) % 2 === 0) { ctx.fillStyle = C.ink; ctx.fillRect(tx + ctx.measureText("@").width + 4, ty - 28, 3, 35); }
+  } else {
+    text(ctx, "Ask every AI…", tx, ty, 32, 600, C.faint);
+  }
+  // the @ picker
+  const pk = seg(t, T.at + 0.05, T.at + 0.25) * (1 - seg(t, T.choose, T.choose + 0.12));
+  if (pk > 0) {
+    const px = q.x + 70, py = q.y + q.h + 14, pw = 400, ph = 3 * 64 + 16;
+    const sel = t < T.pick[1] ? 0 : t < T.pick[2] ? 1 : 2;
+    ctx.save(); ctx.globalAlpha *= smooth(pk); ctx.translate(0, (1 - easeOutCubic(pk)) * -12);
+    softShadow(ctx, px, py, pw, ph, 22, "#FBF6EC", 36, 12, "rgba(60,44,20,0.2)");
+    shape(ctx, rrect(px, py, pw, ph, 22, 140), { id: 540, t, amp: 1, fill: "#FBF6EC", fillAlpha: 1, stroke: C.ink, lw: 4.5 });
+    for (let k = 0; k < 3; k++) {
+      const ry = py + 8 + k * 64;
+      if (k === sel) { ctx.fillStyle = "rgba(219,128,66,0.14)"; rrPath(ctx, px + 8, ry, pw - 16, 60, 16); ctx.fill(); }
+      miniChar(ctx, k, px + 44, ry + 30, 0.13, t);
+      scribble(ctx, px + 78, ry + 30, [150, 128, 170][k], { id: 550 + k, t, amp: 2.2, wave: 22, lw: 5, stroke: k === sel ? C.ink : C.faint });
+      if (k === sel) {
+        ctx.lineWidth = 3; ctx.strokeStyle = C.faint; rrPath(ctx, px + pw - 62, ry + 14, 40, 32, 9); ctx.stroke();
+        text(ctx, "↩", px + pw - 42, ry + 39, 22, 800, C.faint, "center");
+      }
+    }
     ctx.restore();
   }
-  for (let i = 0; i < 3; i++) {
-    drawThinking(ctx, i, t, ARRIVE[i] + 0.05, ANSWER[i]);
-    drawBubble(ctx, i, t, seg(t, ANSWER[i], ANSWER[i] + 0.34), ANSWER[i], BUBBLE_LINES[i]);
+  ctx.restore();
+}
+function drawZzz(ctx, t) {
+  const on = smooth(seg(t, T.away + 3.4, T.away + 3.8)) * (1 - smooth(seg(t, T.acct - 0.2, T.acct)));
+  if (on <= 0) return;
+  for (const i of [0, 1]) {
+    for (let k = 0; k < 3; k++) {
+      const ph = ((t - (T.away + 3.4)) * 0.8 + k / 3 + i * 0.17) % 1;
+      if (ph < 0) continue;
+      const x = CX[i] + 70 + ph * 50, y = headTop(i) + 10 - ph * 110;
+      ctx.save(); ctx.globalAlpha *= on * Math.sin(Math.PI * ph) * 0.85;
+      text(ctx, "z", x, y, 26 + ph * 20, 900, C.faint);
+      ctx.restore();
+    }
   }
+}
+
+// ---------------------------------------------------------------- scene 6: your accounts
+function drawPills(ctx, t) {
+  const out = 1 - smooth(seg(t, T.gather, T.gather + 0.3));
+  for (let i = 0; i < 3; i++) {
+    const p = seg(t, T.pills[i], T.pills[i] + 0.3);
+    if (p <= 0 || out <= 0) continue;
+    const s = easeOutBack(p, 2), x = CX[i], y = headTop(i) - 58;
+    ctx.save(); ctx.globalAlpha *= out; ctx.translate(x, y); ctx.scale(s, s);
+    shape(ctx, rrect(-104, -28, 208, 56, 28, 110), { id: 600 + i, t, amp: 1, fill: C.fill, fillAlpha: 1, stroke: C.orange, lw: 5 });
+    checkMark(ctx, -70, -2, 1, C.orange, 6, easeOutCubic(seg(p, 0.3, 1)));
+    text(ctx, "signed in", -44, 9, 26, 800, C.ink);
+    ctx.restore();
+  }
+}
+function drawKeyChip(ctx, t) {
+  const p = seg(t, T.key, T.key + 0.3);
+  if (p <= 0) return;
+  const fall = seg(t, T.drop, T.drop + 0.75);
+  if (fall >= 1) return;
+  const x = 960 + 60 * fall, y = 236 + 900 * fall * fall, rot = 0.9 * fall * fall + 0.06 * Math.sin(TAU * 3 * (t - T.strike)) * seg(t, T.strike, T.strike + 0.2) * (1 - seg(t, T.strike + 0.3, T.drop));
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(easeOutBack(p, 1.8), easeOutBack(p, 1.8));
+  shape(ctx, rrect(-128, -34, 256, 68, 22, 120), { id: 620, t, amp: 1.1, fill: C.fill, fillAlpha: 1, stroke: C.ink, lw: 5.5 });
+  // a little key
+  ctx.lineWidth = 5.5; ctx.strokeStyle = C.ink; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(-86, 0, 13, 0, TAU); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-73, 0); ctx.lineTo(-44, 0); ctx.moveTo(-52, 0); ctx.lineTo(-52, 10); ctx.moveTo(-44, 0); ctx.lineTo(-44, 12); ctx.stroke();
+  text(ctx, "API key", -26, 11, 32, 800, C.ink);
+  const sp = easeInOutCubic(seg(t, T.strike, T.strike + 0.28));
+  if (sp > 0) scribble(ctx, -120, 0, 240, { id: 630, t, amp: 4, wave: 60, lw: 8, stroke: C.orange, draw: sp });
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- scene 7: curtain call
+function drawEnd(ctx, t) {
+  const w = seg(t, T.word, T.word + 0.4), tg = seg(t, T.word + 0.3, T.word + 0.7), u = seg(t, T.word + 0.55, T.word + 0.95);
+  if (w <= 0) return;
+  ctx.save(); ctx.globalAlpha *= smooth(w); text(ctx, "Chorus", 960, 822 + (1 - easeOutCubic(w)) * 20, 112, 900, C.ink, "center"); ctx.restore();
+  ctx.save(); ctx.globalAlpha *= smooth(tg); text(ctx, "One question, every AI at once.", 960, 890 + (1 - easeOutCubic(tg)) * 16, 44, 700, "rgba(38,33,26,0.72)", "center"); ctx.restore();
+  ctx.save(); ctx.globalAlpha *= smooth(u); text(ctx, "zhouyixiao.com/chorus", 960, 952, 30, 700, C.orange, "center"); ctx.restore();
+}
+
+// ---------------------------------------------------------------- cursor
+const TRO_XY = [LAY.panels[2].x + LAY.panels[2].w - 42, LAY.panels[2].y + 28];
+const CURSOR_KEYS = [
+  [0.5, 1640, 1140, 0], [0.62, 1580, 1070, 1], [0.86, TAB_IN[0][0], TAB_IN[0][1], 1], [1.42, TAB_IN[0][0], TAB_IN[0][1], 1],
+  [1.64, TAB_IN[1][0], TAB_IN[1][1], 1], [2.02, TAB_IN[1][0], TAB_IN[1][1], 1], [2.24, TAB_IN[2][0], TAB_IN[2][1], 1],
+  [2.62, TAB_IN[2][0], TAB_IN[2][1], 1], [3.45, TAB_IN[2][0] + 30, TAB_IN[2][1] + 24, 1], [3.95, 1720, 1160, 0],
+  [12.5, 760, 1140, 0], [12.66, 700, 1010, 1], [13.06, CMP_XY[0] + 10, CMP_XY[1] + 4, 1], [13.3, CMP_XY[0] + 10, CMP_XY[1] + 4, 1], [13.8, 560, 1140, 0],
+  [17.6, 1520, 1140, 0], [17.78, 1580, 960, 1], [18.26, TRO_XY[0] + 6, TRO_XY[1] + 6, 1], [18.5, TRO_XY[0] + 6, TRO_XY[1] + 6, 1], [19.05, 1760, 1160, 0],
+];
+const CLICKS = [0.88, 1.66, 2.26, T.cmpClick, T.crownClick];
+function cursorState(t) {
+  let [x, y, a] = keyframes(t, CURSOR_KEYS);
+  const f = seg(t, T.fluster, T.fluster + 0.2) * (1 - seg(t, 3.35, 3.55));
+  if (f > 0) { x += (rand(700, Math.floor(t * 14)) - 0.5) * 10 * f; y += (rand(701, Math.floor(t * 14)) - 0.5) * 8 * f; }
+  let press = 0;
+  for (const c of CLICKS) press = Math.max(press, bump(t, c - 0.04, 0.14));
+  return [x, y, a, press];
+}
+const CURSOR_PTS = [[0, 0], [0, 44], [11, 34], [19, 52], [27, 48], [19, 31], [33, 31]];
+function drawCursor(ctx, t) {
+  const [x, y, a, press] = cursorState(t);
+  if (a <= 0.01) return;
+  ctx.save(); ctx.globalAlpha *= a;
+  for (const c of CLICKS) {
+    const k = seg(t, c, c + 0.35);
+    if (k > 0 && k < 1) { ctx.save(); ctx.strokeStyle = C.orange; ctx.lineWidth = 4; ctx.globalAlpha *= 1 - k; ctx.beginPath(); ctx.arc(x, y, 10 + 28 * k, 0, TAU); ctx.stroke(); ctx.restore(); }
+  }
+  ctx.translate(x, y); ctx.scale(1.2 * (1 - 0.1 * press), 1.2 * (1 - 0.1 * press));
+  ctx.beginPath(); CURSOR_PTS.forEach(([px, py], k) => (k ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath();
+  ctx.fillStyle = C.fill; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = C.ink; ctx.lineJoin = "round"; ctx.stroke();
+  // the sweat drop of someone pasting the same question into their third tab
+  const d = seg(t, T.fluster + 0.2, T.fluster + 0.35) * (1 - seg(t, 3.45, 3.7));
+  if (d > 0) {
+    const dy = 16 * seg(t, T.fluster + 0.35, 3.6);
+    ctx.save(); ctx.globalAlpha *= d; ctx.translate(38, -14 + dy);
+    ctx.beginPath(); ctx.moveTo(0, -14); ctx.quadraticCurveTo(10, 0, 0, 6); ctx.quadraticCurveTo(-10, 0, 0, -14);
+    ctx.fillStyle = "#CFE3F2"; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = C.ink; ctx.stroke(); ctx.restore();
+  }
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------- caption
+function drawCaptions(ctx, t) {
+  for (const [t0, t1, parts] of CAPTIONS) {
+    const p = seg(t, t0, t0 + 0.4), o = 1 - smooth(seg(t, t1 - 0.3, t1));
+    if (p <= 0 || o <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha *= smooth(p) * o;
+    let size = 72;
+    ctx.font = `800 ${size}px ${FONT}`;
+    let total = parts.reduce((s, q) => s + ctx.measureText(q.text).width, 0);
+    if (total > 1640) { size = Math.floor(72 * 1640 / total); ctx.font = `800 ${size}px ${FONT}`; total = parts.reduce((s, q) => s + ctx.measureText(q.text).width, 0); }
+    ctx.fillStyle = C.ink; ctx.textBaseline = "alphabetic";
+    let x = W / 2 - total / 2;
+    const y = 962 + (1 - easeOutCubic(p)) * 22;
+    parts.forEach((q, k) => {
+      const w = ctx.measureText(q.text).width;
+      ctx.fillText(q.text, x, y);
+      if (q.underline) scribble(ctx, x + 4, y + 20, w - 8, { id: 900 + Math.floor(t0 * 10) + k, t, amp: 3, wave: 44, lw: 8, stroke: C.orange, draw: easeInOutCubic(seg(t, t0 + 0.25, t0 + 0.7)) });
+      x += w;
+    });
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------------- the frame
+let TT_W = 560;   // width of the typed question, measured once the font is in
+function draw(ctx, t) {
+  drawPaper(ctx);
+  const pose = winPose(t), fade = 1 - smooth(seg(t, T.gather, T.gather + 0.55));
+  ctx.save();
+  ctx.translate(pose.cx, pose.cy); ctx.scale(pose.s, pose.s); ctx.translate(-WIN_C[0], -WIN_C[1]);
+  ctx.save(); ctx.globalAlpha *= fade;
+  drawWindowFrame(ctx, t);
+  drawTabsAndPanels(ctx, t);
+  drawComposer(ctx, t);
+  ctx.restore();
+  for (let i = 0; i < 3; i++) drawChar(ctx, i, charState(i, t), t);
+  for (let i = 0; i < 3; i++) {
+    drawThinking(ctx, i, t, T.arrive[i] + 0.05, T.answer[i]);
+    if (i === 2) drawThinking(ctx, 2, t, T.soloArrive + 0.05, T.solo);
+    drawBubble(ctx, i, t);
+  }
+  drawZzz(ctx, t);
   for (const [i, t0] of NOTES) {
     const k = seg(t, t0, t0 + 1.3);
     if (k <= 0 || k >= 1) continue;
     const side = i === 0 ? -1 : 1;
-    drawNote(ctx, CX[i] + side * (122 + 22 * k) + 7 * Math.sin(k * 9), headTop(i) + 130 - 120 * easeOutCubic(k),
-             0.9 + 0.2 * k, smooth(seg(k, 0, 0.12)) * (1 - smooth(seg(k, 0.55, 1))));
+    drawNote(ctx, CX[i] + side * (122 + 22 * k) + 7 * Math.sin(k * 9), headTop(i) + 130 - 120 * easeOutCubic(k), 0.9 + 0.2 * k, smooth(seg(k, 0, 0.12)) * (1 - smooth(seg(k, 0.55, 1))));
   }
-  for (let i = 0; i < 3; i++) {
-    const c = cardPos(i, t);
-    if (c.vis) drawCard(ctx, c.x, c.y, c.s, c.rot, t, 300 + i * 5);
-    sparkle(ctx, CX[i], headTop(i) - 10, seg(t, ARRIVE[i], ARRIVE[i] + 0.32));
-  }
-  caption(ctx, t, 6.8, [{ text: "Ask " }, { text: "once", underline: true }, { text: ". They all answer." }]);
+  drawSummary(ctx, t);
+  drawCrown(ctx, t);
+  if (t < T.burst) drawCard(ctx, flight(1, t, T.cardPop, T.depart[1], T.arrive[1], true), t, 305);
+  else for (let i = 0; i < 3; i++) drawCard(ctx, flight(i, t, T.cardPop, T.depart[i], T.arrive[i], true), t, 300 + i * 5);
+  drawCard(ctx, flight(2, t, T.soloDepart - 0.18, T.soloDepart, T.soloArrive, false), t, 320);
+  for (let i = 0; i < 3; i++) sparkle(ctx, CX[i], headTop(i) - 10, seg(t, T.arrive[i], T.arrive[i] + 0.32));
+  sparkle(ctx, CX[2], headTop(2) - 10, seg(t, T.soloArrive, T.soloArrive + 0.32));
+  drawPills(ctx, t);
+  ctx.restore();
+  drawKeyChip(ctx, t);
+  drawNotesApp(ctx, t);
+  drawKeycaps(ctx, t);
+  drawQuickInput(ctx, t);
+  drawEnd(ctx, t);
+  drawCursor(ctx, t);
+  drawCaptions(ctx, t);
 }
-
-// ---------------------------------------------------------------- timeline
-const SCENES = [{ start: 0, dur: 8.6, draw: sceneAsk, score: scoreAsk }];
-const DURATION = SCENES.reduce((m, s) => Math.max(m, s.start + s.dur), 0);
-
-function draw(ctx, t) {
-  drawPaper(ctx);
-  for (const s of SCENES) if (t >= s.start && t < s.start + s.dur + 1e-6) s.draw(ctx, t - s.start);
-}
+const DURATION = T.end;
 
 // ---------------------------------------------------------------- sound
-const NOTE = { C4: 261.63, C5: 523.25, E5: 659.25, G5: 783.99, C6: 1046.5, E6: 1318.51, G6: 1567.98, C7: 2093.0 };
+const HZ = { C3: 130.81, G3: 196.0, C4: 261.63, C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.0, C6: 1046.5, E6: 1318.51, G6: 1567.98, C7: 2093.0 };
 const PAN = [-0.35, 0, 0.35];
-
-function scoreAsk(E, o) {
-  POP.forEach((p, i) => E.push({ t: o + p + 0.4, type: "boop", f1: [620, 740, 880][i], f2: [380, 450, 540][i], g: 0.32, pan: PAN[i] }));
-  TYPE_TIMES.forEach((tt, k) => E.push({ t: o + tt, type: "click", g: 0.1 + rand(5, k) * 0.07, f: 2600 + rand(6, k) * 1600, off: rand(7, k) * 1.5 }));
-  E.push({ t: o + SEND_T, type: "tock", g: 0.34 });
-  E.push({ t: o + 3.72, type: "boop", f1: 520, f2: 880, g: 0.16, pan: 0.5 });
-  [0, 1, 2].forEach(i => E.push({ t: o + BURST_T + i * 0.035, type: "bell", f: [NOTE.C6, NOTE.E6, NOTE.G6][i], g: 0.07, pan: 0.45 }));
-  DEPART.forEach((d, i) => E.push({ t: o + d, type: "whoosh", dur: ARRIVE[i] - d, g: 0.08, f1: 700, f2: 2600 }));
-  ARRIVE.forEach((a, i) => E.push({ t: o + a, type: "click", g: 0.2, f: 5200, off: 0.2 + i * 0.3 }));
-  ANSWER.forEach((a, i) => E.push({ t: o + a, type: "voice", f: [NOTE.C5, NOTE.E5, NOTE.G5][i], dur: 0.95, g: 0.26, pan: PAN[i] }));
-  [NOTE.C5, NOTE.E5, NOTE.G5].forEach((f, i) => E.push({ t: o + CHORD, type: "voice", f, dur: 1.7, g: 0.22, pan: PAN[i] }));
-  E.push({ t: o + CHORD, type: "voice", f: NOTE.C4, dur: 1.8, g: 0.12, pan: 0 });
-  [NOTE.C6, NOTE.E6, NOTE.G6, NOTE.C7].forEach((f, k) => E.push({ t: o + CHORD + 0.02 + k * 0.09, type: "bell", f, g: 0.06, pan: (k - 1.5) * 0.2 }));
+function duck(t) {
+  let v = 1;
+  for (const [a, b] of [[T.answer[0] - 0.1, T.chord + 1.9], [T.solo - 0.1, T.solo + 1.1], [T.bow - 0.2, T.end]]) v = Math.min(v, 1 - 0.72 * smooth(seg(t, a - 0.3, a)) * (1 - smooth(seg(t, b, b + 0.4))));
+  return v;
 }
-
-function score() {
-  const E = [];
-  for (const s of SCENES) s.score(E, s.start);
-  return E.sort((a, b) => a.t - b.t);
+function scoreMusic(E) {
+  const A = ["E5", 0, "G5", "A5", "G5", 0, "E5", "D5", "C5", 0, "D5", "E5", "G5", 0, "E5", 0];
+  const B = ["E5", 0, "G5", "A5", "C6", 0, "A5", "G5", "E5", 0, "D5", "C5", "D5", 0, "C5", 0];
+  const beat = 0.3, start = 0.45, stop = 35.0;
+  let k = 0;
+  for (let t = start; t < stop; t += beat, k++) {
+    const n = (Math.floor(k / 16) % 2 ? B : A)[k % 16];
+    const g = 0.045 * duck(t);
+    if (n && g > 0.004) E.push({ t, type: "musicbox", f: HZ[n], g, pan: ((k % 5) - 2) * 0.1 });
+  }
+  // One continuous, very soft drone under the whole film. (Separate 4.8 s pads audibly
+  // "breathed" at every seam and sat far too loud in the low end.)
+  E.push({ t: 0.3, type: "pad", f: HZ.C3, dur: T.end - 0.5, g: 0.012 });
 }
+function scoreFilm(E) {
+  scoreMusic(E);
+  // 1 — tabs appear, typing, paste, fluster
+  [0, 1, 2].forEach(i => E.push({ t: 0.42 + i * 0.12, type: "boop", f1: [620, 740, 880][i], f2: [380, 450, 540][i], g: 0.2, pan: PAN[i] }));
+  CLICKS.forEach(c => E.push({ t: c, type: "click", g: 0.24, f: 4200, off: 0.3 }));
+  TT_TAB0.forEach((tt, k) => E.push({ t: tt, type: "click", g: 0.09 + rand(8, k) * 0.05, f: 2600 + rand(9, k) * 1500, off: rand(10, k) * 1.5 }));
+  T.paste.forEach((p, k) => E.push({ t: p, type: "whoosh", dur: 0.14, g: 0.08, f1: 1400, f2: 3200 }));
+  E.push({ t: T.fluster + 0.1, type: "boop", f1: 520, f2: 300, g: 0.14, dur: 0.35 });
+  E.push({ t: T.fluster + 0.25, type: "boop", f1: 440, f2: 250, g: 0.12, dur: 0.4 });
+  E.push({ t: T.fluster + 0.45, type: "boop", f1: 1300, f2: 1900, g: 0.08 });
+  // merge
+  E.push({ t: T.merge0, type: "whoosh", dur: 0.85, g: 0.13, f1: 500, f2: 2600 });
+  [HZ.C6, HZ.E6, HZ.G6].forEach((f, k) => E.push({ t: T.merge1 + k * 0.06, type: "bell", f, g: 0.07, pan: PAN[k] }));
+  [0, 1, 2].forEach(i => E.push({ t: T.merge1 - 0.05 + i * 0.06 + 0.3, type: "boop", f1: [620, 740, 880][i], f2: [420, 500, 590][i], g: 0.16, pan: PAN[i] }));
+  // 2 — ask once
+  TT_Q1.forEach((tt, k) => E.push({ t: tt, type: "click", g: 0.1 + rand(5, k) * 0.07, f: 2600 + rand(6, k) * 1600, off: rand(7, k) * 1.5 }));
+  E.push({ t: T.send, type: "tock", g: 0.32 });
+  E.push({ t: T.cardPop, type: "boop", f1: 520, f2: 880, g: 0.14, pan: 0.5 });
+  [0, 1, 2].forEach(i => E.push({ t: T.burst + i * 0.035, type: "bell", f: [HZ.C6, HZ.E6, HZ.G6][i], g: 0.07, pan: 0.45 }));
+  T.depart.forEach((d, i) => E.push({ t: d, type: "whoosh", dur: T.arrive[i] - d, g: 0.08, f1: 700, f2: 2600 }));
+  T.arrive.forEach((a, i) => E.push({ t: a, type: "click", g: 0.18, f: 5200, off: 0.2 + i * 0.3 }));
+  T.answer.forEach((a, i) => E.push({ t: a, type: "voice", f: [HZ.C5, HZ.E5, HZ.G5][i], dur: 0.95, g: 0.22, pan: PAN[i] }));
+  [HZ.C5, HZ.E5, HZ.G5].forEach((f, i) => E.push({ t: T.chord, type: "voice", f, dur: 1.7, g: 0.185, pan: PAN[i] }));
+  E.push({ t: T.chord, type: "voice", f: HZ.C4, dur: 1.8, g: 0.1, pan: 0 });
+  [HZ.C6, HZ.E6, HZ.G6, HZ.C7].forEach((f, k) => E.push({ t: T.chord + 0.02 + k * 0.09, type: "bell", f, g: 0.06, pan: (k - 1.5) * 0.2 }));
+  // 3 — compare
+  [HZ.E6, HZ.G6, HZ.C7].forEach((f, k) => E.push({ t: T.cmpIn - 0.05 + k * 0.07, type: "bell", f, g: 0.06, pan: 0 }));
+  E.push({ t: T.cmpIn, type: "whoosh", dur: 0.5, g: 0.1, f1: 900, f2: 2400 });
+  T.cmpLine.forEach(l => E.push({ t: l, type: "boop", f1: 900, f2: 1200, g: 0.08 }));
+  E.push({ t: T.cmpOut, type: "whoosh", dur: 0.5, g: 0.08, f1: 2400, f2: 900 });
+  // 4 — crown
+  E.push({ t: T.trophyIcons, type: "boop", f1: 700, f2: 900, g: 0.06 });
+  [HZ.C6, HZ.E6, HZ.G6, HZ.C7].forEach((f, k) => E.push({ t: T.crownClick + 0.04 + k * 0.05, type: "bell", f, g: 0.07, pan: 0.3 }));
+  E.push({ t: T.crownClick + 0.05, type: "whoosh", dur: T.crownLand - T.crownClick - 0.05, g: 0.09, f1: 900, f2: 2600 });
+  E.push({ t: T.crownLand, type: "bell", f: HZ.G6, g: 0.1, pan: 0.35 });
+  E.push({ t: T.crownLand + 0.03, type: "boop", f1: 880, f2: 1320, g: 0.14, pan: 0.35 });
+  E.push({ t: T.crownLand + 0.4, type: "boop", f1: 990, f2: 1480, g: 0.12, pan: 0.35 });
+  [0, 1].forEach(i => E.push({ t: T.crownLand + 0.14, type: "boop", f1: [620, 740][i], f2: [930, 1110][i], g: 0.1, pan: PAN[i] }));
+  // 5 — elsewhere, the quick input, @
+  E.push({ t: T.away, type: "whoosh", dur: 0.6, g: 0.1, f1: 2400, f2: 700 });
+  [0, 1, 2].forEach(k => E.push({ t: T.keys + 0.1 + k * 0.1, type: "click", g: 0.2, f: 1900, off: 0.6 + k * 0.2 }));
+  E.push({ t: T.qiOpen, type: "boop", f1: 440, f2: 760, g: 0.16 });
+  E.push({ t: T.at, type: "click", g: 0.14, f: 3000, off: 0.9 });
+  T.pick.forEach((p, k) => E.push({ t: p + 0.02, type: "boop", f1: [900, 1000, 1100][k], f2: [900, 1000, 1100][k], g: 0.05 }));
+  E.push({ t: T.choose, type: "boop", f1: 700, f2: 1050, g: 0.14 });
+  TT_Q2.forEach((tt, k) => E.push({ t: tt, type: "click", g: 0.1 + rand(11, k) * 0.07, f: 2600 + rand(12, k) * 1600, off: rand(13, k) * 1.5 }));
+  E.push({ t: T.send2, type: "tock", g: 0.28 });
+  E.push({ t: T.send2 + 0.15, type: "whoosh", dur: 0.6, g: 0.09, f1: 700, f2: 2400 });
+  E.push({ t: T.soloDepart, type: "whoosh", dur: T.soloArrive - T.soloDepart, g: 0.08, f1: 700, f2: 2600 });
+  E.push({ t: T.soloArrive, type: "click", g: 0.18, f: 5200, off: 0.5 });
+  E.push({ t: T.solo, type: "voice", f: HZ.G5, dur: 1.0, g: 0.22, pan: 0.35 });
+  E.push({ t: T.solo + 0.02, type: "bell", f: HZ.G6, g: 0.05, pan: 0.35 });
+  [0, 1].forEach(i => [0, 1].forEach(k => E.push({ t: T.away + 3.6 + i * 0.35 + k * 1.2, type: "boop", f1: 240, f2: 200, g: 0.05, dur: 0.5, pan: PAN[i] })));
+  // 6 — your accounts
+  T.pills.forEach((p, i) => E.push({ t: p, type: "boop", f1: [HZ.C5, HZ.E5, HZ.G5][i], f2: [HZ.C5, HZ.E5, HZ.G5][i] * 1.5, g: 0.13, pan: PAN[i] }));
+  E.push({ t: T.key, type: "boop", f1: 500, f2: 700, g: 0.12 });
+  E.push({ t: T.strike, type: "whoosh", dur: 0.28, g: 0.12, f1: 3000, f2: 1200 });
+  E.push({ t: T.drop, type: "boop", f1: 900, f2: 220, g: 0.12, dur: 0.6 });
+  // 7 — curtain call
+  E.push({ t: T.gather, type: "whoosh", dur: 0.9, g: 0.08, f1: 600, f2: 1800 });
+  [HZ.C5, HZ.E5, HZ.G5].forEach((f, i) => E.push({ t: T.bow, type: "voice", f, dur: 2.4, g: 0.19, pan: PAN[i] }));
+  E.push({ t: T.bow, type: "voice", f: HZ.C4, dur: 2.5, g: 0.1, pan: 0 });
+  [HZ.C6, HZ.E6, HZ.G6, HZ.C7].forEach((f, k) => E.push({ t: T.bow + 0.03 + k * 0.1, type: "bell", f, g: 0.065, pan: (k - 1.5) * 0.2 }));
+  E.push({ t: T.word, type: "bell", f: HZ.C7, g: 0.05 });
+}
+function score() { const E = []; scoreFilm(E); return E.sort((a, b) => a.t - b.t); }
 
+// ================================================================ SOUND ENGINE
 function panner(ac, out, pan) {
   if (!pan || !ac.createStereoPanner) return out;
   const p = ac.createStereoPanner(); p.pan.value = pan; p.connect(out); return p;
 }
-
 const SYNTH = {
   boop(ac, out, t, e) {
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.type = "sine"; o.frequency.setValueAtTime(e.f1, t); o.frequency.exponentialRampToValueAtTime(e.f2, t + 0.09);
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(e.g, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-    o.connect(g); g.connect(panner(ac, out, e.pan)); o.start(t); o.stop(t + 0.22);
+    const o = ac.createOscillator(), g = ac.createGain(), d = e.dur || 0.18;
+    o.type = "sine"; o.frequency.setValueAtTime(e.f1, t); o.frequency.exponentialRampToValueAtTime(e.f2, t + Math.min(0.09, d * 0.6) + (e.dur ? d * 0.4 : 0));
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(e.g, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(panner(ac, out, e.pan)); o.start(t); o.stop(t + d + 0.04);
   },
   click(ac, out, t, e, noise) {
     const s = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
@@ -629,6 +1185,29 @@ const SYNTH = {
       g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(e.g * amp, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
       o.connect(g); g.connect(dest); o.start(t); o.stop(t + dec + 0.05);
     });
+  },
+  // Music box: a plucked comb tooth — bright attack, quick decay, a touch of inharmonic shimmer.
+  musicbox(ac, out, t, e) {
+    const dest = panner(ac, out, e.pan);
+    [[1, 1, 0.9], [2, 0.22, 0.3], [3.01, 0.1, 0.14], [4.2, 0.05, 0.08]].forEach(([mul, amp, dec]) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = "sine"; o.frequency.value = e.f * mul;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(e.g * amp, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+      o.connect(g); g.connect(dest); o.start(t); o.stop(t + dec + 0.05);
+    });
+  },
+  // A soft drone under everything: root and fifth, slow in and out.
+  pad(ac, out, t, e) {
+    const g = ac.createGain(), lp = ac.createBiquadFilter();
+    lp.type = "lowpass"; lp.frequency.value = 650;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(e.g, t + 2.0);
+    g.gain.setValueAtTime(e.g, t + e.dur - 2.5); g.gain.linearRampToValueAtTime(0.0001, t + e.dur);
+    [[1, "sine", 1], [1.5, "sine", 0.5]].forEach(([mul, type, amp]) => {
+      const o = ac.createOscillator(), og = ac.createGain();
+      o.type = type; o.frequency.value = e.f * mul; o.detune.value = (mul - 1.2) * 6; og.gain.value = amp;
+      o.connect(og); og.connect(lp); o.start(t); o.stop(t + e.dur + 0.05);
+    });
+    lp.connect(g); g.connect(out);
   },
   // A soft sung "ooh": two detuned tones plus an octave, delayed vibrato, a gentle vowel-ish
   // peak and a breath at the onset. One of these per character is the whole "choir".
@@ -658,13 +1237,11 @@ const SYNTH = {
     br.connect(bf); bf.connect(bg); bg.connect(dest); br.start(t, 0.4, 0.15);
   },
 };
-
 function noiseBuffer(ac) {
   const b = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate), d = b.getChannelData(0), r = mulberry32(99);
   for (let i = 0; i < d.length; i++) d[i] = r() * 2 - 1;
   return b;
 }
-
 function impulse(ac, seconds, decay) {
   const len = Math.floor(ac.sampleRate * seconds), b = ac.createBuffer(2, len, ac.sampleRate);
   for (let ch = 0; ch < 2; ch++) {
@@ -673,29 +1250,33 @@ function impulse(ac, seconds, decay) {
   }
   return b;
 }
-
-function buildAudio(ac, events, when, fadeOutAt) {
+// Stem levels. The voices carry the story beats and stay on top (~8 LU over the music box), but
+// not by 13+ LU as before, when the bed all but vanished on phone speakers. Music box and effects
+// sit at about the same short-term loudness. Measured per stem; LRA of the master ≈ 9 LU.
+const MIX = { music: 2, sfx: 1.4, voice: 0.7 };
+const STEM = { musicbox: "music", pad: "music", voice: "voice" };   // everything else is sfx
+function buildAudio(ac, events, when, fadeOutAt, mix = MIX) {
   const master = ac.createGain(), comp = ac.createDynamicsCompressor();
   comp.threshold.value = -16; comp.ratio.value = 3; comp.attack.value = 0.005; comp.release.value = 0.2;
   comp.connect(master); master.connect(ac.destination);
   master.gain.setValueAtTime(0.9, when);
-  if (fadeOutAt) { master.gain.setValueAtTime(0.9, when + fadeOutAt - 0.4); master.gain.linearRampToValueAtTime(0.0001, when + fadeOutAt); }
+  if (fadeOutAt) { master.gain.setValueAtTime(0.9, when + fadeOutAt - 0.6); master.gain.linearRampToValueAtTime(0.0001, when + fadeOutAt); }
   // Reverb gets only the upper range: a room tail on the low thumps (send, pops) turned into a
   // low hum under the typing. High-passing the send keeps the air on the voices and bells.
   const bus = ac.createGain(), verb = ac.createConvolver(), wet = ac.createGain(), hp = ac.createBiquadFilter();
   hp.type = "highpass"; hp.frequency.value = 420; hp.Q.value = 0.7;
   verb.buffer = impulse(ac, 1.8, 3.8); wet.gain.value = 0.2;
   bus.connect(comp); bus.connect(hp); hp.connect(verb); verb.connect(wet); wet.connect(comp);
-  const noise = noiseBuffer(ac);
-  for (const e of events) SYNTH[e.type](ac, bus, when + e.t, e, noise);
+  const noise = noiseBuffer(ac), stems = {};
+  for (const k in mix) { stems[k] = ac.createGain(); stems[k].gain.value = mix[k]; stems[k].connect(bus); }
+  for (const e of events) SYNTH[e.type](ac, stems[STEM[e.type] || "sfx"], when + e.t, e, noise);
 }
-
-function wavBase64(buf) {
+function wavBase64(buf, normalize = true) {
   const ch = buf.numberOfChannels, len = buf.length, sr = buf.sampleRate;
   let peak = 0;
   const chans = [];
   for (let c = 0; c < ch; c++) { const d = buf.getChannelData(c); chans.push(d); for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(d[i])); }
-  const gain = peak > 0 ? 0.89 / peak : 1;   // normalise to -1 dBFS
+  const gain = normalize && peak > 0 ? 0.89 / peak : 1;   // normalise to -1 dBFS
   const dv = new DataView(new ArrayBuffer(44 + len * ch * 2));
   const str = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
   str(0, "RIFF"); dv.setUint32(4, 36 + len * ch * 2, true); str(8, "WAVE"); str(12, "fmt ");
@@ -710,16 +1291,19 @@ function wavBase64(buf) {
   return btoa(bin);
 }
 
-// ---------------------------------------------------------------- boot: export hooks + live preview
+// ================================================================ BOOT: export hooks + live preview
+window.addEventListener("error", e => { window.__error = String(e.message || e); });
 const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
 window.__duration = DURATION;
-window.__frame = t => { draw(ctx, t); return canvas.toDataURL("image/png"); };
-window.__audioWav = async () => {
-  const sr = 48000, oac = new OfflineAudioContext(2, Math.ceil(sr * DURATION), sr);
-  buildAudio(oac, score(), 0, DURATION);
-  return wavBase64(await oac.startRendering());
+window.__frame = t => {
+  try { draw(ctx, t); return canvas.toDataURL("image/png"); }
+  catch (e) { return "ERR " + e.message + " @ " + (e.stack || "").split("\n")[1]; }
 };
-
+window.__audioWav = async (mix = MIX, normalize = true) => {
+  const sr = 48000, oac = new OfflineAudioContext(2, Math.ceil(sr * DURATION), sr);
+  buildAudio(oac, score(), 0, DURATION, mix);
+  return wavBase64(await oac.startRendering(), normalize);
+};
 let liveStart = performance.now(), liveAudio = null;
 function tick(now) {
   const t = ((now - liveStart) / 1000) % (DURATION + 1.5);
@@ -729,15 +1313,13 @@ function tick(now) {
 document.getElementById("play").addEventListener("click", () => {
   if (liveAudio) liveAudio.close();
   liveAudio = new (window.AudioContext || window.webkitAudioContext)();
-  const when = liveAudio.currentTime + 0.08;
-  buildAudio(liveAudio, score(), when, DURATION);
+  buildAudio(liveAudio, score(), liveAudio.currentTime + 0.08, DURATION);
   liveStart = performance.now() + 80;
 });
-
 (async () => {
-  try { await document.fonts.load(`800 72px ${FONT}`); await document.fonts.load(`600 30px ${FONT}`); } catch (e) {}
+  try { await document.fonts.load(`900 72px ${FONT}`); await document.fonts.load(`600 30px ${FONT}`); } catch (e) {}
   ctx.font = `600 30px ${FONT}`;
-  TYPED_W = ctx.measureText(QUESTION).width;
+  TT_W = ctx.measureText(Q1).width;
   window.__ready = true;
   requestAnimationFrame(tick);
 })();

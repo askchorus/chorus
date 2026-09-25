@@ -1,15 +1,26 @@
 #!/bin/bash
 # Render promo.html to an MP4 (H.264 + AAC, 1080p30) — the version for social media.
-#   ./make.sh            → out/chorus-promo.mp4
-#   ./make.sh sample     → out/sample.mp4 (same thing, different name)
+#   ./make.sh                 → out/chorus-promo.mp4 (frames + sound)
+#   ./make.sh --audio         → re-render only the sound; the picture is re-encoded from the existing frames
+# Sound is mastered on the way out: measured, lifted to ~-15 LUFS (social platforms normalise
+# around -14), peaks held at -1.5 dBFS by a limiter so they stay under -1 dBTP after AAC.
+# Picture: converted with the BT.709 matrix and tagged so (swscale's default is BT.601, which
+# players decoding HD as BT.709 show with shifted colour); sRGB transfer, like the PNG frames.
 set -euo pipefail
 cd "$(dirname "$0")"
-NAME="${1:-chorus-promo}"
+NAME="chorus-promo"; AUDIO_ONLY=""
+[ "${1:-}" = "--audio" ] && AUDIO_ONLY="--audio-only"
 FFMPEG="$(command -v /opt/homebrew/bin/ffmpeg || command -v ffmpeg)"
 mkdir -p out
 [ out/render -nt render.swift ] || swiftc -O -o out/render render.swift
-out/render promo.html "out/$NAME"
-"$FFMPEG" -y -loglevel error -framerate 30 -i "out/$NAME/frames/%05d.png" -i "out/$NAME/audio.wav" \
-  -c:v libx264 -preset slow -tune animation -crf 16 -pix_fmt yuv420p \
+out/render promo.html "out/$NAME" $AUDIO_ONLY
+I=$("$FFMPEG" -hide_banner -i "out/$NAME/audio.wav" -af ebur128 -f null - 2>&1 | awk '/Integrated loudness/{f=1} f && /I:/{print $2; exit}')
+GAIN=$(python3 -c "print(round(-15.0 - ($I), 2))")
+echo "measured ${I} LUFS → gain ${GAIN} dB"
+"$FFMPEG" -y -loglevel error -i "out/$NAME/audio.wav" -af "volume=${GAIN}dB,alimiter=limit=0.841:attack=3:release=60:level=false" "out/$NAME/audio-master.wav"
+"$FFMPEG" -y -loglevel error -framerate 30 -i "out/$NAME/frames/%05d.png" -i "out/$NAME/audio-master.wav" \
+  -vf "scale=out_color_matrix=bt709:out_range=tv" -pix_fmt yuv420p \
+  -colorspace bt709 -color_primaries bt709 -color_trc iec61966-2-1 -color_range tv \
+  -c:v libx264 -preset slow -tune animation -crf 16 \
   -c:a aac -b:a 192k -shortest -movflags +faststart "out/$NAME.mp4"
 echo "→ out/$NAME.mp4"

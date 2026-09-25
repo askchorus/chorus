@@ -3,6 +3,8 @@
 //   swiftc -O -o out/render render.swift
 //   out/render promo.html out/sample --stills 1.2,3.0,5.9     → PNG stills for review
 //   out/render promo.html out/sample                          → frames/%05d.png + audio.wav
+//   out/render promo.html out/sample --audio-only             → audio.wav only
+//   out/render promo.html out/x --eval 'return T.end'         → run a function body in the page (debugging)
 //
 // The page exposes window.__frame(t) → PNG data URL and window.__audioWav() → base64 WAV, both
 // deterministic, so every export of the same source is identical. make.sh muxes them with ffmpeg.
@@ -14,6 +16,8 @@ struct Options {
     var out: URL
     var stills: [Double]? = nil
     var fps = 30
+    var eval: String? = nil
+    var audioOnly = false
 }
 
 func parseArgs() -> Options {
@@ -28,6 +32,8 @@ func parseArgs() -> Options {
         switch a[i] {
         case "--stills": o.stills = a[i + 1].split(separator: ",").compactMap { Double($0) }; i += 2
         case "--fps": o.fps = Int(a[i + 1]) ?? 30; i += 2
+        case "--eval": o.eval = a[i + 1]; i += 2
+        case "--audio-only": o.audioOnly = true; i += 1
         default: i += 1
         }
     }
@@ -59,6 +65,7 @@ final class Renderer: NSObject, WKNavigationDelegate {
 
     func frame(_ t: Double) async -> Data {
         let r = await js("window.__frame(\(t))") as? String ?? ""
+        if r.hasPrefix("ERR") { print("page error at t=\(t): \(r)"); exit(6) }
         return Data(base64Encoded: r.components(separatedBy: ",").last ?? "") ?? Data()
     }
 
@@ -66,17 +73,28 @@ final class Renderer: NSObject, WKNavigationDelegate {
         for _ in 0..<400 where (await js("window.__ready === true")) as? Bool != true {
             try? await Task.sleep(nanoseconds: 25_000_000)
         }
-        guard (await js("window.__ready === true")) as? Bool == true else { print("page never became ready"); exit(3) }
+        guard (await js("window.__ready === true")) as? Bool == true else {
+            print("page never became ready: \((await js("window.__error")) as? String ?? "no error recorded")"); exit(3)
+        }
         let duration = (await js("window.__duration")) as? Double ?? 0
         let fm = FileManager.default
         try? fm.createDirectory(at: o.out, withIntermediateDirectories: true)
 
+        if let body = o.eval {   // debugging: run a function body in the page, print what it returns
+            do {
+                let r = try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page)
+                print(r.map { "\($0)" } ?? "nil")
+            } catch { print("eval failed: \(error)") }
+            exit(0)
+        }
         if let stills = o.stills {
             for t in stills {
                 try? await frame(t).write(to: o.out.appendingPathComponent(String(format: "still-%05.2f.png", t)))
             }
             print("stills: \(stills.count) → \(o.out.path)"); exit(0)
         }
+
+        if o.audioOnly { await writeAudio(); exit(0) }
 
         let framesDir = o.out.appendingPathComponent("frames")
         try? fm.removeItem(at: framesDir)
@@ -89,14 +107,17 @@ final class Renderer: NSObject, WKNavigationDelegate {
             if i % 90 == 0 { print("frame \(i)/\(n)") }
         }
         print("frames: \(n) in \(Int(Date().timeIntervalSince(start)))s")
+        await writeAudio()
+        exit(0)
+    }
 
+    func writeAudio() async {
         do {
             let r = try await web.callAsyncJavaScript("return await window.__audioWav()", arguments: [:], in: nil, contentWorld: .page)
             guard let b64 = r as? String, let wav = Data(base64Encoded: b64) else { print("audio: nothing returned"); exit(4) }
             try wav.write(to: o.out.appendingPathComponent("audio.wav"))
             print("audio.wav: \(wav.count / 1024) KB")
         } catch { print("audio failed: \(error)"); exit(4) }
-        exit(0)
     }
 }
 
