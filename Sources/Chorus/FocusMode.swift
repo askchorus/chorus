@@ -64,14 +64,18 @@ enum FocusMode {
         input-container back-to-bottom-fab { pointer-events: auto !important; }
         hallucination-disclaimer, condensed-tos-disclaimer { display: none !important; }
         """),
+        // DeepSeek's are structural (no stable names to go on), so each also refuses to hide a
+        // block holding the conversation: if the page reshapes, a rule lets go instead of
+        // blanking the pane. (A rule for its wide-layout sidebar did exactly that once — a search
+        // panel matched it and the whole conversation vanished — and was dropped.)
         ("chat.deepseek.com", """
-        div:has(> .the-header),
-        div:has(> div > div > .ds-virtual-list) > div:not(:has(.ds-virtual-list)) { display: none !important; }
-        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea) { opacity: 0 !important; }
-        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea),
-        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea) * { pointer-events: none !important; }
-        div:has(> div > div > div > textarea) { opacity: 0 !important; }
-        div:has(> div > div > div > textarea), div:has(> div > div > div > textarea) * { pointer-events: none !important; }
+        div:has(> .the-header):not(:has(.ds-markdown, .ds-virtual-list, textarea)) { display: none !important; }
+        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) { opacity: 0 !important; }
+        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)),
+        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) * { pointer-events: none !important; }
+        div:has(> div > div > div > textarea):not(:has(.ds-markdown)) { opacity: 0 !important; }
+        div:has(> div > div > div > textarea):not(:has(.ds-markdown)),
+        div:has(> div > div > div > textarea):not(:has(.ds-markdown)) * { pointer-events: none !important; }
         """),
     ]
 

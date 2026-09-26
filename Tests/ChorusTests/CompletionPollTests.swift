@@ -307,8 +307,8 @@ final class CompletionPollTests: XCTestCase {
         var styles: [String: String] = [:]
         let check = """
         JSON.stringify({ header: getComputedStyle(document.querySelector('._2be88ba')).display,
-                         sidebar: getComputedStyle(document.querySelector('.dc04ec1d')).display,
                          main: getComputedStyle(document.querySelector('._7780f2e')).display,
+                         list: getComputedStyle(document.querySelector('.ds-virtual-list')).display,
                          composer: getComputedStyle(document.querySelector('._871cbca')).opacity,
                          clicks: getComputedStyle(document.querySelector('[role=button]')).pointerEvents,
                          answers: getComputedStyle(document.querySelector('.ds-virtual-list-items')).opacity })
@@ -319,8 +319,33 @@ final class CompletionPollTests: XCTestCase {
         }) { s in
             s.logs.contains { $0.contains("answer already on the page at first look") }
         }
-        XCTAssertEqual(styles, ["header": "none", "sidebar": "none", "main": "block", "composer": "0", "clicks": "none", "answers": "1"])
+        XCTAssertEqual(styles, ["header": "none", "main": "block", "list": "block", "composer": "0", "clicks": "none", "answers": "1"])
         XCTAssertNotNil(t, "first look didn't notice the answer under focus mode; logs: \(sink.logs)")
+    }
+
+    /// Regression: an answer with web search puts a sources panel (its own .ds-virtual-list) next
+    /// to the conversation. A structural rule once read that as the page layout and hid the whole
+    /// conversation list — the pane went blank with the answer on the page. The conversation, and
+    /// anything holding an answer, must stay visible whatever else is on the page.
+    func testFocusModeNeverHidesDeepSeekConversation() async throws {
+        let page = deepseekPage(answer: "none", shell: true)
+            .replacingOccurrences(of: #"<div class="ds-virtual-list-items" id="chat"></div>"#,
+                                  with: #"<div class="ds-virtual-list-items" id="chat"><div class="ds-message"><div class="ds-markdown">鼻炎针有两类</div></div></div>"#)
+            // A third child of the main column, after the list: the sources panel.
+            .replacingOccurrences(of: "</div></div>\n</div>",
+                                  with: #"<div class="sources"><div><div class="ds-virtual-list">来源 1 · 来源 2</div></div></div>"# + "</div></div>\n</div>")
+        XCTAssertTrue(page.contains("sources"), "fixture didn't get its sources panel")
+        var styles: [String: String] = [:]
+        let check = """
+        JSON.stringify({ list: getComputedStyle(document.querySelector('.ds-virtual-list')).display,
+                         answer: String(document.querySelector('.ds-markdown').getBoundingClientRect().height > 0),
+                         answerOpacity: getComputedStyle(document.querySelector('.ds-markdown')).opacity,
+                         header: getComputedStyle(document.querySelector('._2be88ba')).display })
+        """
+        _ = try await send(page: page, host: "chat.deepseek.com", seconds: 0.1, focus: true, focusCheck: check) { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(styles, ["list": "block", "answer": "true", "answerOpacity": "1", "header": "none"])
     }
 
     /// DeepSeek's new-chat page has no conversation list; its input box (the same component, four
