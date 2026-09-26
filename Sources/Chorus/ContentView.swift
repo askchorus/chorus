@@ -243,6 +243,8 @@ final class WebViewStore: ObservableObject {
     /// Navigate a panel to its "new conversation" page (login/cookies preserved).
     func newChat(key: String) {
         guard let webView = cache[key], let url = freshURL(forKey: key) else { return }
+        // Its answer leaves the screen: no trophy for it, and "summarize" mustn't count it.
+        answeredLastBroadcast.remove(key)
         newChatStartedAt[key] = Date()
         clog("[NewChat] \(key) — loading \(url.absoluteString)")
         webView.load(URLRequest(url: url))

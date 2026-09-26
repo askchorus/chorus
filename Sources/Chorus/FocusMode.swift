@@ -70,6 +70,8 @@ enum FocusMode {
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea) { opacity: 0 !important; }
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea),
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea) * { pointer-events: none !important; }
+        div:has(> div > div > div > textarea) { opacity: 0 !important; }
+        div:has(> div > div > div > textarea), div:has(> div > div > div > textarea) * { pointer-events: none !important; }
         """),
     ]
 

@@ -323,6 +323,36 @@ final class CompletionPollTests: XCTestCase {
         XCTAssertNotNil(t, "first look didn't notice the answer under focus mode; logs: \(sink.logs)")
     }
 
+    /// DeepSeek's new-chat page has no conversation list; its input box (the same component, four
+    /// levels above the textarea) is hidden there too, and sending through it still works.
+    func testFocusModeHidesDeepSeekHomeComposerButSendStillWorks() async throws {
+        let home = deepseekPage(answer: "instant").replacingOccurrences(of: """
+        <textarea></textarea>
+        <div role="button" class="ds-button ds-button--primary ds-button--circle">↑</div>
+        """, with: """
+        <div class="_9a2f8e4"><div class="_5758a85">How can I help you today?</div>
+          <div class="aaff8b8f"><div class="_77cefa5"><div class="_020ab5b">
+            <div class="_24fad49"><textarea></textarea></div>
+            <div class="ec4f5d61"><div role="button" class="ds-button ds-button--primary ds-button--circle">↑</div></div>
+          </div></div></div></div>
+        """)
+        XCTAssertTrue(home.contains("aaff8b8f"), "fixture didn't take the home-page shape")
+        var styles: [String: String] = [:]
+        let check = """
+        JSON.stringify({ box: getComputedStyle(document.querySelector('.aaff8b8f')).opacity,
+                         clicks: getComputedStyle(document.querySelector('[role=button]')).pointerEvents,
+                         greeting: getComputedStyle(document.querySelector('._5758a85')).opacity })
+        """
+        let (sink, t) = try await send(page: home, host: "chat.deepseek.com", seconds: 6,
+                                       focus: true, focusCheck: check, checked: { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }) { s in
+            s.logs.contains { $0.contains("answer already on the page at first look") }
+        }
+        XCTAssertEqual(styles, ["box": "0", "clicks": "none", "greeting": "1"])
+        XCTAssertNotNil(t, "first look didn't notice the answer from the home page; logs: \(sink.logs)")
+    }
+
     /// The ordinary path still works: stop button seen, then gone → done.
     func testStreamingAnswerCompletesAfterStopButtonGoes() async throws {
         let (sink, t) = try await send(page: chatgptPage(answer: "stream"), host: "chatgpt.com", seconds: 10)
