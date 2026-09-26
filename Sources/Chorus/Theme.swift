@@ -20,6 +20,12 @@ enum ChorusTheme {
     static let cardCream: [Color] = [Color(red: 0.988, green: 0.972, blue: 0.937),
                                      Color(red: 0.956, green: 0.925, blue: 0.862)]
 
+    /// The app's own chrome — panel headers, the composer — as solid warm paper, one step
+    /// lighter than the canvas. (System materials added a cool grey cast against the warm canvas.)
+    static func chrome(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(red: 0.155, green: 0.148, blue: 0.14) : Color(red: 0.984, green: 0.969, blue: 0.941)
+    }
+
     static func cardBorder(_ scheme: ColorScheme) -> Color {
         // Warm ink, as in the film, rather than neutral black.
         scheme == .dark ? Color.white.opacity(0.09) : Color(red: 0.149, green: 0.129, blue: 0.102).opacity(0.14)
@@ -98,19 +104,6 @@ enum ProviderStyle {
             let hue = Double(abs(h) % 360) / 360.0
             return Color(hue: hue, saturation: 0.55, brightness: 0.85)
         }
-    }
-}
-
-/// Thin brand-color bar across the top of a card — which AI this is, at a glance. (It used to
-/// pulse while streaming; the header's singing character says that now.)
-struct AccentBar: View {
-    let color: Color
-
-    var body: some View {
-        Rectangle()
-            .fill(color)
-            .frame(height: 2)
-            .opacity(0.85)
     }
 }
 

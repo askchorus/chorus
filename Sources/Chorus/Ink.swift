@@ -329,6 +329,9 @@ struct InkCharacter: View {
     var pose = InkPose()
     var t: Double = 0
     var shadow = false
+    /// Body colour; nil = the film's cream. Small characters on chrome pass the chrome colour so
+    /// they read as drawn on it, not as white stickers.
+    var fill: Color? = nil
     @Environment(\.colorScheme) private var scheme
 
     /// Each character fills its own frame — side by side in panel headers they should read as the
@@ -356,7 +359,7 @@ struct InkCharacter: View {
             var c = gc
             c.translateBy(x: size.width / 2 - box.midX * k, y: size.height / 2 - box.midY * k)
             c.scaleBy(x: k, y: k)
-            InkDraw.character(c, kind, pose, t: t, line: Ink.line(scheme), fill: Ink.fill(scheme),
+            InkDraw.character(c, kind, pose, t: t, line: Ink.line(scheme), fill: fill ?? Ink.fill(scheme),
                               boost: InkCharacter.boost(scale: k), shadow: shadow)
         }
         .accessibilityHidden(true)
@@ -373,16 +376,17 @@ struct PanelStatusCharacter: View {
     let singing: Bool
     let answered: Bool
     @State private var happyUntil: Date?
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Group {
             if singing {
                 TimelineView(.periodic(from: .now, by: 1.0 / 12)) { ctx in
                     let t = ctx.date.timeIntervalSinceReferenceDate
-                    InkCharacter(kind: kind, pose: .singing(t, phase: Double(kind.rawValue)), t: t)
+                    InkCharacter(kind: kind, pose: .singing(t, phase: Double(kind.rawValue)), t: t, fill: ChorusTheme.chrome(scheme))
                 }
             } else {
-                InkCharacter(kind: kind, pose: InkPose(happy: happyUntil.map { $0 > Date() } ?? false))
+                InkCharacter(kind: kind, pose: InkPose(happy: happyUntil.map { $0 > Date() } ?? false), fill: ChorusTheme.chrome(scheme))
             }
         }
         .onChange(of: singing) { now in
@@ -478,7 +482,7 @@ struct TrophyGlyph: View {
             c.scaleBy(x: k, y: k)
             // Same line and fill as the characters beside it, so it reads as one of the cast's
             // props rather than a system icon; gold once it's awarded.
-            InkDraw.trophy(c, fill: won ? Ink.gold : Ink.fill(scheme), line: Ink.line(scheme), lw: max(8, 1.6 / k))
+            InkDraw.trophy(c, fill: won ? Ink.gold : .clear, line: Ink.line(scheme), lw: max(8, 1.6 / k))
         }
         .aspectRatio(112 / 102, contentMode: .fit)
         .accessibilityHidden(true)
@@ -517,17 +521,18 @@ struct InkSendButtonLabel: View {
     }
 }
 
-/// The composer's chips share one shape: a capsule — cream with a faint ink edge for "…",
-/// layout and mic; orange for "✦ 汇总".
+/// The composer's chips share one shape: a capsule — a faint ink wash for "…", layout and
+/// mic; orange for "✦ 汇总".
 struct InkChipBackground: ViewModifier {
     var orange = false
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
         content
-            .background(Capsule().fill(orange ? Ink.orange.opacity(0.12)
-                                              : Ink.fill(scheme).opacity(scheme == .dark ? 0.55 : 0.92)))
-            .overlay(Capsule().strokeBorder(orange ? Ink.orange.opacity(0.32) : Ink.line(scheme).opacity(0.18)))
+            // Neutral chips sit slightly INTO the bar (a faint ink wash), never lighter than it —
+            // light chips read as white dots on the warm chrome.
+            .background(Capsule().fill(orange ? Ink.orange.opacity(0.12) : Ink.line(scheme).opacity(0.055)))
+            .overlay(Capsule().strokeBorder(orange ? Ink.orange.opacity(0.32) : Ink.line(scheme).opacity(0.10)))
     }
 }
 

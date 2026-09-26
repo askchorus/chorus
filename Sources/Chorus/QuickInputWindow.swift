@@ -875,7 +875,7 @@ struct QuickInputView: View {
     // menu-bar mark); contextual modes (help, dictionary) keep their meaningful SF Symbol.
     @ViewBuilder private var leadingIcon: some View {
         if iconForCurrentInput() == "sparkles" {
-            InkCharacter(kind: .circle)   // the film's quick input carries the circle character
+            InkCharacter(kind: .circle, fill: .clear)   // the film's quick input carries the circle character
                 .frame(width: 22, height: 26)
                 .padding(.top, -3)
         } else {

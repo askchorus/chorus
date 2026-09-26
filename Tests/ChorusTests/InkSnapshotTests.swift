@@ -63,14 +63,15 @@ final class InkSnapshotTests: XCTestCase {
                 VStack(spacing: 4) {
                     ForEach(InkCast.allCases, id: \.rawValue) { kind in
                         HStack(spacing: 7) {
-                            InkCharacter(kind: kind, pose: InkPose(happy: kind == .circle, mouth: kind == .square ? 0.7 : 0))
+                            InkCharacter(kind: kind, pose: InkPose(happy: kind == .circle, mouth: kind == .square ? 0.7 : 0),
+                                         fill: ChorusTheme.chrome(scheme))
                                 .frame(width: 19, height: 22)
                             Text(["Gemini", "ChatGPT", "DeepSeek", "Claude", "Kimi", "Grok"][kind.rawValue]).font(.chorus(12, .semibold))
                             Spacer()
                             TrophyGlyph(won: kind == .triangle).frame(width: 17, height: 16)
                         }
                         .padding(.horizontal, 11).frame(width: 360, height: 30)
-                        .background(Rectangle().fill(.ultraThinMaterial))
+                        .background(Rectangle().fill(ChorusTheme.chrome(scheme)))
                     }
                 }
                 // The composer's controls: "…", "✦", layout · · · mic, send.
@@ -87,7 +88,7 @@ final class InkSnapshotTests: XCTestCase {
                     InkSendButtonLabel(enabled: true)
                 }
                 .padding(.horizontal, 14).frame(width: 460, height: 46)
-                .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
+                .background(RoundedRectangle(cornerRadius: 12).fill(ChorusTheme.chrome(scheme)))
                 // The Compare chip (drawn the way ContentView draws around its menu).
                 HStack(spacing: 5) {
                     SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 12, height: 12)

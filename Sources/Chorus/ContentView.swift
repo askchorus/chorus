@@ -1538,7 +1538,6 @@ struct ContentView: View {
 
     private func card(for p: Provider) -> some View {
         VStack(spacing: 0) {
-            AccentBar(color: ProviderStyle.accent(key: p.key, host: p.url.host ?? ""))
             slimHeader(for: p, cast: .forPanel(panelIndex("w_" + p.key)))
             WebPanel(webView: store.getOrCreate(key: p.key, url: p.url), reflowing: reflowing)
                 .overlay(alignment: .center) {
@@ -1577,7 +1576,6 @@ struct ContentView: View {
     /// of a WKWebView.
     private func apiCard(for p: APIProvider) -> some View {
         VStack(spacing: 0) {
-            AccentBar(color: ProviderStyle.accent(key: p.id, host: ""))
             apiSlimHeader(for: p, cast: .forPanel(panelIndex("a_" + p.id)))
             APIPanelView(provider: p)
         }
@@ -1640,7 +1638,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .background(
             ZStack {
-                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(ChorusTheme.chrome(colorScheme))
                 if hoveredHeaderKey == p.id { Rectangle().fill(Color.primary.opacity(0.05)) }
             }
         )
@@ -1796,7 +1794,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .background(
             ZStack {
-                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(ChorusTheme.chrome(colorScheme))
                 if dropTargetKey == p.key {
                     Rectangle().fill(ChorusTheme.brandOrange.opacity(0.25))
                 } else if hoveredHeaderKey == p.key {
@@ -1943,7 +1941,7 @@ struct ContentView: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(ChorusTheme.chrome(colorScheme))
         )
         .overlay(
             RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
