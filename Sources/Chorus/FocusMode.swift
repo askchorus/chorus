@@ -13,7 +13,11 @@ import Foundation
 /// the bottom of the pane instead of stopping above a blank band. Never by clipping a box the
 /// script types into: WebKit reports clipped text as empty (innerText), so an editor inside an
 /// overflow:hidden, zero-height block looks empty and the send never happens — such a block is
-/// taken out of the flow instead (position:absolute), as Gemini's is.
+/// taken out of the flow instead (position:absolute).
+///
+/// Only the box goes, not the notices a site shows beside it — Claude's "You've used 75% of your
+/// weekly limit", ChatGPT's limit banners. Those stay, at the bottom of the pane, and the site's
+/// own measurement of what sits there keeps the conversation clear of them.
 ///
 /// Rules exist per site; a site without rules is left as it is, and a redesign that breaks a
 /// selector only brings that piece of the site's UI back. Input boxes inside the conversation
@@ -44,38 +48,48 @@ enum FocusMode {
 
     // Selectors lean on what survives a site's redeploys — data attributes, custom-element tags,
     // design-system class names — never hashed class names (DeepSeek re-hashes its classes on
-    // every release). Checked against the live pages on 2026-09-26.
+    // every release). Checked against the live pages on 2026-09-27.
     static let rules: [(host: String, css: String)] = [
+        // ChatGPT keeps the thread clear of its bottom bar by measuring that bar and writing the
+        // height into --thread-scroll-padding-bottom. With the input card lifted out and the bar's
+        // padding gone, the bar holds only its notices slot, so the measurement comes to the
+        // notice's height — or nothing — plus ChatGPT's own 16px.
         ("chatgpt.com", """
         body:not(:has([data-testid="login-button"])) header[data-app-shell-titlebar],
         body:not(:has([data-testid="login-button"])) aside[data-app-shell-left-panel-appearance],
         body:not(:has([data-testid="login-button"])) nav[data-app-navigation-rail] { display: none !important; }
         body:not(:has([data-testid="login-button"])) [data-app-shell-thread-edge-divider] { margin-top: 0 !important; }
         body:not(:has([data-testid="login-button"])) main[data-app-shell-main-surface] { border-left-width: 0 !important; }
-        .thread-scroll-container { --thread-scroll-padding-bottom: calc(var(--spacing) * 4) !important; }
-        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) { opacity: 0 !important; }
-        form[data-chatgpt-composer]:not([data-content-search-unit-key] *),
-        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) * { pointer-events: none !important; }
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea) { opacity: 0 !important; }
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea),
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea) * { pointer-events: none !important; }
+        [data-thread-scroll-footer] form[data-chatgpt-composer] > :has([contenteditable="true"], textarea) {
+          position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important; }
+        [data-thread-scroll-footer]:has(form[data-chatgpt-composer]) { padding-bottom: 0 !important; }
         [data-markdown-copy="exclude"].text-center.text-xs { display: none !important; }
         """),
         // claude.ai's markup is semantic (data-testid / data-cds / data-disclaimer). Its chat page
-        // floats the title bar over a 48px padding; the new-chat page stacks a <header> instead and
-        // has no ChatComposerDock — its input box is the fieldset around the chat input.
+        // floats the title bar over a 48px padding; the new-chat page stacks a <header> instead.
+        // The input box is the card around the editor, plus the page-coloured backdrop it sits on;
+        // Claude's notices live in the same fieldset, just above it, and stay. A fieldset without
+        // that card (a redesign) is hidden whole, as before.
         ("claude.ai", """
         [data-testid="chat-header"]:not(:has([data-testid="user-message"], .font-claude-response)),
         header.dframe-header:not(:has([data-testid="user-message"], .font-claude-response)),
         aside.dframe-sidebar:not(:has([data-testid="user-message"], .font-claude-response)) { display: none !important; }
         div:has(> [data-testid="chat-header"]) { padding-top: 0 !important; }
-        [data-cds="ChatComposerDock"]:not(:has([data-testid="user-message"], .font-claude-response)),
-        fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)) { opacity: 0 !important; }
-        [data-cds="ChatComposerDock"]:not(:has([data-testid="user-message"], .font-claude-response)),
-        [data-cds="ChatComposerDock"]:not(:has([data-testid="user-message"], .font-claude-response)) *,
-        fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)),
-        fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)) * { pointer-events: none !important; }
+        div:has(> [data-tap-focuses-field] [data-testid="chat-input"]) { opacity: 0 !important; }
+        div:has(> [data-tap-focuses-field] [data-testid="chat-input"]),
+        div:has(> [data-tap-focuses-field] [data-testid="chat-input"]) * { pointer-events: none !important; }
+        fieldset:has([data-testid="chat-input"]):not(:has([data-tap-focuses-field], [data-testid="user-message"], .font-claude-response)) { opacity: 0 !important; }
+        fieldset:has([data-testid="chat-input"]):not(:has([data-tap-focuses-field], [data-testid="user-message"], .font-claude-response)),
+        fieldset:has([data-testid="chat-input"]):not(:has([data-tap-focuses-field], [data-testid="user-message"], .font-claude-response)) * { pointer-events: none !important; }
         [data-disclaimer="true"] { display: none !important; }
-        [data-chat-input-container]:not(:has([data-testid="user-message"], .font-claude-response)) {
-          position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
-          pointer-events: none !important; }
+        [data-chat-input-container]:not(:has([data-testid="user-message"], .font-claude-response)) { padding-top: 0 !important; }
+        [data-chat-input-container] div:has(> [data-tap-focuses-field] [data-testid="chat-input"]) {
+          position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important; }
+        [data-testid="last-message-sentinel"] ~ div.h-12:not([data-testid]) { height: 1rem !important; }
+        [data-testid="transcript-bottom-fade"] { display: none !important; }
         """),
         ("gemini.google.com", """
         body:not(:has(a[href*="ServiceLogin"])) > .boqOnegoogleliteOgbOneGoogleBar,

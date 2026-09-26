@@ -117,9 +117,9 @@ let L10nTable: [String: [String: String]] = [
     "panel.moreActions": ["zh": "更多操作", "en": "More actions"],
     "panel.moveLeft": ["zh": "左移", "en": "Move left"],
     "panel.moveRight": ["zh": "右移", "en": "Move right"],
-    "panel.siteUI": ["zh": "原界面", "en": "Site UI"],
-    "panel.showSiteControls": ["zh": "显示网页原界面", "en": "Show site controls"],
-    "panel.hideSiteControls": ["zh": "隐藏网页原界面", "en": "Hide site controls"],
+    "panel.original": ["zh": "原版", "en": "Original"],
+    "panel.showSiteControls": ["zh": "显示 %@ 自己的按钮：换模型、思考强度、历史对话", "en": "Show %@'s own buttons — model picker, thinking level, history"],
+    "panel.hideSiteControls": ["zh": "收起 %@ 自己的按钮", "en": "Hide %@'s own buttons again"],
     "panel.refreshSite": ["zh": "刷新站点状态（保留登录）", "en": "Refresh site state (stay signed in)"],
     "panel.clearData": ["zh": "清除该站点数据…", "en": "Clear this site's data…"],
     "panel.clearData.title": ["zh": "清除该站点的全部数据？", "en": "Clear all data for this site?"],
@@ -270,8 +270,8 @@ let L10nTable: [String: [String: String]] = [
     ],
     "settings.focusMode": ["zh": "专注模式：只看对话", "en": "Focus mode: just the conversation"],
     "settings.focusMode.desc": [
-        "zh": "隐藏各家 AI 网页自带的顶栏、侧栏、输入框和“可能会出错”提示，统一在 Chorus 下方的输入框提问。纯外观、本地实现，不影响发送和账号。需要网页自己的开关（切换模型、思考强度、深度思考等）时，点该面板标题右侧的“原界面”（鼠标移上去会出现），再点一次收起。目前支持 ChatGPT、Claude、Gemini 和 DeepSeek。",
-        "en": "Hides each AI site's own top bar, sidebar, input box and “can make mistakes” line — you ask from Chorus's composer anyway. Purely cosmetic and local; sending and your accounts are unaffected. When you need a site's own switches (model picker, thinking level, DeepThink…), click “Site UI” on that panel's header (it appears on hover); click again to hide them. Currently ChatGPT, Claude, Gemini and DeepSeek.",
+        "zh": "隐藏各家 AI 网页自带的顶栏、侧栏、输入框和“可能会出错”提示，统一在 Chorus 下方的输入框提问。纯外观、本地实现，不影响发送和账号。需要网页自己的开关（切换模型、思考强度、深度思考等）时，点该面板标题右侧的“原版”（鼠标移上去会出现），再点一次收起。目前支持 ChatGPT、Claude、Gemini 和 DeepSeek。",
+        "en": "Hides each AI site's own top bar, sidebar, input box and “can make mistakes” line — you ask from Chorus's composer anyway. Purely cosmetic and local; sending and your accounts are unaffected. When you need a site's own switches (model picker, thinking level, DeepThink…), click “Original” on that panel's header (it appears on hover); click again to hide them. Currently ChatGPT, Claude, Gemini and DeepSeek.",
     ],
     "settings.warmWeb": ["zh": "给 AI 网页染上暖色调", "en": "Warm-tint the AI web pages"],
     "settings.warmWeb.desc": [

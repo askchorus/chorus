@@ -986,7 +986,10 @@ enum Broadcaster {
           const HOSTS = [
             {
               host: 'chatgpt.com',
-              inputSelectors: ['#prompt-textarea', 'main div[contenteditable="true"]'],
+              // The composer lost its #prompt-textarea id in 2026-09; the scoped form selector
+              // finds it without also matching a message's edit box higher up the page.
+              inputSelectors: ['#prompt-textarea', 'form[data-chatgpt-composer]:not([data-content-search-unit-key] *) [contenteditable="true"]',
+                               'main div[contenteditable="true"]'],
               sendSelectors: [
                 'button[data-testid="send-button"]',
                 'button[data-testid="composer-send-button"]',

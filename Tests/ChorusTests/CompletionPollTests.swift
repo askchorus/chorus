@@ -33,7 +33,8 @@ final class CompletionPollTests: XCTestCase {
     /// Loads `page` as if served from `host`, sends `text` through the real script, then waits
     /// up to `seconds` for `done`. Returns what the page reported and when (seconds after send).
     /// With `focus`, focus mode's stylesheet is applied first and `focusCheck` (a JS expression)
-    /// is evaluated right after it, before sending.
+    /// is evaluated 0.2s after it — time for the page to re-measure its bottom bar, as the real
+    /// sites do — before sending.
     private func send(page: String, host: String, text: String = "三个名字", seconds: TimeInterval,
                       focus: Bool = false, focusCheck: String? = nil, checked: ((Any?) -> Void)? = nil,
                       until done: @escaping @MainActor (Sink) -> Bool = { !$0.completions.isEmpty }) async throws -> (Sink, TimeInterval?) {
@@ -56,7 +57,10 @@ final class CompletionPollTests: XCTestCase {
         }
         if focus {
             _ = try await web.evaluateJavaScript(FocusMode.addJS + ";true")
-            if let focusCheck { checked?(try await web.evaluateJavaScript(focusCheck)) }
+            if let focusCheck {
+                checked?(try await web.callAsyncJavaScript("await new Promise(r => setTimeout(r, 200)); return (\(focusCheck));",
+                                                           arguments: [:], in: nil, contentWorld: .page))
+            }
         }
         let start = Date()
         web.evaluateJavaScript(Broadcaster.injectionScript(text: text), completionHandler: nil)
@@ -129,34 +133,43 @@ final class CompletionPollTests: XCTestCase {
     // already on the page. "instant" answers at once; "stream" shows the stop button (inside the
     // input box, as on the real site) and grows the answer for ~2.4s; "none" answers nothing.
     // `shell` wraps it in ChatGPT's real app shell: top bar, thread frame, composer form.
-    private func chatgptPage(answer: String, shell: Bool = false) -> String {
-        let composer = """
-        <div id="prompt-textarea" contenteditable="true"></div>
-        <button data-testid="send-button">send</button>
-        """
+    // `notice` goes in the slot ChatGPT keeps above its input box for limit banners. The shell's
+    // bottom bar is measured into --thread-scroll-padding-bottom (plus 16px), as ChatGPT does.
+    private func chatgptPage(answer: String, shell: Bool = false, notice: String = "") -> String {
         let body = shell ? """
         <aside data-app-shell-left-panel-appearance="default">chat history</aside>
         <nav data-app-navigation-rail="true">rail</nav>
         <header data-app-shell-titlebar="true" style="position:fixed;top:0;height:52px">ChatGPT 5 ▾</header>
         <div data-app-shell-thread-edge-divider="false" style="margin-top:52px">
-          <div class="thread-scroll-container" style="--spacing:4px; --thread-scroll-padding-bottom:127px">
+          <div class="thread-scroll-container" style="position:relative; --spacing:4px; --thread-scroll-padding-bottom:127px">
             <div id="chat"><div class="markdown">an earlier answer</div></div>
             <div data-markdown-copy="exclude" class="text-center text-xs">ChatGPT can make mistakes.</div>
             <div class="spacer" aria-hidden="true" style="position:sticky;bottom:0;height:calc(var(--thread-scroll-padding-bottom) - var(--spacing) * 4)"></div>
+            <div data-thread-scroll-footer="true" style="position:absolute;left:0;right:0;bottom:0;padding-bottom:24px">
+              <form data-chatgpt-composer="" style="position:relative;display:flex;flex-direction:column" onsubmit="event.preventDefault()">
+                <div data-above-composer-portal="">\(notice)</div>
+                <div class="card" style="position:relative;height:87px;background:#fff">
+                  <div class="ProseMirror" contenteditable="true" data-composer-markdown="true"></div>
+                  <button data-testid="send-button">send</button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
-        <div data-thread-scroll-footer="true"><form data-chatgpt-composer="" onsubmit="event.preventDefault()">\(composer)</form></div>
         """ : """
         <div id="chat"><div class="markdown">an earlier answer</div></div>
-        \(composer)
+        <div id="prompt-textarea" contenteditable="true"></div>
+        <button data-testid="send-button">send</button>
         """
         return """
         <!doctype html><html><body><main data-app-shell-main-surface="browser" style="border-left:0.5px solid #ccc">
         \(body)
         </main>
         <script>
+        const bar = document.querySelector('[data-thread-scroll-footer]'), thread = document.querySelector('.thread-scroll-container');
+        if (bar) setInterval(() => thread.style.setProperty('--thread-scroll-padding-bottom', (bar.offsetHeight + 16) + 'px'), 50);
         document.querySelector('[data-testid=send-button]').addEventListener('click', () => {
-          const ed = document.getElementById('prompt-textarea');
+          const ed = document.querySelector('[data-thread-scroll-footer] [contenteditable="true"]') || document.getElementById('prompt-textarea');
           if (!ed.innerText.trim()) return;
           ed.innerHTML = '';
           const mode = '\(answer)';
@@ -165,7 +178,7 @@ final class CompletionPollTests: XCTestCase {
           document.getElementById('chat').appendChild(d);
           if (mode === 'instant') { d.textContent = '糯米 团子 小满'; return; }
           const stop = document.createElement('button'); stop.setAttribute('data-testid', 'stop-button'); stop.textContent = '■';
-          (document.querySelector('form') || document.querySelector('main')).appendChild(stop);
+          (document.querySelector('form .card') || document.querySelector('main')).appendChild(stop);
           let n = 0;
           const t = setInterval(() => {
             d.textContent += '团子 ';
@@ -255,12 +268,14 @@ final class CompletionPollTests: XCTestCase {
 
     /// Focus mode hides ChatGPT's input box, but sending through it and watching the stop button
     /// inside it must still work: both first check that the element is rendered, which is why
-    /// the box is made transparent and click-through rather than display:none.
+    /// the box is made transparent and click-through rather than display:none. Lifted out of the
+    /// bottom bar, it leaves ChatGPT's own measurement of that bar with nothing to reserve room for.
     func testFocusModeHidesChatGPTChromeButSendAndStopStillWork() async throws {
         var styles: [String: String] = [:]
         let check = """
-        JSON.stringify({ composer: getComputedStyle(document.querySelector('form')).opacity,
-                         clicks: getComputedStyle(document.querySelector('#prompt-textarea')).pointerEvents,
+        JSON.stringify({ composer: getComputedStyle(document.querySelector('form .card')).opacity,
+                         lifted: getComputedStyle(document.querySelector('form .card')).position,
+                         clicks: getComputedStyle(document.querySelector('form [contenteditable]')).pointerEvents,
                          header: getComputedStyle(document.querySelector('header')).display,
                          sidebar: getComputedStyle(document.querySelector('aside')).display,
                          rail: getComputedStyle(document.querySelector('nav')).display,
@@ -273,8 +288,8 @@ final class CompletionPollTests: XCTestCase {
                                        focus: true, focusCheck: check) { v in
             styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         }
-        XCTAssertEqual(styles, ["composer": "0", "clicks": "none", "header": "none", "sidebar": "none", "rail": "none",
-                                "border": "0px", "spacer": "0px", "frameTop": "0px", "disclaimer": "none"])
+        XCTAssertEqual(styles, ["composer": "0", "lifted": "absolute", "clicks": "none", "header": "none", "sidebar": "none",
+                                "rail": "none", "border": "0px", "spacer": "0px", "frameTop": "0px", "disclaimer": "none"])
         XCTAssertNotNil(t, "no completion with focus mode on; logs: \(sink.logs)")
         XCTAssertTrue(sink.diagnostics.contains("streaming-started"), "stop button not seen under focus mode; logs: \(sink.logs)")
         if let t { XCTAssertGreaterThan(t, 2.4, "declared done while still streaming") }
@@ -294,6 +309,36 @@ final class CompletionPollTests: XCTestCase {
             styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         }
         XCTAssertEqual(styles, ["header": "block", "frameTop": "52px"])
+    }
+
+    /// A notice ChatGPT puts above its input box (a usage limit) stays in view and clickable, and
+    /// the room ChatGPT measures for its bottom bar is now exactly the notice's.
+    func testFocusModeKeepsChatGPTNoticesInView() async throws {
+        let notice = #"<div class="notice" style="height:48px">You've hit the Free plan limit <button class="upgrade">Upgrade</button></div>"#
+        var styles: [String: String] = [:]
+        _ = try await send(page: chatgptPage(answer: "none", shell: true, notice: notice), host: "chatgpt.com", seconds: 0.1,
+                           focus: true, focusCheck: """
+        JSON.stringify({ notice: (() => { for (let e = document.querySelector('.notice'); e; e = e.parentElement) {
+                             const cs = getComputedStyle(e); if (cs.opacity !== '1' || cs.display === 'none' || cs.visibility === 'hidden') return 'hidden';
+                           } return 'shown'; })(),
+                         clicks: getComputedStyle(document.querySelector('.upgrade')).pointerEvents,
+                         room: getComputedStyle(document.querySelector('.thread-scroll-container')).getPropertyValue('--thread-scroll-padding-bottom').trim(),
+                         box: getComputedStyle(document.querySelector('form .card')).opacity })
+        """) { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(styles, ["notice": "shown", "clicks": "auto", "room": "64px", "box": "0"])
+    }
+
+    /// ChatGPT's composer no longer carries #prompt-textarea. With a message's edit box open
+    /// higher up the page, the broadcast still types into the composer at the bottom.
+    func testChatGPTTypesIntoTheComposerNotAnOpenEditBox() async throws {
+        let page = chatgptPage(answer: "instant", shell: true)
+            .replacingOccurrences(of: #"<div id="chat">"#, with: """
+            <div id="chat"><div data-content-search-unit-key="t:0:user"><form class="edit" data-chatgpt-composer=""><div class="editcard"><div contenteditable="true">edited</div></div></form></div>
+            """)
+        let (sink, t) = try await send(page: page, host: "chatgpt.com", seconds: 10)
+        XCTAssertNotNil(t, "the question never reached the composer; logs: \(sink.logs)")
     }
 
     /// Gemini's input box is also lifted out of the page flow (so the chat fills the pane); the
@@ -390,21 +435,26 @@ final class CompletionPollTests: XCTestCase {
 
         let chatgpt = chatgptPage(answer: "none", shell: true)
             .replacingOccurrences(of: #"<div id="chat">"#, with: """
-            <div id="chat"><div data-content-search-unit-key="t:0:user"><form class="edit" data-chatgpt-composer=""><div contenteditable="true">edited</div></form></div>
+            <div id="chat"><div data-content-search-unit-key="t:0:user"><form class="edit" data-chatgpt-composer=""><div class="editcard"><div contenteditable="true">edited</div></div></form></div>
             """)
         var gptStyles: [String: String] = [:]
         _ = try await send(page: chatgpt, host: "chatgpt.com", seconds: 0.1, focus: true, focusCheck: """
-        JSON.stringify({ edit: getComputedStyle(document.querySelector('form.edit')).opacity,
-                         composer: getComputedStyle(document.querySelector('[data-thread-scroll-footer] form')).opacity })
+        JSON.stringify({ edit: getComputedStyle(document.querySelector('.editcard')).opacity,
+                         editClicks: getComputedStyle(document.querySelector('.editcard [contenteditable]')).pointerEvents,
+                         editPlace: getComputedStyle(document.querySelector('.editcard')).position,
+                         composer: getComputedStyle(document.querySelector('[data-thread-scroll-footer] form .card')).opacity })
         """) { v in
             gptStyles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         }
-        XCTAssertEqual(gptStyles, ["edit": "1", "composer": "0"])
+        XCTAssertEqual(gptStyles, ["edit": "1", "editClicks": "auto", "editPlace": "static", "composer": "0"])
     }
 
-    // A claude.ai-shaped chat page: floating title bar over a 48px padding, collapsed sidebar,
-    // the composer dock (stop button appears in it while answering) and the disclaimer note.
-    private func claudePage() -> String {
+    // A claude.ai-shaped chat page: floating title bar over a 48px padding, collapsed sidebar, the
+    // tail of the transcript (sentinel, 48px spacer, the room kept for notices) and the input
+    // container. Its fieldset holds the notices layer, just above the card around the editor (the
+    // stop button appears in the card while answering). Like Claude, the page measures its
+    // notices into that room.
+    private func claudePage(notice: String = "") -> String {
         """
         <!doctype html><html><body>
         <aside class="dframe-sidebar" aria-label="Sidebar" style="position:absolute"><button data-testid="sidebar-compact-trigger">☰</button></aside>
@@ -413,16 +463,27 @@ final class CompletionPollTests: XCTestCase {
           <div data-testid="chat-column-body">
             <div id="chat"><div data-testid="user-message">earlier question</div>
               <div data-is-streaming="false"><div class="font-claude-response"><div class="standard-markdown">earlier answer</div></div></div></div>
-            <div data-chat-input-container="true" style="position:sticky;bottom:0">
-              <div data-cds="ChatComposerDock"><fieldset>
-                <div contenteditable="true" class="tiptap ProseMirror" data-testid="chat-input"></div>
-                <button aria-label="Send message">↑</button>
-              </fieldset></div>
+            <div data-testid="last-message-sentinel" style="height:1px"></div>
+            <div class="h-12" style="height:48px"></div>
+            <div data-composer-banners-room="" style="height:var(--composer-banners-composer-h, 0px)"></div>
+            <div data-chat-input-container="true" style="position:sticky;bottom:0;padding-top:24px">
+              <div style="position:relative;height:0"><div data-testid="transcript-bottom-fade" style="position:absolute;left:0;right:0;bottom:0;height:48px"></div></div>
+              <div data-cds="ChatComposerDock"><div role="presentation"><fieldset style="display:flex;flex-direction:column;border:0;margin:0;padding:0">
+                <div style="position:relative;height:0"><div data-composer-banner-layer="" style="position:absolute;left:0;right:0;bottom:0">\(notice)</div></div>
+                <div class="card-backdrop" style="position:relative;background:#fff">
+                  <div data-tap-focuses-field="" style="min-height:100px">
+                    <div contenteditable="true" class="tiptap ProseMirror" data-testid="chat-input"></div>
+                    <button aria-label="Send message">↑</button>
+                  </div>
+                </div>
+              </fieldset></div></div>
               <div role="note" data-disclaimer="true">Claude is AI and can make mistakes.</div>
             </div>
           </div>
         </div>
         <script>
+        const layer = document.querySelector('[data-composer-banner-layer]'), room = document.querySelector('[data-composer-banners-room]');
+        setInterval(() => room.style.setProperty('--composer-banners-composer-h', layer.offsetHeight + 'px'), 50);
         document.querySelector('[aria-label="Send message"]').addEventListener('click', () => {
           const ed = document.querySelector('[data-testid="chat-input"]');
           if (!ed.innerText.trim()) return;
@@ -432,7 +493,7 @@ final class CompletionPollTests: XCTestCase {
           document.getElementById('chat').appendChild(r);
           const md = r.querySelector('.standard-markdown');
           const stop = document.createElement('button'); stop.setAttribute('aria-label', 'Stop response'); stop.textContent = '■';
-          document.querySelector('fieldset').appendChild(stop);
+          document.querySelector('[data-tap-focuses-field]').appendChild(stop);
           let n = 0;
           const t = setInterval(() => {
             md.textContent += 'Mochi ';
@@ -444,51 +505,90 @@ final class CompletionPollTests: XCTestCase {
         """
     }
 
-    /// Claude: title bar, sidebar button, input box and disclaimer hidden; the answer stays; the
-    /// send and the stop-button watch inside the transparent dock still work.
+    /// Claude: title bar, sidebar button, input box and disclaimer hidden; the answer stays and
+    /// runs to 16px above the bottom; the send and the stop-button watch inside the transparent
+    /// card still work.
     func testFocusModeHidesClaudeChromeButSendAndStopStillWork() async throws {
         var styles: [String: String] = [:]
         let check = """
         JSON.stringify({ header: getComputedStyle(document.querySelector('[data-testid="chat-header"]')).display,
                          room: getComputedStyle(document.querySelector('.col')).paddingTop,
                          sidebar: getComputedStyle(document.querySelector('aside')).display,
-                         dock: getComputedStyle(document.querySelector('[data-cds="ChatComposerDock"]')).opacity,
-                         inputRoom: getComputedStyle(document.querySelector('[data-chat-input-container]')).position,
+                         box: getComputedStyle(document.querySelector('.card-backdrop')).opacity,
+                         lifted: getComputedStyle(document.querySelector('.card-backdrop')).position,
+                         inputRoom: getComputedStyle(document.querySelector('[data-chat-input-container]')).paddingTop,
                          clicks: getComputedStyle(document.querySelector('[data-testid="chat-input"]')).pointerEvents,
                          disclaimer: getComputedStyle(document.querySelector('[data-disclaimer]')).display,
+                         spacer: getComputedStyle(document.querySelector('.h-12')).height,
+                         fade: getComputedStyle(document.querySelector('[data-testid="transcript-bottom-fade"]')).display,
                          answer: getComputedStyle(document.querySelector('.font-claude-response')).opacity })
         """
         let (sink, t) = try await send(page: claudePage(), host: "claude.ai", seconds: 10,
                                        focus: true, focusCheck: check, checked: { v in
             styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         })
-        XCTAssertEqual(styles, ["header": "none", "room": "0px", "sidebar": "none", "dock": "0", "inputRoom": "absolute",
-                                "clicks": "none", "disclaimer": "none", "answer": "1"])
+        XCTAssertEqual(styles, ["header": "none", "room": "0px", "sidebar": "none", "box": "0", "lifted": "absolute",
+                                "inputRoom": "0px", "clicks": "none", "disclaimer": "none", "spacer": "16px", "fade": "none",
+                                "answer": "1"])
         XCTAssertNotNil(t, "no completion with focus mode on; logs: \(sink.logs)")
         XCTAssertTrue(sink.diagnostics.contains("streaming-started"), "stop button not seen under focus mode; logs: \(sink.logs)")
         if let t { XCTAssertGreaterThan(t, 2.4, "declared done while still streaming") }
     }
 
-    /// Claude's new-chat page: a stacked <header> and the fieldset around the chat input.
+    /// Claude's notices ("You've used 75% of your weekly limit") share the input box's fieldset.
+    /// Focus mode keeps them in view and clickable, in the room Claude keeps for them below the
+    /// conversation, clear of the last answer.
+    func testFocusModeKeepsClaudeNoticesInView() async throws {
+        let notice = #"<div class="notice" style="height:52px">You've used 75% of your weekly limit <button aria-label="Dismiss">×</button></div>"#
+        var styles: [String: String] = [:]
+        _ = try await send(page: claudePage(notice: notice), host: "claude.ai", seconds: 0.1, focus: true, focusCheck: """
+        JSON.stringify({ notice: (() => { for (let e = document.querySelector('.notice'); e; e = e.parentElement) {
+                             const cs = getComputedStyle(e); if (cs.opacity !== '1' || cs.display === 'none' || cs.visibility === 'hidden') return 'hidden';
+                           } return 'shown'; })(),
+                         clicks: getComputedStyle(document.querySelector('[aria-label="Dismiss"]')).pointerEvents,
+                         room: getComputedStyle(document.querySelector('[data-composer-banners-room]')).height,
+                         clear: String(document.querySelector('.notice').getBoundingClientRect().top >= document.querySelector('#chat').getBoundingClientRect().bottom),
+                         box: getComputedStyle(document.querySelector('.card-backdrop')).opacity })
+        """) { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(styles, ["notice": "shown", "clicks": "auto", "room": "52px", "clear": "true", "box": "0"])
+    }
+
+    /// Claude's new-chat page: a stacked <header> and the fieldset around the chat input. Only the
+    /// card goes (it stays in place there); a fieldset without that card is hidden whole.
     func testFocusModeHidesClaudeNewChatChrome() async throws {
         let page = """
         <!doctype html><html><body>
         <header class="dframe-header">New chat · incognito</header>
         <div class="dock"><div><div role="presentation"><fieldset>
-          <div contenteditable="true" class="tiptap ProseMirror" data-testid="chat-input"></div><button aria-label="Send message">↑</button>
+          <div style="position:relative;height:0"><div data-composer-banner-layer=""></div></div>
+          <div class="card-backdrop"><div data-tap-focuses-field="">
+            <div contenteditable="true" class="tiptap ProseMirror" data-testid="chat-input"></div><button aria-label="Send message">↑</button>
+          </div></div>
         </fieldset></div></div></div>
         <h1 class="greeting">How can I help you today?</h1>
         <script>window.__fakeReady = true;</script></body></html>
         """
-        var styles: [String: String] = [:]
-        _ = try await send(page: page, host: "claude.ai", seconds: 0.1, focus: true, focusCheck: """
+        let check = """
         JSON.stringify({ header: getComputedStyle(document.querySelector('header')).display,
-                         box: getComputedStyle(document.querySelector('fieldset')).opacity,
+                         box: getComputedStyle(document.querySelector('.card-backdrop')).opacity,
+                         place: getComputedStyle(document.querySelector('.card-backdrop')).position,
+                         fieldset: getComputedStyle(document.querySelector('fieldset')).opacity,
                          greeting: getComputedStyle(document.querySelector('.greeting')).opacity })
-        """) { v in
+        """
+        var styles: [String: String] = [:]
+        _ = try await send(page: page, host: "claude.ai", seconds: 0.1, focus: true, focusCheck: check) { v in
             styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         }
-        XCTAssertEqual(styles, ["header": "none", "box": "0", "greeting": "1"])
+        XCTAssertEqual(styles, ["header": "none", "box": "0", "place": "static", "fieldset": "1", "greeting": "1"])
+
+        var fallback: [String: String] = [:]
+        _ = try await send(page: page.replacingOccurrences(of: #" data-tap-focuses-field="""#, with: ""), host: "claude.ai",
+                           seconds: 0.1, focus: true, focusCheck: check) { v in
+            fallback = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(fallback, ["header": "none", "box": "1", "place": "static", "fieldset": "0", "greeting": "1"])
     }
 
     /// DeepSeek's new-chat page has no conversation list; its input box (the same component, four
