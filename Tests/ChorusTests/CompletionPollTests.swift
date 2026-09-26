@@ -139,8 +139,11 @@ final class CompletionPollTests: XCTestCase {
         <nav data-app-navigation-rail="true">rail</nav>
         <header data-app-shell-titlebar="true" style="position:fixed;top:0;height:52px">ChatGPT 5 ▾</header>
         <div data-app-shell-thread-edge-divider="false" style="margin-top:52px">
-          <div id="chat"><div class="markdown">an earlier answer</div></div>
-          <div data-markdown-copy="exclude" class="text-center text-xs">ChatGPT can make mistakes.</div>
+          <div class="thread-scroll-container" style="--spacing:4px; --thread-scroll-padding-bottom:127px">
+            <div id="chat"><div class="markdown">an earlier answer</div></div>
+            <div data-markdown-copy="exclude" class="text-center text-xs">ChatGPT can make mistakes.</div>
+            <div class="spacer" aria-hidden="true" style="position:sticky;bottom:0;height:calc(var(--thread-scroll-padding-bottom) - var(--spacing) * 4)"></div>
+          </div>
         </div>
         <div data-thread-scroll-footer="true"><form data-chatgpt-composer="" onsubmit="event.preventDefault()">\(composer)</form></div>
         """ : """
@@ -262,6 +265,7 @@ final class CompletionPollTests: XCTestCase {
                          sidebar: getComputedStyle(document.querySelector('aside')).display,
                          rail: getComputedStyle(document.querySelector('nav')).display,
                          border: getComputedStyle(document.querySelector('main')).borderLeftWidth,
+                         spacer: getComputedStyle(document.querySelector('.spacer')).height,
                          frameTop: getComputedStyle(document.querySelector('[data-app-shell-thread-edge-divider]')).marginTop,
                          disclaimer: getComputedStyle(document.querySelector('[data-markdown-copy]')).display })
         """
@@ -270,7 +274,7 @@ final class CompletionPollTests: XCTestCase {
             styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         }
         XCTAssertEqual(styles, ["composer": "0", "clicks": "none", "header": "none", "sidebar": "none", "rail": "none",
-                                "border": "0px", "frameTop": "0px", "disclaimer": "none"])
+                                "border": "0px", "spacer": "0px", "frameTop": "0px", "disclaimer": "none"])
         XCTAssertNotNil(t, "no completion with focus mode on; logs: \(sink.logs)")
         XCTAssertTrue(sink.diagnostics.contains("streaming-started"), "stop button not seen under focus mode; logs: \(sink.logs)")
         if let t { XCTAssertGreaterThan(t, 2.4, "declared done while still streaming") }
@@ -327,6 +331,7 @@ final class CompletionPollTests: XCTestCase {
                          main: getComputedStyle(document.querySelector('._7780f2e')).display,
                          list: getComputedStyle(document.querySelector('.ds-virtual-list')).display,
                          composer: getComputedStyle(document.querySelector('._871cbca')).opacity,
+                         room: getComputedStyle(document.querySelector('._871cbca')).height,
                          clicks: getComputedStyle(document.querySelector('[role=button]')).pointerEvents,
                          answers: getComputedStyle(document.querySelector('.ds-virtual-list-items')).opacity })
         """
@@ -336,7 +341,8 @@ final class CompletionPollTests: XCTestCase {
         }) { s in
             s.logs.contains { $0.contains("answer already on the page at first look") }
         }
-        XCTAssertEqual(styles, ["header": "none", "main": "block", "list": "block", "composer": "0", "clicks": "none", "answers": "1"])
+        XCTAssertEqual(styles, ["header": "none", "main": "block", "list": "block", "composer": "0", "room": "0px",
+                                "clicks": "none", "answers": "1"])
         XCTAssertNotNil(t, "first look didn't notice the answer under focus mode; logs: \(sink.logs)")
     }
 
@@ -447,6 +453,7 @@ final class CompletionPollTests: XCTestCase {
                          room: getComputedStyle(document.querySelector('.col')).paddingTop,
                          sidebar: getComputedStyle(document.querySelector('aside')).display,
                          dock: getComputedStyle(document.querySelector('[data-cds="ChatComposerDock"]')).opacity,
+                         inputRoom: getComputedStyle(document.querySelector('[data-chat-input-container]')).position,
                          clicks: getComputedStyle(document.querySelector('[data-testid="chat-input"]')).pointerEvents,
                          disclaimer: getComputedStyle(document.querySelector('[data-disclaimer]')).display,
                          answer: getComputedStyle(document.querySelector('.font-claude-response')).opacity })
@@ -455,8 +462,8 @@ final class CompletionPollTests: XCTestCase {
                                        focus: true, focusCheck: check, checked: { v in
             styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
         })
-        XCTAssertEqual(styles, ["header": "none", "room": "0px", "sidebar": "none", "dock": "0", "clicks": "none",
-                                "disclaimer": "none", "answer": "1"])
+        XCTAssertEqual(styles, ["header": "none", "room": "0px", "sidebar": "none", "dock": "0", "inputRoom": "absolute",
+                                "clicks": "none", "disclaimer": "none", "answer": "1"])
         XCTAssertNotNil(t, "no completion with focus mode on; logs: \(sink.logs)")
         XCTAssertTrue(sink.diagnostics.contains("streaming-started"), "stop button not seen under focus mode; logs: \(sink.logs)")
         if let t { XCTAssertGreaterThan(t, 2.4, "declared done while still streaming") }

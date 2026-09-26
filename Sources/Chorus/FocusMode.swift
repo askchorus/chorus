@@ -8,7 +8,12 @@ import Foundation
 /// same page. The hidden input box stays in the page at its full size — transparent and
 /// click-through, never display:none — because broadcasting types into it and completion
 /// watches the stop button inside it, and both first check that the element is really rendered
-/// (`onScreen` / `isReallyVisible` in the broadcast script).
+/// (`onScreen` / `isReallyVisible` in the broadcast script). What each site RESERVES for it — a
+/// sticky block or a spacer at the end of the conversation — is collapsed, so answers run to
+/// the bottom of the pane instead of stopping above a blank band. Never by clipping a box the
+/// script types into: WebKit reports clipped text as empty (innerText), so an editor inside an
+/// overflow:hidden, zero-height block looks empty and the send never happens — such a block is
+/// taken out of the flow instead (position:absolute), as Gemini's is.
 ///
 /// Rules exist per site; a site without rules is left as it is, and a redesign that breaks a
 /// selector only brings that piece of the site's UI back. Input boxes inside the conversation
@@ -47,6 +52,7 @@ enum FocusMode {
         body:not(:has([data-testid="login-button"])) nav[data-app-navigation-rail] { display: none !important; }
         body:not(:has([data-testid="login-button"])) [data-app-shell-thread-edge-divider] { margin-top: 0 !important; }
         body:not(:has([data-testid="login-button"])) main[data-app-shell-main-surface] { border-left-width: 0 !important; }
+        .thread-scroll-container { --thread-scroll-padding-bottom: calc(var(--spacing) * 4) !important; }
         form[data-chatgpt-composer]:not([data-content-search-unit-key] *) { opacity: 0 !important; }
         form[data-chatgpt-composer]:not([data-content-search-unit-key] *),
         form[data-chatgpt-composer]:not([data-content-search-unit-key] *) * { pointer-events: none !important; }
@@ -67,6 +73,9 @@ enum FocusMode {
         fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)),
         fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)) * { pointer-events: none !important; }
         [data-disclaimer="true"] { display: none !important; }
+        [data-chat-input-container]:not(:has([data-testid="user-message"], .font-claude-response)) {
+          position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+          pointer-events: none !important; }
         """),
         ("gemini.google.com", """
         body:not(:has(a[href*="ServiceLogin"])) > .boqOnegoogleliteOgbOneGoogleBar,
@@ -88,7 +97,8 @@ enum FocusMode {
         // panel matched it and the whole conversation vanished — and was dropped.)
         ("chat.deepseek.com", """
         div:has(> .the-header):not(:has(.ds-markdown, .ds-virtual-list, textarea)) { display: none !important; }
-        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) { opacity: 0 !important; }
+        .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) {
+          opacity: 0 !important; height: 0 !important; min-height: 0 !important; overflow: hidden !important; }
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)),
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) * { pointer-events: none !important; }
         div:has(> div > div > div > textarea):not(:has(.ds-markdown, .ds-message, .ds-virtual-list)):not(.ds-virtual-list-items *) { opacity: 0 !important; }
