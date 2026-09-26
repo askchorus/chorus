@@ -22,7 +22,7 @@ struct SummarySheet: View {
                 Button(L("common.close"), action: onClose)
             }
             .padding()
-            Divider()
+            PaneDivider(vertical: false)
             if streaming && text.isEmpty {
                 // The model is thinking — with a reasoner model nothing streams for 10-30s (the
                 // thinking isn't surfaced, only the final answer). A small top-left spinner still
@@ -54,12 +54,48 @@ struct SummarySheet: View {
             }
         }
         .frame(width: 620, height: 560)
-        // Warm canvas instead of the stark default sheet white — half the "blank screen" feel
-        // was the color itself.
-        .background(ChorusTheme.canvas(colorScheme))
+        // The main window's own surface instead of the stark default sheet white — half the
+        // "blank screen" feel was the colour itself.
+        .background(ChorusTheme.chrome(colorScheme))
     }
 }
 
+
+/// The win-rate list: one row per AI, best rate first.
+struct StatsRows: View {
+    let rows: [StatsSheet.Row]
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { i, r in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(r.name).font(.chorus(13, .semibold))
+                        if r.shown < 30 {
+                            Text(L("stats.lowSample")).font(.chorus(10)).foregroundColor(.secondary)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .inkChip()
+                        }
+                        Spacer()
+                        Text("\(Int((r.rate * 100).rounded()))%").font(.chorus(13, .bold))
+                        Text("· \(r.wins)/\(r.shown)").font(.chorus(11)).foregroundColor(.secondary)
+                    }
+                    // Ink bars, the leader's in trophy gold — the same verdict colour as the
+                    // trophy that fills these numbers.
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Ink.line(colorScheme).opacity(0.08)).frame(height: 8)
+                            Capsule().fill(i == 0 ? Ink.gold : Ink.line(colorScheme).opacity(0.5))
+                                .frame(width: max(4, geo.size.width * r.rate), height: 8)
+                        }
+                    }
+                    .frame(height: 8)
+                }
+            }
+        }
+    }
+}
 
 // MARK: - Share card
 
@@ -325,6 +361,7 @@ struct WelcomeSheet: View {
 struct StatsSheet: View {
     let onClose: () -> Void
     @State private var range: StatRange = .all
+    @Environment(\.colorScheme) private var colorScheme
 
     enum StatRange: CaseIterable {
         case week, month, all
@@ -332,7 +369,7 @@ struct StatsSheet: View {
         var days: Int? { self == .week ? 7 : self == .month ? 30 : nil }
     }
 
-    private struct Row: Identifiable {
+    struct Row: Identifiable {
         let id: String, name: String
         let wins: Int, shown: Int
         var rate: Double { shown == 0 ? 0 : Double(wins) / Double(shown) }
@@ -349,20 +386,26 @@ struct StatsSheet: View {
             for k in v.contenders { shown[k, default: 0] += 1; if let n = v.names[k] { names[k] = n } }
             wins[w, default: 0] += 1
         }
-        return shown.keys.map { Row(id: $0, name: names[$0] ?? $0, wins: wins[$0] ?? 0, shown: shown[$0] ?? 0) }
+        // Each AI under the name it has NOW: a vote keeps the name from its day, so a panel renamed
+        // since (or an API panel saved as "deepseek") would otherwise show its old spelling.
+        let current = Dictionary(ProviderRegistry.all().map { ($0.key, $0.name) }
+                                 + APIProviderRegistry.all().map { ($0.id, $0.name) },
+                                 uniquingKeysWith: { first, _ in first })
+        return shown.keys.map { Row(id: $0, name: current[$0] ?? names[$0] ?? $0, wins: wins[$0] ?? 0, shown: shown[$0] ?? 0) }
             .sorted { ($0.rate, $0.shown) > ($1.rate, $1.shown) }
     }
 
     var body: some View {
         let data = rows()
         VStack(spacing: 0) {
-            HStack {
-                Text(L("stats.title")).font(.headline)
+            HStack(spacing: 8) {
+                TrophyGlyph(won: true).frame(width: 16, height: 15)
+                Text(L("stats.title")).font(.chorus(16, .bold))
                 Spacer()
                 Button(L("common.close"), action: onClose).keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            Divider()
+            PaneDivider(vertical: false)
 
             Picker("", selection: $range) {
                 ForEach(StatRange.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -371,45 +414,25 @@ struct StatsSheet: View {
 
             if data.isEmpty {
                 Spacer()
-                Text(L("stats.empty"))
-                    .multilineTextAlignment(.center).foregroundColor(.secondary).padding(40)
+                VStack(spacing: 16) {
+                    InkLineup().frame(height: 84)
+                    Text(L("stats.empty"))
+                        .font(.chorus(13)).multilineTextAlignment(.center).foregroundColor(.secondary)
+                }
+                .padding(40)
                 Spacer()
             } else {
                 ScrollView {
-                    VStack(spacing: 14) {
-                        ForEach(data) { r in
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack(spacing: 6) {
-                                    Text(r.name).font(.system(size: 13, weight: .semibold))
-                                    if r.shown < 30 {
-                                        Text(L("stats.lowSample")).font(.system(size: 10)).foregroundColor(.secondary)
-                                            .padding(.horizontal, 5).padding(.vertical, 1)
-                                            .background(Capsule().fill(Color.primary.opacity(0.08)))
-                                    }
-                                    Spacer()
-                                    Text("\(Int((r.rate * 100).rounded()))%").font(.system(size: 13, weight: .bold))
-                                    Text("· \(r.wins)/\(r.shown)").font(.system(size: 11)).foregroundColor(.secondary)
-                                }
-                                GeometryReader { geo in
-                                    ZStack(alignment: .leading) {
-                                        Capsule().fill(Color.primary.opacity(0.08)).frame(height: 8)
-                                        Capsule().fill(ProviderStyle.accent(key: r.id, host: ""))
-                                            .frame(width: max(4, geo.size.width * r.rate), height: 8)
-                                    }
-                                }
-                                .frame(height: 8)
-                            }
-                        }
-                    }
-                    .padding(18)
+                    StatsRows(rows: data).padding(18)
                 }
-                Divider()
+                PaneDivider(vertical: false)
                 Text(L("stats.disclaimer"))
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .font(.chorus(11)).foregroundColor(.secondary)
                     .padding(.horizontal, 16).padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(width: 460, height: 560)
+        .background(ChorusTheme.chrome(colorScheme))
     }
 }

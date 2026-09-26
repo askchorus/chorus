@@ -26,6 +26,12 @@ struct SettingsView: View {
     @State private var wechatCopied = false
     @State private var wechatCopyGen = 0   // invalidates stale ✓-reset timers on rapid re-clicks
 
+    /// Section titles in the app's rounded face, like the pane headers in the main window; the
+    /// rows themselves stay system controls.
+    private func sectionTitle(_ key: String) -> some View {
+        Text(L(key)).font(.chorus(13, .bold)).foregroundColor(Ink.line(colorScheme))
+    }
+
     /// A settings description caption — hidden in Minimal mode.
     @ViewBuilder private func hint(_ key: String) -> some View {
         if !minimalMode {
@@ -78,16 +84,16 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section(L("settings.section.language")) {
+            Section {
                 Picker(L("settings.language.label"), selection: $appLanguage) {
                     Text(L("settings.language.system")).tag("system")
                     Text("中文").tag("zh")
                     Text("English").tag("en")
                 }
                 .pickerStyle(.menu)
-            }
+            } header: { sectionTitle("settings.section.language") }
 
-            Section(L("settings.section.appearance")) {
+            Section {
                 Picker(L("settings.appearance.label"), selection: $appearance) {
                     Text(L("settings.appearance.system")).tag("system")
                     Text(L("settings.appearance.light")).tag("light")
@@ -114,15 +120,15 @@ struct SettingsView: View {
                 Toggle(L("settings.minimalMode"), isOn: $minimalMode)
                     .padding(.vertical, 2)
                 hint("settings.minimalMode.desc")
-            }
+            } header: { sectionTitle("settings.section.appearance") }
 
-            Section(L("settings.section.menubar")) {
+            Section {
                 Toggle(L("settings.menubar.show"), isOn: $showMenuBarIcon)
                     .padding(.vertical, 2)
                 hint("settings.menubar.desc")
-            }
+            } header: { sectionTitle("settings.section.menubar") }
 
-            Section(L("settings.section.quickInput")) {
+            Section {
                 HotkeyRecorder(
                     keyCode: $hotkeyKeyCode,
                     modifiers: $hotkeyModifiers
@@ -140,9 +146,9 @@ struct SettingsView: View {
                     .padding(.vertical, 2)
 
                 hint("settings.quickInput.desc")
-            }
+            } header: { sectionTitle("settings.section.quickInput") }
 
-            Section(L("settings.section.providers")) {
+            Section {
                 Toggle(L("settings.restoreSession"), isOn: $restoreSession)
                     .padding(.vertical, 2)
                 hint("settings.restoreSession.desc")
@@ -221,9 +227,9 @@ struct SettingsView: View {
                         .disabled(newProviderURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .padding(.top, 4)
-            }
+            } header: { sectionTitle("settings.section.providers") }
 
-            Section(L("settings.section.apiModels")) {
+            Section {
                 hint("settings.api.desc")
 
                 ForEach(apiProviders) { p in
@@ -313,9 +319,9 @@ struct SettingsView: View {
                     .disabled(newAPIName.trimmingCharacters(in: .whitespaces).isEmpty
                               || newAPIBase.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-            }
+            } header: { sectionTitle("settings.section.apiModels") }
 
-            Section(L("settings.section.agent")) {
+            Section {
                 Toggle(L("settings.agent.enable"), isOn: $agentBridgeEnabled)
                 hint("settings.agent.desc")
                 if agentBridgeEnabled {
@@ -335,9 +341,9 @@ struct SettingsView: View {
                     }
                     hint("settings.agent.tokenHint")
                 }
-            }
+            } header: { sectionTitle("settings.section.agent") }
 
-            Section(L("settings.section.notifications")) {
+            Section {
                 Picker(L("settings.notify.picker"), selection: $notifyMode) {
                     Text(L("settings.notify.off")).tag("off")
                     Text(L("settings.notify.quickOnly")).tag("quickOnly")
@@ -381,9 +387,9 @@ struct SettingsView: View {
 
                     hint("settings.notify.waitDesc")
                 }
-            }
+            } header: { sectionTitle("settings.section.notifications") }
 
-            Section(L("settings.section.quickPrompts")) {
+            Section {
                 hint("settings.prompts.desc")
 
                 ChipListEditor(title: L("settings.prompts.textChips"),
@@ -393,9 +399,9 @@ struct SettingsView: View {
                 ChipListEditor(title: L("settings.prompts.imageChips"),
                                raw: $imageChipsRaw,
                                defaults: kImageChipPrompts)
-            }
+            } header: { sectionTitle("settings.section.quickPrompts") }
 
-            Section(L("settings.section.about")) {
+            Section {
                 hint("settings.about.hint")
                 HStack {
                     Text(L("settings.about.contact"))
@@ -431,15 +437,19 @@ struct SettingsView: View {
                     Text((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "—")
                         .foregroundColor(.secondary)
                 }
-            }
+            } header: { sectionTitle("settings.section.about") }
         }
         .formStyle(.grouped)
         // Light-touch theming: hide the Form's default (cold grey) scroll background and put the
-        // warm canvas behind it, so Settings reads as the same product as the main window. The
-        // grouped section cards stay system-drawn (recoloring those fights SwiftUI and risks a
-        // half-native look). Scheme-aware: cream in light, dark in dark.
+        // main window's surface behind it — title bar included (see WindowConfigurator) — so
+        // Settings reads as the same product. The grouped section cards stay system-drawn
+        // (recoloring those fights SwiftUI and risks a half-native look).
         .scrollContentBackground(.hidden)
-        .background(ChorusTheme.canvas(colorScheme).ignoresSafeArea())
+        .background(ChorusTheme.chrome(colorScheme).ignoresSafeArea())
+        // The title bar in the same surface. Through SwiftUI, not by making the NSWindow's title
+        // bar transparent: on this scene's window that hid the traffic lights and the title.
+        .toolbarBackground(ChorusTheme.chrome(colorScheme), for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .frame(width: 520, height: 600)
         .onChange(of: appearance) { newValue in
             AppearanceManager.apply(newValue)

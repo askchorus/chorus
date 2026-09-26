@@ -128,6 +128,8 @@ enum ProviderStyle {
 struct WindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
+        // A runloop hop, deliberately: set while SwiftUI is still assembling the window (e.g. from
+        // viewDidMoveToWindow), the transparent title bar comes out without its traffic lights.
         DispatchQueue.main.async {
             guard let w = v.window else { return }
             w.isMovableByWindowBackground = false

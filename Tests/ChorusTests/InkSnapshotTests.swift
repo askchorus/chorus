@@ -129,6 +129,15 @@ final class InkSnapshotTests: XCTestCase {
         })
         try save("welcome", WelcomeSheet(onStart: {}))
         try save("summary-working", SummarySheet(text: "", streaming: true, onClose: {}))
+        try save("stats", StatsSheet(onClose: {}))
+        for scheme in [ColorScheme.light, .dark] {
+            try save("stats-rows-\(scheme)", StatsRows(rows: [
+                .init(id: "chatgpt", name: "ChatGPT", wins: 21, shown: 38),
+                .init(id: "x_chat_deepseek_com", name: "DeepSeek", wins: 13, shown: 38),
+                .init(id: "gemini", name: "Gemini", wins: 4, shown: 20),
+                .init(id: "api_groq", name: "Groq", wins: 0, shown: 3),
+            ]).frame(width: 424).background(ChorusTheme.chrome(scheme)), scheme: scheme)
+        }
         try save("summary-done", SummarySheet(text: "## 一致\n三家都建议起一个短而可爱的名字。\n\n## 分歧\n两家选了零食名，一家选了骑士名。", streaming: false, onClose: {}))
     }
 }

@@ -39,12 +39,35 @@ enum APIProviderRegistry {
         APIPreset(name: "LM Studio",  baseURL: "http://localhost:1234/v1",         model: "",                  needsKey: false),
     ]
 
+    /// Services people name their API panels after, spelled the way the services spell them.
+    /// Presets first, so a preset's own spelling always wins.
+    private static let knownNames: [String: String] = {
+        var map: [String: String] = [:]
+        let extra = ["Anthropic", "Claude", "Mistral", "Moonshot", "Kimi", "Qwen", "xAI", "Grok",
+                     "Perplexity", "Together", "Fireworks", "Cerebras", "SiliconFlow", "Zhipu", "GLM",
+                     "MiniMax", "Doubao", "Azure OpenAI"]
+        for name in presets.map(\.name) + extra where map[name.lowercased()] == nil {
+            map[name.lowercased()] = name
+        }
+        map["lmstudio"] = "LM Studio"
+        return map
+    }()
+
+    /// A panel named just "deepseek" or "GROQ" shows as "DeepSeek" / "Groq", matching the web
+    /// panel of the same AI and the presets. Any other name — "deepseek reasoner", "My Groq",
+    /// "硅基流动" — is the user's own and stays exactly as typed.
+    static func canonicalName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return knownNames[trimmed.lowercased()] ?? trimmed
+    }
+
     /// Decode a providers list from its stored JSON string. Views can call this with their
     /// `@AppStorage("apiProviders")` value so SwiftUI tracks the dependency and updates live.
+    /// Names come back canonical (see `canonicalName`), so every menu, header and @-picker agrees.
     static func decode(_ raw: String) -> [APIProvider] {
         guard let data = raw.data(using: .utf8),
               let list = try? JSONDecoder().decode([APIProvider].self, from: data) else { return [] }
-        return list
+        return list.map { var p = $0; p.name = canonicalName(p.name); return p }
     }
 
     static func all() -> [APIProvider] {
@@ -60,7 +83,7 @@ enum APIProviderRegistry {
     /// Add a provider. Returns false if name/baseURL are unusable. Stores the key in Keychain.
     @discardableResult
     static func add(name: String, baseURL: String, model: String, apiKey: String) -> Bool {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = canonicalName(name)
         var url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if url.hasSuffix("/") { url.removeLast() }
         guard !trimmedName.isEmpty, !url.isEmpty, URL(string: url) != nil else { return false }
@@ -80,7 +103,7 @@ enum APIProviderRegistry {
     /// The key is replaced ONLY if `apiKey` is non-empty — blank means "keep the current key".
     @discardableResult
     static func update(id: String, name: String, baseURL: String, model: String, apiKey: String) -> Bool {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = canonicalName(name)
         var url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if url.hasSuffix("/") { url.removeLast() }
         guard !trimmedName.isEmpty, !url.isEmpty, URL(string: url) != nil else { return false }
