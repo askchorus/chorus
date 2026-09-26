@@ -101,7 +101,7 @@ final class WebViewStore: ObservableObject {
         }
         let restore = UserDefaults.standard.object(forKey: "restoreSession") as? Bool ?? true
         let initialURL = restore ? (savedSessionURL(for: key) ?? url) : url
-        let webView = WebViewFactory.make(url: initialURL)
+        let webView = WebViewFactory.make(url: initialURL, focus: FocusMode.isOn(forPanel: key))
         cache[key] = webView
         MemoryHeartbeat.shared.note("webview created \(key)")
         // Record the conversation URL whenever it changes. `didFinish` only fires on full
@@ -201,9 +201,32 @@ final class WebViewStore: ObservableObject {
     /// directly here.
     func setWarmTint(_ on: Bool) {
         let js = on ? Broadcaster.warmTintAddJS : Broadcaster.warmTintRemoveJS
-        for (_, webView) in cache {
+        // The window's surface follows the tint, so the webviews' backdrops (overscroll, resize
+        // strips, the reflow cover) must too.
+        let backdrop = ChorusTheme.windowBackgroundColor(warm: on)
+        for (key, webView) in cache {
             webView.evaluateJavaScript(js, completionHandler: nil)
+            // …and keep it that way after navigating.
+            WebViewFactory.refreshScripts(of: webView, focus: FocusMode.isOn(forPanel: key))
+            webView.underPageBackgroundColor = backdrop
+            if let container = webView.superview {
+                container.layer?.backgroundColor = backdrop.cgColor
+                for v in container.subviews where v !== webView { v.layer?.backgroundColor = backdrop.cgColor }
+            }
         }
+    }
+
+    /// Applies focus mode's current state (global switch + this panel's opt-out) to one panel:
+    /// to the page on screen now, and to every page it loads from here on.
+    func applyFocus(key: String) {
+        guard let webView = cache[key] else { return }
+        let on = FocusMode.isOn(forPanel: key)
+        webView.evaluateJavaScript(on ? FocusMode.addJS : FocusMode.removeJS, completionHandler: nil)
+        WebViewFactory.refreshScripts(of: webView, focus: on)
+    }
+
+    func applyFocusToAll() {
+        for key in cache.keys { applyFocus(key: key) }
     }
 
     /// A "fresh start" URL for a provider — its new-chat page for built-ins, else its base URL.
@@ -1252,6 +1275,9 @@ struct ContentView: View {
     @AppStorage("appLanguage") private var appLanguage: String = "system"  // re-render on language switch
     @AppStorage("appearance") private var appearance: String = "light"
     @AppStorage("minimalMode") private var minimalMode: Bool = false
+    @AppStorage("warmWebPages") private var warmWebPages: Bool = true   // the surface follows the tint
+    @AppStorage("focusMode") private var focusMode: Bool = true
+    @AppStorage("focusSiteControlPanels") private var siteControlPanelsRaw: String = ""
     /// Panels per row. Default 3 keeps the historical single row for anyone running the usual
     /// three panels, while more panels now wrap instead of shrinking into unreadable slivers.
     @AppStorage("panelColumns") private var panelColumns: Int = 3
@@ -1262,6 +1288,8 @@ struct ContentView: View {
     // model is added or removed in Settings — no app restart needed. Read via APIProviderRegistry.
     @AppStorage("apiProviders") private var apiProvidersRaw: String = ""
     @Environment(\.colorScheme) private var colorScheme
+    /// The window's one surface: title strip, pane headers, composer bar — the pages' own colour.
+    private var surface: Color { ChorusTheme.chrome(colorScheme, warm: warmWebPages) }
 
     /// Built-ins + user-added providers. Recomputes when customProvidersRaw changes.
     private var allProviders: [Provider] {
@@ -1394,14 +1422,18 @@ struct ContentView: View {
         VStack(spacing: 0) {
             topBar
 
-            // Floating webview "cards" on the canvas. Reordering just shuffles the ForEach;
-            // WKWebViews stay alive in the store and get reparented into the new positions.
-            // Rows of panels. The grid always FILLS the window and each panel scrolls its own
-            // page — an outer scroll would fight the webviews for the scroll wheel.
-            VStack(spacing: ChorusTheme.gap) {
-                ForEach(Array(panelRows.enumerated()), id: \.offset) { _, row in
-                    HStack(spacing: ChorusTheme.gap) {
-                        ForEach(row) { item in
+            // A native split view: panes edge to edge, split by hairlines, on one surface that
+            // is the pages' own colour — so the window reads as one app, not cards of web pages
+            // floating on a backdrop. Reordering just shuffles the ForEach; WKWebViews stay alive
+            // in the store and get reparented into the new positions. The grid always FILLS the
+            // window and each pane scrolls its own page — an outer scroll would fight the
+            // webviews for the scroll wheel.
+            VStack(spacing: 0) {
+                ForEach(Array(panelRows.enumerated()), id: \.offset) { r, row in
+                    if r > 0 { PaneDivider(vertical: false) }
+                    HStack(spacing: 0) {
+                        ForEach(Array(row.enumerated()), id: \.element.id) { c, item in
+                            if c > 0 { PaneDivider(vertical: true) }
                             panelView(item)
                                 .frame(minWidth: 300, maxWidth: .infinity)
                         }
@@ -1409,17 +1441,13 @@ struct ContentView: View {
                     .frame(minHeight: 240, maxHeight: .infinity)
                 }
             }
-            .padding(.horizontal, ChorusTheme.margin)
-            .padding(.top, 6)
             .frame(maxHeight: .infinity)
 
+            PaneDivider(vertical: false)
             composer
-                .padding(.horizontal, ChorusTheme.margin)
-                .padding(.top, ChorusTheme.gap)
-                .padding(.bottom, ChorusTheme.margin)
         }
         .ignoresSafeArea(.container, edges: .top)   // pull content up under the hidden titlebar
-        .background(ChorusTheme.canvas(colorScheme).ignoresSafeArea())
+        .background(surface.ignoresSafeArea())
         .background(WindowConfigurator())
         .onAppear {
             AppearanceManager.apply(appearance)
@@ -1533,12 +1561,13 @@ struct ContentView: View {
             .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ChorusTheme.canvas(colorScheme))
+        .background(surface)
     }
 
     private func card(for p: Provider) -> some View {
         VStack(spacing: 0) {
             slimHeader(for: p, cast: .forPanel(panelIndex("w_" + p.key)))
+            PaneDivider(vertical: false)
             WebPanel(webView: store.getOrCreate(key: p.key, url: p.url), reflowing: reflowing)
                 .overlay(alignment: .center) {
                     // A failed load renders as a blank white webview; say so instead.
@@ -1549,27 +1578,18 @@ struct ContentView: View {
                     }
                 }
         }
-        .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                .strokeBorder(
-                    dropTargetKey == p.key ? ChorusTheme.brandOrange.opacity(0.9) : ChorusTheme.cardBorder(colorScheme),
-                    lineWidth: dropTargetKey == p.key ? 3 : 1
-                )
-        )
-        // While a panel is dragged over this one, wash the whole card in the accent tint. The
+        .clipped()
+        // While a panel is dragged over this one, wash the whole pane in the accent tint. The
         // system draws a COPY (+) cursor for the drag — the wrong verb for a reorder — so the
         // layout, not the cursor, has to say "release here and they swap".
         .overlay {
             if dropTargetKey == p.key {
-                RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
+                Rectangle()
                     .fill(ChorusTheme.brandOrange.opacity(0.10))
+                    .overlay(Rectangle().strokeBorder(ChorusTheme.brandOrange.opacity(0.9), lineWidth: 2))
                     .allowsHitTesting(false)
             }
         }
-        .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
-                radius: ChorusTheme.cardShadow(colorScheme).radius,
-                x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
     }
 
     /// A native API model card — same chrome as a web card, but a native chat transcript instead
@@ -1577,16 +1597,10 @@ struct ContentView: View {
     private func apiCard(for p: APIProvider) -> some View {
         VStack(spacing: 0) {
             apiSlimHeader(for: p, cast: .forPanel(panelIndex("a_" + p.id)))
+            PaneDivider(vertical: false)
             APIPanelView(provider: p)
         }
-        .clipShape(RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                .strokeBorder(ChorusTheme.cardBorder(colorScheme), lineWidth: 1)
-        )
-        .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
-                radius: ChorusTheme.cardShadow(colorScheme).radius,
-                x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
+        .clipped()
     }
 
     /// Slim header for an API card: brand dot, name + model, a stop button while streaming, and
@@ -1638,7 +1652,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .background(
             ZStack {
-                Rectangle().fill(ChorusTheme.chrome(colorScheme))
+                Rectangle().fill(surface)
                 if hoveredHeaderKey == p.id { Rectangle().fill(Color.primary.opacity(0.05)) }
             }
         )
@@ -1727,6 +1741,16 @@ struct ContentView: View {
                 // context menu's recognizer swallows the header's .draggable gesture, which
                 // silently broke drag-to-reorder (cursor flashed to a hand, then nothing).
                 Menu {
+                    // Focus mode hides the site's own controls; this brings them back for one
+                    // panel, for when the user needs one (a model picker, DeepThink…).
+                    if focusMode && FocusMode.supports(host: p.url.host ?? "") {
+                        let showing = siteControlPanelsRaw.split(separator: ",").contains { $0 == p.key }
+                        Button(showing ? L("panel.hideSiteControls") : L("panel.showSiteControls")) {
+                            FocusMode.setSiteControls(!showing, forPanel: p.key)
+                            store.applyFocus(key: p.key)
+                        }
+                        Divider()
+                    }
                     // Explicit reordering. Dragging a header works, but macOS shows the COPY (+)
                     // cursor for it — the wrong verb for "move this panel" — and nothing hints
                     // that panels are draggable at all. These say it outright.
@@ -1794,7 +1818,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .background(
             ZStack {
-                Rectangle().fill(ChorusTheme.chrome(colorScheme))
+                Rectangle().fill(surface)
                 if dropTargetKey == p.key {
                     Rectangle().fill(ChorusTheme.brandOrange.opacity(0.25))
                 } else if hoveredHeaderKey == p.key {
@@ -1938,18 +1962,9 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                .fill(ChorusTheme.chrome(colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: ChorusTheme.cardRadius, style: .continuous)
-                .strokeBorder(ChorusTheme.cardBorder(colorScheme), lineWidth: 1)
-        )
-        .shadow(color: ChorusTheme.cardShadow(colorScheme).color,
-                radius: ChorusTheme.cardShadow(colorScheme).radius,
-                x: 0, y: ChorusTheme.cardShadow(colorScheme).y)
+        .padding(.top, 10)
+        .padding(.bottom, 11)
+        .background(surface)
         .onChange(of: prompt) { handlePromptChange($0) }
         .onAppear {
             promptFocused = true
@@ -2143,6 +2158,13 @@ struct ContentView: View {
             Button {
                 showStats = true
             } label: { Label(L("stats.title"), systemImage: "chart.bar") }
+
+            Divider()
+
+            Toggle(L("menu.focusMode"), isOn: Binding(get: { focusMode }, set: { on in
+                focusMode = on
+                store.applyFocusToAll()
+            }))
 
             Divider()
 

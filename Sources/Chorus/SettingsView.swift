@@ -20,6 +20,7 @@ struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguage: String = "system"
     @AppStorage("appearance") private var appearance: String = "light"
     @AppStorage("warmWebPages") private var warmWebPages: Bool = true
+    @AppStorage("focusMode") private var focusMode: Bool = true
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
     @AppStorage("minimalMode") private var minimalMode: Bool = false
     @State private var wechatCopied = false
@@ -102,6 +103,13 @@ struct SettingsView: View {
                         WebViewStore.shared.setWarmTint(on)
                     }
                 hint("settings.warmWeb.desc")
+
+                Toggle(L("settings.focusMode"), isOn: $focusMode)
+                    .padding(.vertical, 2)
+                    .onChange(of: focusMode) { _ in
+                        WebViewStore.shared.applyFocusToAll()
+                    }
+                hint("settings.focusMode.desc")
 
                 Toggle(L("settings.minimalMode"), isOn: $minimalMode)
                     .padding(.vertical, 2)

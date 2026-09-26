@@ -2,13 +2,9 @@ import SwiftUI
 import AppKit
 import CoreGraphics
 
-/// Shared visual tokens for the Arc-style main window: floating webview "cards" on a soft
-/// neutral canvas, generous rounding, consistent spacing.
+/// Shared visual tokens. The main window is a native split view: panes edge to edge on one
+/// surface in the pages' own colour, split by hairlines.
 enum ChorusTheme {
-    static let cardRadius: CGFloat = 12
-    static let gap: CGFloat = 12
-    static let margin: CGFloat = 14
-
     /// Brand accents shared by the share card, welcome card, and future branded surfaces.
     /// (scripts/dmg-background.swift mirrors these as CGColor — it can't import the app module,
     /// so keep them in sync by hand.)
@@ -20,15 +16,29 @@ enum ChorusTheme {
     static let cardCream: [Color] = [Color(red: 0.988, green: 0.972, blue: 0.937),
                                      Color(red: 0.956, green: 0.925, blue: 0.862)]
 
-    /// The app's own chrome — panel headers, the composer — as solid warm paper, one step
-    /// lighter than the canvas. (System materials added a cool grey cast against the warm canvas.)
-    static func chrome(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(red: 0.155, green: 0.148, blue: 0.14) : Color(red: 0.984, green: 0.969, blue: 0.941)
+    /// Whether the pages get the warm cream tint (Settings, default on).
+    static var warmPages: Bool { UserDefaults.standard.object(forKey: "warmWebPages") as? Bool ?? true }
+
+    /// The one surface the window is made of — title strip, pane headers, dividers' ground, the
+    /// composer bar — in the colour the pages themselves show, so chrome and content read as a
+    /// single sheet. With the warm tint on, a page's white multiplies to exactly the tint's cream
+    /// (#f1e9d9); with it off, the sites' own near-white. (A lighter "paper" chrome read as white
+    /// strips against the tinted pages; system materials added a cool grey cast.)
+    static func chrome(_ scheme: ColorScheme, warm: Bool = ChorusTheme.warmPages) -> Color {
+        Color(nsColor: chromeNS(dark: scheme == .dark, warm: warm))
+    }
+    static func chromeNS(dark: Bool, warm: Bool = ChorusTheme.warmPages) -> NSColor {
+        if dark {
+            return warm ? NSColor(srgbRed: 0.133, green: 0.125, blue: 0.114, alpha: 1)
+                        : NSColor(srgbRed: 0.118, green: 0.118, blue: 0.125, alpha: 1)
+        }
+        return warm ? NSColor(srgbRed: 0.945, green: 0.914, blue: 0.851, alpha: 1)    // #f1e9d9
+                    : NSColor(srgbRed: 0.984, green: 0.980, blue: 0.972, alpha: 1)
     }
 
-    static func cardBorder(_ scheme: ColorScheme) -> Color {
-        // Warm ink, as in the film, rather than neutral black.
-        scheme == .dark ? Color.white.opacity(0.09) : Color(red: 0.149, green: 0.129, blue: 0.102).opacity(0.14)
+    /// 1px lines between panes, under pane headers and above the composer.
+    static func hairline(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color.white.opacity(0.08) : Color(red: 0.149, green: 0.129, blue: 0.102).opacity(0.12)
     }
 
     static func canvas(_ scheme: ColorScheme) -> LinearGradient {
@@ -50,9 +60,7 @@ enum ChorusTheme {
     /// it matches the canvas during resize / behind the content.
     static var windowBackground: NSColor {
         NSColor(name: nil) { appearance in
-            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return dark ? NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
-                        : NSColor(red: 0.95, green: 0.93, blue: 0.89, alpha: 1)   // warm cream
+            chromeNS(dark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
         }
     }
 
@@ -62,17 +70,22 @@ enum ChorusTheme {
     /// dark mode even though Chorus is forced light. Used for webview backdrops where a
     /// dynamic NSColor isn't reliably resolved (WebKit's `underPageBackgroundColor`, CALayer
     /// backgroundColor).
-    static func windowBackgroundColor() -> NSColor {
-        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark ? NSColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1)
-                    : NSColor(red: 0.95, green: 0.93, blue: 0.89, alpha: 1)
+    static func windowBackgroundColor(warm: Bool = ChorusTheme.warmPages) -> NSColor {
+        chromeNS(dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua, warm: warm)
     }
     static func windowBackgroundCGColor() -> CGColor { windowBackgroundColor().cgColor }
+}
 
-    /// Card / composer drop shadow — soft & warm-light in light mode (paper lift), deeper in dark.
-    static func cardShadow(_ scheme: ColorScheme) -> (color: Color, radius: CGFloat, y: CGFloat) {
-        scheme == .dark ? (Color.black.opacity(0.30), 9, 3)
-                        : (Color(red: 0.4, green: 0.34, blue: 0.24).opacity(0.16), 10, 4)
+/// The 1pt line between panes, under a pane's header and above the composer — the only
+/// structure the split view draws (warm ink, as in the film, rather than neutral black).
+struct PaneDivider: View {
+    let vertical: Bool
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Rectangle()
+            .fill(ChorusTheme.hairline(scheme))
+            .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
     }
 }
 

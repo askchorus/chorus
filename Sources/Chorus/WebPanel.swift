@@ -20,8 +20,9 @@ struct WebPanel: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+        let container = PanelContainerView()
         container.wantsLayer = true
+        container.layer?.masksToBounds = true   // clips the webview's whole-point overhang
         container.layer?.backgroundColor = ChorusTheme.windowBackgroundCGColor()
         embed(webView, in: container)
 
@@ -71,14 +72,34 @@ struct WebPanel: NSViewRepresentable {
 
     private func embed(_ webView: WKWebView, in container: NSView) {
         webView.removeFromSuperview()
-        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.translatesAutoresizingMaskIntoConstraints = true   // sized by PanelContainerView
+        webView.autoresizingMask = []
         container.addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: container.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-        ])
+    }
+}
+
+/// Holds a panel's webview at a whole-point size. Split panes are rarely whole points wide (a
+/// 1452pt window in thirds is 483.33pt), and WebKit lays pages out in whole CSS pixels, leaving
+/// the leftover sliver painted in the webview's own white — a bright hairline down the pane's
+/// edge, next to the divider. So the webview is sized up to the next whole point, top-aligned,
+/// and the container (masksToBounds) clips the overhang. Also covers webviews put back by the
+/// keeper (restoreFromKeeper adds them here directly).
+final class PanelContainerView: NSView {
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        if subview is WKWebView { fitWebViews() }
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        fitWebViews()
+    }
+
+    private func fitWebViews() {
+        let w = ceil(bounds.width), h = ceil(bounds.height)
+        for case let web as WKWebView in subviews {
+            web.frame = NSRect(x: 0, y: bounds.height - h, width: w, height: h)   // not flipped: top-aligned
+        }
     }
 }
 
@@ -348,8 +369,67 @@ final class CompletionScriptHandler: NSObject, WKScriptMessageHandler {
 /// Builds and caches WKWebViews. Used by `WebViewStore` to keep webview instances
 /// alive across SwiftUI view rebuilds.
 enum WebViewFactory {
+    /// Adds the page scripts every panel runs, per the current settings. Re-run (after
+    /// `removeAllUserScripts()`) when a setting that shapes them changes — see `refreshScripts` —
+    /// otherwise a toggle would last only until the page's next navigation.
     @MainActor
-    static func make(url: URL) -> WKWebView {
+    static func installUserScripts(_ ucc: WKUserContentController, focus: Bool) {
+        // Keep-alive shims, installed BEFORE any page code runs. The WKPreferences knobs unfreeze
+        // page TIMERS for a minimized window, but rendering-tied APIs stay engine-suspended and
+        // sites also self-pause when they see the page hidden. Live logs: Kimi (timer-driven)
+        // streamed fine while minimized; Claude (rAF-driven pipeline) sat frozen mid-generation
+        // until APP didUnhide, then completed within ~1s. Two shims:
+        //  - requestAnimationFrame falls back to a 16ms setTimeout whenever the page is hidden
+        //    (timers run thanks to the knobs), so rAF-gated stream rendering keeps flowing.
+        //  - document.visibilityState/hidden report "visible" and visibilitychange is swallowed,
+        //    so sites' own "pause while hidden" logic never engages.
+        ucc.addUserScript(
+            WKUserScript(source: Broadcaster.keepAliveScript(),
+                         injectionTime: .atDocumentStart,
+                         forMainFrameOnly: true)
+        )
+
+        // Persistent streaming watcher (auto-runs on every page load): a lightweight,
+        // event-driven MutationObserver that reports streaming start/finish even for messages
+        // the user sends manually inside a panel (not just our broadcasts). Drives the menu-bar
+        // icon + card pulse; never triggers notifications (manual sends aren't broadcast batches).
+        ucc.addUserScript(
+            WKUserScript(source: Broadcaster.streamingWatcherScript(),
+                         injectionTime: .atDocumentEnd,
+                         forMainFrameOnly: true)
+        )
+
+        // Optional cosmetic warm tint: re-applied on every load (incl. SPA new-chat) so the
+        // official pages lean toward the app's cream tone. Off → no script injected at all.
+        if ChorusTheme.warmPages {
+            ucc.addUserScript(
+                WKUserScript(source: Broadcaster.warmTintAddJS,
+                             injectionTime: .atDocumentEnd,
+                             forMainFrameOnly: true)
+            )
+        }
+
+        // Focus mode: hide the site's own top bar, input box and disclaimer (see FocusMode).
+        if focus {
+            ucc.addUserScript(
+                WKUserScript(source: FocusMode.addJS,
+                             injectionTime: .atDocumentEnd,
+                             forMainFrameOnly: true)
+            )
+        }
+    }
+
+    /// Rebuilds a live webview's page scripts after a settings change. Takes effect from its next
+    /// navigation; the caller applies the change to the current page itself.
+    @MainActor
+    static func refreshScripts(of webView: WKWebView, focus: Bool) {
+        let ucc = webView.configuration.userContentController
+        ucc.removeAllUserScripts()
+        installUserScripts(ucc, focus: focus)
+    }
+
+    @MainActor
+    static func make(url: URL, focus: Bool) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // persistent: cookies/login survive app restart
 
@@ -375,40 +455,7 @@ enum WebViewFactory {
         // Install diagnostic log bridge so JS `[Chorus]` logs reach unified logging.
         config.userContentController.add(JSLogHandler.shared, name: "chorusJSLog")
 
-        // Keep-alive shims, installed BEFORE any page code runs. The WKPreferences knobs unfreeze
-        // page TIMERS for a minimized window, but rendering-tied APIs stay engine-suspended and
-        // sites also self-pause when they see the page hidden. Live logs: Kimi (timer-driven)
-        // streamed fine while minimized; Claude (rAF-driven pipeline) sat frozen mid-generation
-        // until APP didUnhide, then completed within ~1s. Two shims:
-        //  - requestAnimationFrame falls back to a 16ms setTimeout whenever the page is hidden
-        //    (timers run thanks to the knobs), so rAF-gated stream rendering keeps flowing.
-        //  - document.visibilityState/hidden report "visible" and visibilitychange is swallowed,
-        //    so sites' own "pause while hidden" logic never engages.
-        config.userContentController.addUserScript(
-            WKUserScript(source: Broadcaster.keepAliveScript(),
-                         injectionTime: .atDocumentStart,
-                         forMainFrameOnly: true)
-        )
-
-        // Persistent streaming watcher (auto-runs on every page load): a lightweight,
-        // event-driven MutationObserver that reports streaming start/finish even for messages
-        // the user sends manually inside a panel (not just our broadcasts). Drives the menu-bar
-        // icon + card pulse; never triggers notifications (manual sends aren't broadcast batches).
-        config.userContentController.addUserScript(
-            WKUserScript(source: Broadcaster.streamingWatcherScript(),
-                         injectionTime: .atDocumentEnd,
-                         forMainFrameOnly: true)
-        )
-
-        // Optional cosmetic warm tint: re-applied on every load (incl. SPA new-chat) so the
-        // official pages lean toward the app's cream tone. Off → no script injected at all.
-        if UserDefaults.standard.object(forKey: "warmWebPages") as? Bool ?? true {
-            config.userContentController.addUserScript(
-                WKUserScript(source: Broadcaster.warmTintAddJS,
-                             injectionTime: .atDocumentEnd,
-                             forMainFrameOnly: true)
-            )
-        }
+        installUserScripts(config.userContentController, focus: focus)
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true

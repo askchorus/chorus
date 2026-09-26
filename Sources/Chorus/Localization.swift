@@ -51,6 +51,7 @@ let L10nTable: [String: [String: String]] = [
     "menu.settings": ["zh": "设置…", "en": "Settings…"],
     "menu.actions": ["zh": "操作", "en": "Actions"],
     "menu.shareCard": ["zh": "生成分享卡片", "en": "Make a share card"],
+    "menu.focusMode": ["zh": "专注模式", "en": "Focus mode"],
     "panel.reload": ["zh": "重载 %@", "en": "Reload %@"],
 
     // MARK: Sheets — summary / share card / stats
@@ -116,6 +117,8 @@ let L10nTable: [String: [String: String]] = [
     "panel.moreActions": ["zh": "更多操作", "en": "More actions"],
     "panel.moveLeft": ["zh": "左移", "en": "Move left"],
     "panel.moveRight": ["zh": "右移", "en": "Move right"],
+    "panel.showSiteControls": ["zh": "显示网页原界面", "en": "Show site controls"],
+    "panel.hideSiteControls": ["zh": "隐藏网页原界面", "en": "Hide site controls"],
     "panel.refreshSite": ["zh": "刷新站点状态（保留登录）", "en": "Refresh site state (stay signed in)"],
     "panel.clearData": ["zh": "清除该站点数据…", "en": "Clear this site's data…"],
     "panel.clearData.title": ["zh": "清除该站点的全部数据？", "en": "Clear all data for this site?"],
@@ -264,6 +267,11 @@ let L10nTable: [String: [String: String]] = [
     "settings.appearance.desc": [
         "zh": "切换 Chorus 界面的明暗。跟随系统的 AI 网站也会一起切换；少数有独立主题开关的站点需在站内自行设置。",
         "en": "Switch Chorus between light and dark. AI sites that follow the system theme switch too; a few sites with their own theme toggle must be set inside the site.",
+    ],
+    "settings.focusMode": ["zh": "专注模式：只看对话", "en": "Focus mode: just the conversation"],
+    "settings.focusMode.desc": [
+        "zh": "隐藏各家 AI 网页自带的顶栏、侧栏、输入框和“可能会出错”提示，统一在 Chorus 下方的输入框提问。纯外观、本地实现，不影响发送和账号。需要网页自己的开关（切换模型、深度思考等）时，在该面板顶部的“…”里选“显示网页原界面”。目前支持 ChatGPT、Gemini 和 DeepSeek。",
+        "en": "Hides each AI site's own top bar, sidebar, input box and “can make mistakes” line — you ask from Chorus's composer anyway. Purely cosmetic and local; sending and your accounts are unaffected. When you need a site's own switches (model picker, DeepThink…), choose “Show site controls” from that panel's “…” menu. Currently ChatGPT, Gemini and DeepSeek.",
     ],
     "settings.warmWeb": ["zh": "给 AI 网页染上暖色调", "en": "Warm-tint the AI web pages"],
     "settings.warmWeb.desc": [
