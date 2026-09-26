@@ -1742,7 +1742,8 @@ struct ContentView: View {
             }
             // Focus mode hides the site's own controls; one click brings them back for this panel —
             // to switch model or thinking level — and one more hides them again. While they show,
-            // the button stays (in orange) so the panel's state is visible.
+            // the chip stays (in orange) so the panel's state is visible. Words, not an icon: a
+            // sliders glyph sat next to "…" and read as a second "more" button.
             if focusMode && FocusMode.supports(host: p.url.host ?? "") {
                 let showing = siteControlPanelsRaw.split(separator: ",").contains { $0 == p.key }
                 if showing || hoveredHeaderKey == p.key {
@@ -1750,9 +1751,12 @@ struct ContentView: View {
                         FocusMode.setSiteControls(!showing, forPanel: p.key)
                         store.applyFocus(key: p.key)
                     } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 11, weight: .semibold))
+                        Text(L("panel.siteUI"))
+                            .font(.chorus(10.5, .semibold))
                             .foregroundColor(showing ? ChorusTheme.brandOrange : .secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .inkChip(orange: showing)
                     }
                     .buttonStyle(.plain)
                     .help(showing ? L("panel.hideSiteControls") : L("panel.showSiteControls"))
