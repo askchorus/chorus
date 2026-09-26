@@ -152,7 +152,6 @@ let L10nTable: [String: [String: String]] = [
     "quick.placeholderDirected": ["zh": "问 %@…", "en": "Ask %@…"],
 
     // MARK: @-mention picker + chip (both composers)
-    "mention.chip": ["zh": "只问 %@", "en": "Only %@"],
     "mention.chipRemove": ["zh": "取消，恢复问所有 AI", "en": "Remove — back to asking every AI"],
     "mention.noMatch": ["zh": "没有叫这个名字的 AI", "en": "No AI by that name"],
     "composer.placeholderDirected": ["zh": "问 %@…    ⌘↩ 发送", "en": "Ask %@…    ⌘↩ send"],
@@ -270,8 +269,8 @@ let L10nTable: [String: [String: String]] = [
     ],
     "settings.focusMode": ["zh": "专注模式：只看对话", "en": "Focus mode: just the conversation"],
     "settings.focusMode.desc": [
-        "zh": "隐藏各家 AI 网页自带的顶栏、侧栏、输入框和“可能会出错”提示，统一在 Chorus 下方的输入框提问。纯外观、本地实现，不影响发送和账号。需要网页自己的开关（切换模型、深度思考等）时，在该面板顶部的“…”里选“显示网页原界面”。目前支持 ChatGPT、Gemini 和 DeepSeek。",
-        "en": "Hides each AI site's own top bar, sidebar, input box and “can make mistakes” line — you ask from Chorus's composer anyway. Purely cosmetic and local; sending and your accounts are unaffected. When you need a site's own switches (model picker, DeepThink…), choose “Show site controls” from that panel's “…” menu. Currently ChatGPT, Gemini and DeepSeek.",
+        "zh": "隐藏各家 AI 网页自带的顶栏、侧栏、输入框和“可能会出错”提示，统一在 Chorus 下方的输入框提问。纯外观、本地实现，不影响发送和账号。需要网页自己的开关（切换模型、深度思考等）时，在该面板顶部的“…”里选“显示网页原界面”。目前支持 ChatGPT、Claude、Gemini 和 DeepSeek。",
+        "en": "Hides each AI site's own top bar, sidebar, input box and “can make mistakes” line — you ask from Chorus's composer anyway. Purely cosmetic and local; sending and your accounts are unaffected. When you need a site's own switches (model picker, DeepThink…), choose “Show site controls” from that panel's “…” menu. Currently ChatGPT, Claude, Gemini and DeepSeek.",
     ],
     "settings.warmWeb": ["zh": "给 AI 网页染上暖色调", "en": "Warm-tint the AI web pages"],
     "settings.warmWeb.desc": [

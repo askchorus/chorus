@@ -73,7 +73,6 @@ enum ChorusTheme {
     static func windowBackgroundColor(warm: Bool = ChorusTheme.warmPages) -> NSColor {
         chromeNS(dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua, warm: warm)
     }
-    static func windowBackgroundCGColor() -> CGColor { windowBackgroundColor().cgColor }
 }
 
 /// The 1pt line between panes, under a pane's header and above the composer — the only

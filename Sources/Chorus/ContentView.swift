@@ -201,18 +201,13 @@ final class WebViewStore: ObservableObject {
     /// directly here.
     func setWarmTint(_ on: Bool) {
         let js = on ? Broadcaster.warmTintAddJS : Broadcaster.warmTintRemoveJS
-        // The window's surface follows the tint, so the webviews' backdrops (overscroll, resize
-        // strips, the reflow cover) must too.
-        let backdrop = ChorusTheme.windowBackgroundColor(warm: on)
         for (key, webView) in cache {
             webView.evaluateJavaScript(js, completionHandler: nil)
             // …and keep it that way after navigating.
             WebViewFactory.refreshScripts(of: webView, focus: FocusMode.isOn(forPanel: key))
-            webView.underPageBackgroundColor = backdrop
-            if let container = webView.superview {
-                container.layer?.backgroundColor = backdrop.cgColor
-                for v in container.subviews where v !== webView { v.layer?.backgroundColor = backdrop.cgColor }
-            }
+            // The window's surface follows the tint, so the backdrops (overscroll, resize strips,
+            // the reflow cover) must too. (The setting is already saved when this runs.)
+            (webView.superview as? PanelContainerView)?.applySurface()
         }
     }
 
@@ -405,13 +400,18 @@ final class WebViewStore: ObservableObject {
     /// (no dialog). Finally set the text and send.
     private func geminiUploadViaPanel(into webView: WKWebView, pngDatas: [Data], thenRun js: String) {
         var tmps: [URL] = []
-        for png in pngDatas {
-            let tmp = FileManager.default.temporaryDirectory
-                .appendingPathComponent("chorus-upload-\(UUID().uuidString).png")
+        // A folder of its own per upload, so the file itself can have a plain name: the site
+        // sees — and the AI may quote — "image.png", not "chorus-upload-3F2A22E0-….png".
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chorus-upload-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for (i, png) in pngDatas.enumerated() {
+            let tmp = folder.appendingPathComponent(pngDatas.count == 1 ? "image.png" : "image-\(i + 1).png")
             do { try png.write(to: tmp); tmps.append(tmp) }
             catch { chorusLog.notice("[Chorus.Gemini] temp file write failed: \(error.localizedDescription, privacy: .public)") }
         }
         guard !tmps.isEmpty else {
+            try? FileManager.default.removeItem(at: folder)
             webView.evaluateJavaScript(js) { _, _ in }  // still send the text
             return
         }
@@ -457,9 +457,8 @@ final class WebViewStore: ObservableObject {
 
         // Delete the temp PNGs once Gemini has read them (done well within a minute) — otherwise
         // they pile up in the temp dir, N per broadcast, forever.
-        let toClean = tmps
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-            for url in toClean { try? FileManager.default.removeItem(at: url) }
+            try? FileManager.default.removeItem(at: folder)
         }
     }
 
@@ -1283,6 +1282,9 @@ struct ContentView: View {
     /// Panels per row. Default 3 keeps the historical single row for anyone running the usual
     /// three panels, while more panels now wrap instead of shrinking into unreadable slivers.
     @AppStorage("panelColumns") private var panelColumns: Int = 3
+    /// The panels the user picked, and what the last layout preset left showing (LayoutSelection).
+    @AppStorage("layoutSelection") private var layoutSelectionRaw: String = ""
+    @AppStorage("layoutLastPreset") private var layoutLastPresetRaw: String = ""
     @State private var showLayoutPicker = false
     @AppStorage("welcomeSeen") private var welcomeSeen: Bool = false   // first-run welcome card
     @State private var showWelcome = false
@@ -2079,12 +2081,20 @@ struct ContentView: View {
         }
     }
 
-    /// Show the first `count` panels in order, hide the rest, and set the row width to match.
+    /// Show `count` panels — the user's own pick first (see LayoutSelection) — hide the rest, and
+    /// set the row width to match.
     private func applyLayoutPreset(count: Int, columns: Int) {
         let webKeys = orderedProviders.map(\.key)
         let apiKeys = apiProviders.map(\.id)
         let all = webKeys + apiKeys
-        let keep = Set(all.prefix(count))
+        let keys = { (raw: String) in raw.split(separator: ",").map(String.init).filter { !$0.isEmpty } }
+        let (show, selection) = LayoutSelection.apply(
+            count: count, all: all,
+            visible: Set(visibleProviders.map(\.key) + visibleAPIProviders.map(\.id)),
+            selection: keys(layoutSelectionRaw), lastPreset: Set(keys(layoutLastPresetRaw)))
+        layoutSelectionRaw = selection.joined(separator: ",")
+        layoutLastPresetRaw = show.joined(separator: ",")
+        let keep = Set(show)
         let hidden = all.filter { !keep.contains($0) }
         // Web panels this preset hides that were showing until now. They need the same deferred
         // teardown the ✕ button schedules — this path used to skip it, leaving every panel the

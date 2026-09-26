@@ -52,6 +52,22 @@ enum FocusMode {
         form[data-chatgpt-composer]:not([data-content-search-unit-key] *) * { pointer-events: none !important; }
         [data-markdown-copy="exclude"].text-center.text-xs { display: none !important; }
         """),
+        // claude.ai's markup is semantic (data-testid / data-cds / data-disclaimer). Its chat page
+        // floats the title bar over a 48px padding; the new-chat page stacks a <header> instead and
+        // has no ChatComposerDock — its input box is the fieldset around the chat input.
+        ("claude.ai", """
+        [data-testid="chat-header"]:not(:has([data-testid="user-message"], .font-claude-response)),
+        header.dframe-header:not(:has([data-testid="user-message"], .font-claude-response)),
+        aside.dframe-sidebar:not(:has([data-testid="user-message"], .font-claude-response)) { display: none !important; }
+        div:has(> [data-testid="chat-header"]) { padding-top: 0 !important; }
+        [data-cds="ChatComposerDock"]:not(:has([data-testid="user-message"], .font-claude-response)),
+        fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)) { opacity: 0 !important; }
+        [data-cds="ChatComposerDock"]:not(:has([data-testid="user-message"], .font-claude-response)),
+        [data-cds="ChatComposerDock"]:not(:has([data-testid="user-message"], .font-claude-response)) *,
+        fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)),
+        fieldset:has([data-testid="chat-input"]):not(:has([data-testid="user-message"], .font-claude-response)) * { pointer-events: none !important; }
+        [data-disclaimer="true"] { display: none !important; }
+        """),
         ("gemini.google.com", """
         body:not(:has(a[href*="ServiceLogin"])) > .boqOnegoogleliteOgbOneGoogleBar,
         body:not(:has(a[href*="ServiceLogin"])) div.side-nav-menu-button,

@@ -12,7 +12,9 @@ struct DirectedChip: View {
         HStack(spacing: 5) {
             Image(systemName: "arrow.turn.down.right")
                 .font(.system(size: 10, weight: .bold))
-            Text(Lf("mention.chip", target.name))
+            // Just the name: the arrow says "to", the ✕ says how to go back to everyone, and the
+            // composer's placeholder reads "Ask <name>…" — an "Only …" prefix repeated all that.
+            Text(target.name)
                 .font(.chorus(12, .semibold))
                 .lineLimit(1)
             Button(action: onRemove) {

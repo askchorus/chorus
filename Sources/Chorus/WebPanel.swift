@@ -23,7 +23,6 @@ struct WebPanel: NSViewRepresentable {
         let container = PanelContainerView()
         container.wantsLayer = true
         container.layer?.masksToBounds = true   // clips the webview's whole-point overhang
-        container.layer?.backgroundColor = ChorusTheme.windowBackgroundCGColor()
         embed(webView, in: container)
 
         // Native cream cover ON TOP of the webview. A SwiftUI `.overlay` does NOT render above
@@ -31,12 +30,12 @@ struct WebPanel: NSViewRepresentable {
         // the white repaint-on-resize requires a native sibling layered above it.
         let cover = NSView()
         cover.wantsLayer = true
-        cover.layer?.backgroundColor = ChorusTheme.windowBackgroundCGColor()
         cover.frame = container.bounds
         cover.autoresizingMask = [.width, .height]
         cover.alphaValue = 0
         cover.isHidden = true
         container.addSubview(cover)               // added last → topmost
+        container.applySurface()                  // colours the container, cover and page backdrop
         context.coordinator.cover = cover
         return container
     }
@@ -87,7 +86,32 @@ struct WebPanel: NSViewRepresentable {
 final class PanelContainerView: NSView {
     override func didAddSubview(_ subview: NSView) {
         super.didAddSubview(subview)
-        if subview is WKWebView { fitWebViews() }
+        if subview is WKWebView { fitWebViews(); applySurface() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applySurface()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applySurface()
+    }
+
+    /// Paints the backdrop — this container, the reflow cover, the webview's under-page colour —
+    /// in the surface of THIS view's appearance (and the current tint setting). Resolving it once
+    /// from NSApp when the panel was built caught the system's dark mode before Chorus's own
+    /// light override landed: dark flashes behind a reflow, a dark pane while the page sat in the
+    /// keeper, dark overscroll edges.
+    func applySurface() {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let color = ChorusTheme.chromeNS(dark: dark)
+        layer?.backgroundColor = color.cgColor
+        for view in subviews {
+            if let web = view as? WKWebView { web.underPageBackgroundColor = color }
+            else { view.layer?.backgroundColor = color.cgColor }
+        }
     }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {

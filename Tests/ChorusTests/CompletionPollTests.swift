@@ -396,6 +396,94 @@ final class CompletionPollTests: XCTestCase {
         XCTAssertEqual(gptStyles, ["edit": "1", "composer": "0"])
     }
 
+    // A claude.ai-shaped chat page: floating title bar over a 48px padding, collapsed sidebar,
+    // the composer dock (stop button appears in it while answering) and the disclaimer note.
+    private func claudePage() -> String {
+        """
+        <!doctype html><html><body>
+        <aside class="dframe-sidebar" aria-label="Sidebar" style="position:absolute"><button data-testid="sidebar-compact-trigger">☰</button></aside>
+        <div class="col" style="padding-top:48px;position:relative">
+          <div class="dframe-header" data-testid="chat-header" style="position:absolute;top:0;height:48px">Unidentified object inquiry · Share</div>
+          <div data-testid="chat-column-body">
+            <div id="chat"><div data-testid="user-message">earlier question</div>
+              <div data-is-streaming="false"><div class="font-claude-response"><div class="standard-markdown">earlier answer</div></div></div></div>
+            <div data-chat-input-container="true" style="position:sticky;bottom:0">
+              <div data-cds="ChatComposerDock"><fieldset>
+                <div contenteditable="true" class="tiptap ProseMirror" data-testid="chat-input"></div>
+                <button aria-label="Send message">↑</button>
+              </fieldset></div>
+              <div role="note" data-disclaimer="true">Claude is AI and can make mistakes.</div>
+            </div>
+          </div>
+        </div>
+        <script>
+        document.querySelector('[aria-label="Send message"]').addEventListener('click', () => {
+          const ed = document.querySelector('[data-testid="chat-input"]');
+          if (!ed.innerText.trim()) return;
+          ed.innerHTML = '';
+          const r = document.createElement('div'); r.setAttribute('data-is-streaming', 'true');
+          r.innerHTML = '<div class="font-claude-response"><div class="standard-markdown"></div></div>';
+          document.getElementById('chat').appendChild(r);
+          const md = r.querySelector('.standard-markdown');
+          const stop = document.createElement('button'); stop.setAttribute('aria-label', 'Stop response'); stop.textContent = '■';
+          document.querySelector('fieldset').appendChild(stop);
+          let n = 0;
+          const t = setInterval(() => {
+            md.textContent += 'Mochi ';
+            if (++n === 8) { clearInterval(t); stop.remove(); r.setAttribute('data-is-streaming', 'false'); }
+          }, 300);
+        });
+        window.__fakeReady = true;
+        </script></body></html>
+        """
+    }
+
+    /// Claude: title bar, sidebar button, input box and disclaimer hidden; the answer stays; the
+    /// send and the stop-button watch inside the transparent dock still work.
+    func testFocusModeHidesClaudeChromeButSendAndStopStillWork() async throws {
+        var styles: [String: String] = [:]
+        let check = """
+        JSON.stringify({ header: getComputedStyle(document.querySelector('[data-testid="chat-header"]')).display,
+                         room: getComputedStyle(document.querySelector('.col')).paddingTop,
+                         sidebar: getComputedStyle(document.querySelector('aside')).display,
+                         dock: getComputedStyle(document.querySelector('[data-cds="ChatComposerDock"]')).opacity,
+                         clicks: getComputedStyle(document.querySelector('[data-testid="chat-input"]')).pointerEvents,
+                         disclaimer: getComputedStyle(document.querySelector('[data-disclaimer]')).display,
+                         answer: getComputedStyle(document.querySelector('.font-claude-response')).opacity })
+        """
+        let (sink, t) = try await send(page: claudePage(), host: "claude.ai", seconds: 10,
+                                       focus: true, focusCheck: check, checked: { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        })
+        XCTAssertEqual(styles, ["header": "none", "room": "0px", "sidebar": "none", "dock": "0", "clicks": "none",
+                                "disclaimer": "none", "answer": "1"])
+        XCTAssertNotNil(t, "no completion with focus mode on; logs: \(sink.logs)")
+        XCTAssertTrue(sink.diagnostics.contains("streaming-started"), "stop button not seen under focus mode; logs: \(sink.logs)")
+        if let t { XCTAssertGreaterThan(t, 2.4, "declared done while still streaming") }
+    }
+
+    /// Claude's new-chat page: a stacked <header> and the fieldset around the chat input.
+    func testFocusModeHidesClaudeNewChatChrome() async throws {
+        let page = """
+        <!doctype html><html><body>
+        <header class="dframe-header">New chat · incognito</header>
+        <div class="dock"><div><div role="presentation"><fieldset>
+          <div contenteditable="true" class="tiptap ProseMirror" data-testid="chat-input"></div><button aria-label="Send message">↑</button>
+        </fieldset></div></div></div>
+        <h1 class="greeting">How can I help you today?</h1>
+        <script>window.__fakeReady = true;</script></body></html>
+        """
+        var styles: [String: String] = [:]
+        _ = try await send(page: page, host: "claude.ai", seconds: 0.1, focus: true, focusCheck: """
+        JSON.stringify({ header: getComputedStyle(document.querySelector('header')).display,
+                         box: getComputedStyle(document.querySelector('fieldset')).opacity,
+                         greeting: getComputedStyle(document.querySelector('.greeting')).opacity })
+        """) { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(styles, ["header": "none", "box": "0", "greeting": "1"])
+    }
+
     /// DeepSeek's new-chat page has no conversation list; its input box (the same component, four
     /// levels above the textarea) is hidden there too, and sending through it still works.
     func testFocusModeHidesDeepSeekHomeComposerButSendStillWorks() async throws {
