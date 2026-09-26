@@ -3,6 +3,21 @@
     <channel>
         <title>Chorus</title>
         <item>
+            <title>0.2.6</title>
+            <pubDate>Sat, 26 Sep 2026 18:14:22 +0800</pubDate>
+            <sparkle:version>0.2.6</sparkle:version>
+            <sparkle:shortVersionString>0.2.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://zhouyixiao.com/chorus/Chorus-0.2.6.dmg" length="6752645" type="application/octet-stream" sparkle:edSignature="bDxoae9XL+pUmU9YF8HtlbkH3jZlanMVfhJZXiw+8QaCPkyl0R6T7cNK1AUN0qIjoq9HBS/luqd1YdyhenHgCg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.6-0.2.5.delta" sparkle:deltaFrom="0.2.5" length="1421762" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="QGEhbZdR2QBUKQAasQ+Oign/W723LiHUE4LTBy5VDms1Bm3kUbX5o4aamY/lnwuxx89pZCnqwhU2oGNUhU8hAQ=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.6-0.2.4.delta" sparkle:deltaFrom="0.2.4" length="1492702" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="OOQzDjyWmQjDpxn6VIiLZIT9FcfMxrG0BIh/Kc4AZzcMLZq3Vh3azYrh9mf3r9D5ta+xR1djAyOolLXvB5SGBQ=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.6-0.2.3.delta" sparkle:deltaFrom="0.2.3" length="1526610" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="tIAzUdVqv3T7xRoXp5+KjuZTOnlhOdNUPmJgXPXwo8up0U+wexhCm/JA9pgl14OUsjG6r9/0pus5C5HFSOVPAw=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.6-0.2.2.delta" sparkle:deltaFrom="0.2.2" length="1530042" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ynUt5iqnLsXSJGf/tHD5fIqRKas4QUzev3HUvG75gogFV8uyf8MGh2/+1gRCo1SFdGwc9wHpk3ayYpaqW22nAw=="/>
+                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.6-0.2.1.delta" sparkle:deltaFrom="0.2.1" length="1534750" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="G1LpOJGH9fMH41nVNX7+C1m1R54rnUXC/awDxJtpqL7pNMfPQmJ5gHa8dYhP78iqp7FtXgzeu8ve+yRONaxoDw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.2.5</title>
             <pubDate>Sun, 06 Sep 2026 00:11:51 +0800</pubDate>
             <sparkle:version>0.2.5</sparkle:version>
@@ -29,19 +44,6 @@
                 <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.2.delta" sparkle:deltaFrom="0.2.2" length="567714" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="bEMt3ZDmE5H+EBuHks4sJeJA8Ajc5OJiukaIoK9kdgXAKGmzPFlrjfJwmSdqLWt/J4/JVoy6QJXlEf10IFxkCw=="/>
                 <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.1.delta" sparkle:deltaFrom="0.2.1" length="578650" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="YUOgQ4KCyNXDoW9AfYuWreMxViCp5j74d0E8bjsKzBW2e1U1PUACNF3QFxNoMyy8ZRLbR2MfxOKz53E5eLJfBQ=="/>
                 <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.4-0.2.0.delta" sparkle:deltaFrom="0.2.0" length="605986" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ytitvqRx1HpgLXoS1Ljxi/3O+uzb3QPCvNFGGtXEou1evAS1y47S+pn3R1mQkss54FaNNUmagu45LkGpfvIKBQ=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>0.2.3</title>
-            <pubDate>Mon, 10 Aug 2026 00:51:58 +0800</pubDate>
-            <sparkle:version>0.2.3</sparkle:version>
-            <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://zhouyixiao.com/chorus/Chorus-0.2.3.dmg" length="5801785" type="application/octet-stream" sparkle:edSignature="RSWG2fKrFXygPzBfK6P3YC5oiDjqlT1+q5Fb/yUb72gstc7q5mCWWBIcls7Ee4g3tpekMfSnbMBbVkh4xBnUBg=="/>
-            <sparkle:deltas>
-                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.3-0.2.2.delta" sparkle:deltaFrom="0.2.2" length="232790" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="HExDQFfMJnekCu3MbLFgeKWv77IW1kOm1rKaf3AWUGYhiPBIVnBdM+sAvuflWr1si+J8+VoBres4m0Ot++ApBw=="/>
-                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.3-0.2.1.delta" sparkle:deltaFrom="0.2.1" length="307138" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="LdmX88U87hZ7f5663AsVJaM1nvkDRVG7B94+tdvHHLoxQX2Tx4zAbVUdt+AVFKIY4mVXY3S0FRvWlDyR8NcCAA=="/>
-                <enclosure url="https://zhouyixiao.com/chorus/Chorus0.2.3-0.2.0.delta" sparkle:deltaFrom="0.2.0" length="399762" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="5zKKy+pcQQ/eZpVhnssBlbnb66U89Z+W4g+MbFxTfhoFESPWVyQutthLWHE6+I3nyO7Ci+6yTRn+AE9Ix0xvBA=="/>
             </sparkle:deltas>
         </item>
     </channel>
