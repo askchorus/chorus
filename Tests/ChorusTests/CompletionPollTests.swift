@@ -67,6 +67,23 @@ final class CompletionPollTests: XCTestCase {
         return (sink, nil)
     }
 
+    /// Loads `page` as if served from `host` and returns the webview once its script has run.
+    private func load(_ page: String, host: String) async throws -> WKWebView {
+        let config = WKWebViewConfiguration()
+        Self.setSPI(config.preferences, ["_setPageVisibilityBasedProcessSuppressionEnabled:",
+                                         "_setHiddenPageDOMTimerThrottlingEnabled:",
+                                         "_setHiddenPageDOMTimerThrottlingAutoIncreases:"])
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 900, height: 700), configuration: config)
+        keep.append(web)
+        web.loadHTMLString(page, baseURL: URL(string: "https://\(host)/")!)
+        // about:blank is "complete" too — wait for OUR page, served as `host`.
+        for _ in 0..<50 {
+            if (try? await web.evaluateJavaScript("location.hostname === '\(host)' && document.readyState === 'complete'")) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return web
+    }
+
     // A DeepSeek-shaped page: a textarea, the circular role=button send DIV, .ds-markdown answers.
     // `answer` decides what a send does: "instant" appends the whole answer at once; "none" does
     // nothing but clear the composer.
@@ -205,16 +222,16 @@ final class CompletionPollTests: XCTestCase {
     /// or growth was ever seen and the batch sat until the ~90s safety net. Now the first look
     /// spots the new answer and starts the text-settle clock straight away.
     func testDeepSeekAnswerFinishedBeforeFirstLookIsNoticed() async throws {
-        let (sink, t) = try await send(page: deepseekPage(answer: "instant"), host: "chat.deepseek.com", seconds: 6) { s in
+        let (sink, t) = try await send(page: deepseekPage(answer: "instant"), host: "chat.deepseek.com", seconds: 6, until: { s in
             s.logs.contains { $0.contains("answer already on the page at first look") }
-        }
+        })
         XCTAssertNotNil(t, "first look didn't notice the finished answer; logs: \(sink.logs)")
     }
 
     func testDeepSeekNothingAnsweredIsNotMistakenForDone() async throws {
-        let (sink, t) = try await send(page: deepseekPage(answer: "none"), host: "chat.deepseek.com", seconds: 5) { s in
+        let (sink, t) = try await send(page: deepseekPage(answer: "none"), host: "chat.deepseek.com", seconds: 5, until: { s in
             s.logs.contains { $0.contains("answer already on the page") } || !s.completions.isEmpty
-        }
+        })
         XCTAssertNil(t, "reported an answer that never came; logs: \(sink.logs)")
     }
 
@@ -348,6 +365,37 @@ final class CompletionPollTests: XCTestCase {
         XCTAssertEqual(styles, ["list": "block", "answer": "true", "answerOpacity": "1", "header": "none"])
     }
 
+    /// Editing a sent message opens an input box inside the conversation. Focus mode hides only
+    /// the one at the bottom, never those (DeepSeek and ChatGPT alike).
+    func testFocusModeLeavesEditBoxesInTheConversationAlone() async throws {
+        let deepseek = deepseekPage(answer: "none", shell: true)
+            .replacingOccurrences(of: #"<div class="ds-virtual-list-items" id="chat"></div>"#, with: """
+            <div class="ds-virtual-list-items" id="chat"><div class="ds-message"><div class="edit"><div><div><div class="e4"><textarea>my question, edited</textarea></div></div></div></div></div></div>
+            """)
+        var dsStyles: [String: String] = [:]
+        _ = try await send(page: deepseek, host: "chat.deepseek.com", seconds: 0.1, focus: true, focusCheck: """
+        JSON.stringify({ edit: getComputedStyle(document.querySelector('.edit')).opacity,
+                         editClicks: getComputedStyle(document.querySelector('.edit textarea')).pointerEvents,
+                         composer: getComputedStyle(document.querySelector('._871cbca')).opacity })
+        """) { v in
+            dsStyles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(dsStyles, ["edit": "1", "editClicks": "auto", "composer": "0"])
+
+        let chatgpt = chatgptPage(answer: "none", shell: true)
+            .replacingOccurrences(of: #"<div id="chat">"#, with: """
+            <div id="chat"><div data-content-search-unit-key="t:0:user"><form class="edit" data-chatgpt-composer=""><div contenteditable="true">edited</div></form></div>
+            """)
+        var gptStyles: [String: String] = [:]
+        _ = try await send(page: chatgpt, host: "chatgpt.com", seconds: 0.1, focus: true, focusCheck: """
+        JSON.stringify({ edit: getComputedStyle(document.querySelector('form.edit')).opacity,
+                         composer: getComputedStyle(document.querySelector('[data-thread-scroll-footer] form')).opacity })
+        """) { v in
+            gptStyles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(gptStyles, ["edit": "1", "composer": "0"])
+    }
+
     /// DeepSeek's new-chat page has no conversation list; its input box (the same component, four
     /// levels above the textarea) is hidden there too, and sending through it still works.
     func testFocusModeHidesDeepSeekHomeComposerButSendStillWorks() async throws {
@@ -376,6 +424,75 @@ final class CompletionPollTests: XCTestCase {
         }
         XCTAssertEqual(styles, ["box": "0", "clicks": "none", "greeting": "1"])
         XCTAssertNotNil(t, "first look didn't notice the answer from the home page; logs: \(sink.logs)")
+    }
+
+    // MARK: Reading answers back (summarize, share card, agent bridge)
+
+    /// ChatGPT's 2026 app shell dropped data-message-author-role; its answers are MarkdownRoot
+    /// blocks inside the turn's unit. The whole last answer comes back — every block of it, not
+    /// an earlier answer and not the question.
+    func testExtractsChatGPTAnswerFromTheAppShell() async throws {
+        let page = """
+        <!doctype html><html><body><main>
+        <div data-content-search-unit-key="fallback-turn-0:0:user"><div data-user-message-bubble="true">first question</div></div>
+        <div data-content-search-unit-key="fallback-turn-0:2:assistant"><div class="MarkdownRoot-a1" data-markdown-text-style="assistant-message">old answer</div></div>
+        <div data-content-search-unit-key="fallback-turn-1:0:user"><div data-user-message-bubble="true">鼻炎打针有风险吗</div></div>
+        <div data-content-search-unit-key="fallback-turn-1:2:assistant">
+          <div class="MarkdownRoot-a1" data-markdown-text-style="assistant-message"><p>脱敏针：有一定风险</p></div>
+          <span class="source-chip">BSACI</span>
+          <div class="MarkdownRoot-a1" data-markdown-text-style="assistant-message"><p>长效激素针：不推荐</p></div>
+        </div>
+        </main></body></html>
+        """
+        let web = try await load(page, host: "chatgpt.com")
+        let text = try await web.evaluateJavaScript(Broadcaster.extractAnswerScript()) as? String
+        XCTAssertEqual(text, "脱敏针：有一定风险\n\n长效激素针：不推荐")
+    }
+
+    /// The pre-2026 markup still reads, in case a region or an account gets the old UI.
+    func testExtractsChatGPTAnswerFromTheOldMarkup() async throws {
+        let page = """
+        <!doctype html><html><body><main>
+        <div data-message-author-role="user">q</div>
+        <div data-message-author-role="assistant"><div class="markdown">the answer</div></div>
+        </main></body></html>
+        """
+        let web = try await load(page, host: "chatgpt.com")
+        let text = try await web.evaluateJavaScript(Broadcaster.extractAnswerScript()) as? String
+        XCTAssertEqual(text, "the answer")
+    }
+
+    // MARK: DeepSeek answers with code
+
+    /// A DeepSeek answer whose code block keeps streaming under a finished paragraph. The
+    /// paragraph carries a "markdown" class, the code block doesn't — so measuring only the last
+    /// "markdown" element saw nothing change and declared the answer done mid-code (~14 s in).
+    /// Measuring the whole message sees the code grow.
+    func testDeepSeekCodeStreamingUnderAStillParagraphIsNotDone() async throws {
+        let page = """
+        <!doctype html><html><body>
+        <div class="ds-virtual-list"><div class="ds-virtual-list-items" id="chat"></div></div>
+        <textarea></textarea>
+        <div role="button" class="ds-button ds-button--primary ds-button--circle">↑</div>
+        <script>
+        document.querySelector('[role=button]').addEventListener('click', () => {
+          const ta = document.querySelector('textarea');
+          if (!ta.value.trim()) return;
+          ta.value = '';
+          const m = document.createElement('div'); m.className = 'ds-message';
+          m.innerHTML = '<div class="ds-markdown ds-assistant-message-main-content"><p class="ds-markdown-paragraph">Here is the code:</p><div class="md-code-block"><pre></pre></div></div>';
+          document.getElementById('chat').appendChild(m);
+          const pre = m.querySelector('pre');
+          let n = 0;
+          const t = setInterval(() => { pre.textContent += 'line ' + (++n) + '\\n'; if (n === 20) clearInterval(t); }, 1000);
+        });
+        window.__fakeReady = true;
+        </script></body></html>
+        """
+        let (sink, _) = try await send(page: page, host: "chat.deepseek.com", seconds: 16.5, until: { _ in false })
+        XCTAssertTrue(sink.logs.contains { $0.contains("answer already on the page at first look") },
+                      "scenario didn't start the text-settle clock; logs: \(sink.logs)")
+        XCTAssertTrue(sink.completions.isEmpty, "declared done while the code block was still streaming; logs: \(sink.logs)")
     }
 
     /// The ordinary path still works: stop button seen, then gone → done.

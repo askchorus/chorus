@@ -9,6 +9,8 @@ struct APIPanelView: View {
     let provider: APIProvider
     @ObservedObject private var store = APIChatStore.shared
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("focusMode") private var focusMode: Bool = true
+    @AppStorage("warmWebPages") private var warmWebPages: Bool = true
     @State private var input = ""
     @State private var attachedImage: NSImage? = nil       // ⌘V-pasted image for this panel (vision)
     @StateObject private var dictator = SpeechDictator()   // per-panel voice input
@@ -17,7 +19,9 @@ struct APIPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             transcript
-            inputBar
+            // Focus mode hides the web panels' own input boxes; this panel's goes too, so the
+            // composer at the bottom stays the one place to ask (@name reaches just this model).
+            if !focusMode { inputBar }
         }
     }
 
@@ -162,14 +166,9 @@ struct APIPanelView: View {
         }
     }
 
-    /// Warm reading surface. Matched to what the WEB panels become after the warm-tint overlay
-    /// (white × #f1e9d9 ≈ #f1e9d9), so the native API card sits at the same cream tone as the web
-    /// cards instead of reading whiter. Dark surface in dark mode.
-    private var surface: Color {
-        colorScheme == .dark
-            ? Color(red: 0.135, green: 0.135, blue: 0.150)
-            : Color(red: 0.945, green: 0.914, blue: 0.851)   // #F1E9D9 — same as tinted web pages
-    }
+    /// The window's surface — what the web panels show too (a tinted page's white is exactly
+    /// it), following the warm-tint setting and dark mode.
+    private var surface: Color { ChorusTheme.chrome(colorScheme, warm: warmWebPages) }
 
     private var emptyState: some View {
         VStack(spacing: 6) {

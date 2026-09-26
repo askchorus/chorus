@@ -11,7 +11,8 @@ import Foundation
 /// (`onScreen` / `isReallyVisible` in the broadcast script).
 ///
 /// Rules exist per site; a site without rules is left as it is, and a redesign that breaks a
-/// selector only brings that piece of the site's UI back. Top bars stay while the page offers a
+/// selector only brings that piece of the site's UI back. Input boxes inside the conversation
+/// (editing a sent message) are never hidden — only the one at the bottom. Top bars stay while the page offers a
 /// sign-in link — that's where it lives. A panel can opt out from its "…" menu when the user
 /// needs a site's own switches (model picker, DeepThink…).
 enum FocusMode {
@@ -46,8 +47,9 @@ enum FocusMode {
         body:not(:has([data-testid="login-button"])) nav[data-app-navigation-rail] { display: none !important; }
         body:not(:has([data-testid="login-button"])) [data-app-shell-thread-edge-divider] { margin-top: 0 !important; }
         body:not(:has([data-testid="login-button"])) main[data-app-shell-main-surface] { border-left-width: 0 !important; }
-        form[data-chatgpt-composer] { opacity: 0 !important; }
-        form[data-chatgpt-composer], form[data-chatgpt-composer] * { pointer-events: none !important; }
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) { opacity: 0 !important; }
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *),
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) * { pointer-events: none !important; }
         [data-markdown-copy="exclude"].text-center.text-xs { display: none !important; }
         """),
         ("gemini.google.com", """
@@ -73,9 +75,9 @@ enum FocusMode {
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) { opacity: 0 !important; }
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)),
         .ds-virtual-list > div:not(.ds-virtual-list-items):has(textarea):not(:has(.ds-markdown)) * { pointer-events: none !important; }
-        div:has(> div > div > div > textarea):not(:has(.ds-markdown)) { opacity: 0 !important; }
-        div:has(> div > div > div > textarea):not(:has(.ds-markdown)),
-        div:has(> div > div > div > textarea):not(:has(.ds-markdown)) * { pointer-events: none !important; }
+        div:has(> div > div > div > textarea):not(:has(.ds-markdown, .ds-message, .ds-virtual-list)):not(.ds-virtual-list-items *) { opacity: 0 !important; }
+        div:has(> div > div > div > textarea):not(:has(.ds-markdown, .ds-message, .ds-virtual-list)):not(.ds-virtual-list-items *),
+        div:has(> div > div > div > textarea):not(:has(.ds-markdown, .ds-message, .ds-virtual-list)):not(.ds-virtual-list-items *) * { pointer-events: none !important; }
         """),
     ]
 

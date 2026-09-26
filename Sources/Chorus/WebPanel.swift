@@ -865,7 +865,9 @@ enum Broadcaster {
             const h = location.hostname;
             if (h.includes('kimi') || h.includes('moonshot')) return document.querySelectorAll('.segment.segment-assistant, .segment-assistant');
             if (h.includes('manus')) return null;
-            return document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"]');
+            // ChatGPT's 2026 answers are "MarkdownRoot-…" blocks (capital M — the class match
+            // below is case-sensitive and missed them); they carry this attribute instead.
+            return document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"], [data-markdown-text-style="assistant-message"]');
           };
           // Which assistant turn is last, and how long it is — taken before a send and compared
           // after, to tell "a new answer is already on the page" from "nothing happened yet".
@@ -896,8 +898,14 @@ enum Broadcaster {
                 // Agent transcript: measure the WHOLE conversation column, so the long tool-running
                 // pauses between steps still read as "growing" rather than finished.
                 el = document.querySelector('main') || document.body;
+              } else if (h.includes('deepseek') && document.querySelector('.ds-message')) {
+                // The whole last message — thinking, text and code alike. Its paragraphs carry
+                // "markdown" classes but its code blocks don't, so the last "markdown" element could
+                // sit still while a long code block streamed below it, and read as finished.
+                const ms = document.querySelectorAll('.ds-message');
+                el = ms[ms.length - 1];
               } else {
-                const ns = document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"]');
+                const ns = document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"], [data-markdown-text-style="assistant-message"]');
                 el = ns[ns.length - 1];
               }
               if (!el) return -1;
@@ -2019,7 +2027,17 @@ enum Broadcaster {
           };
           let sels = [];
           if (host.includes('chatgpt') || host.includes('openai')) {
-            sels = ['[data-message-author-role="assistant"]'];
+            // 2026 app shell: data-message-author-role is gone. An answer is one or more blocks
+            // marked data-markdown-text-style="assistant-message" inside its turn's unit
+            // ([data-content-search-unit-key$=":assistant"]); join the last unit's blocks.
+            const units = document.querySelectorAll('[data-content-search-unit-key$=":assistant"]');
+            const unit = units[units.length - 1];
+            if (unit) {
+              const blocks = unit.querySelectorAll('[data-markdown-text-style="assistant-message"]');
+              const t = [...blocks].map(b => (b.innerText || '').trim()).filter(Boolean).join('\\n\\n');
+              if (t) return dedupe(t);
+            }
+            sels = ['[data-markdown-text-style="assistant-message"]', '[data-message-author-role="assistant"]'];
           } else if (host.includes('claude')) {
             // The data-is-streaming wrapper also holds an sr-only "Claude responded:" <h2> and the
             // extended-thinking status button, which the container-level innerText swallows. The
