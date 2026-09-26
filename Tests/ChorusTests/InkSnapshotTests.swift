@@ -109,6 +109,24 @@ final class InkSnapshotTests: XCTestCase {
         }
     }
 
+    /// The quick input's leading glyph: the trio when asking everyone, one character for "@name".
+    func testQuickInputGlyphs() throws {
+        let row = { (icon: AnyView, text: String) in
+            HStack(spacing: 10) {
+                icon
+                Text(text).font(.system(size: 22, weight: .medium))
+                Spacer()
+            }
+            .padding(.horizontal, 18).frame(width: 520, height: 64)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Color(red: 0.89, green: 0.87, blue: 0.84)))
+        }
+        let trio = AnyView(HStack(spacing: 1) {
+            ForEach([InkCast.circle, .square, .triangle], id: \.rawValue) { InkCharacter(kind: $0, fill: .clear).frame(width: 18, height: 22) }
+        }.padding(.top, -3))
+        let one = AnyView(InkCharacter(kind: .square, fill: .clear).frame(width: 22, height: 26).padding(.top, -3))
+        try save("quick-input-glyphs", VStack(spacing: 12) { row(trio, "这是什么书？"); row(one, "问 Gemini…") })
+    }
+
     func testMenuBarGlyph() throws {
         let v = HStack(spacing: 20) {
             ForEach([false, true], id: \.self) { singing in

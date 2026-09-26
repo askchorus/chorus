@@ -1740,21 +1740,30 @@ struct ContentView: View {
                     .scaleEffect(0.65)
                     .frame(width: 14, height: 14)
             }
+            // Focus mode hides the site's own controls; one click brings them back for this panel —
+            // to switch model or thinking level — and one more hides them again. While they show,
+            // the button stays (in orange) so the panel's state is visible.
+            if focusMode && FocusMode.supports(host: p.url.host ?? "") {
+                let showing = siteControlPanelsRaw.split(separator: ",").contains { $0 == p.key }
+                if showing || hoveredHeaderKey == p.key {
+                    Button {
+                        FocusMode.setSiteControls(!showing, forPanel: p.key)
+                        store.applyFocus(key: p.key)
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(showing ? ChorusTheme.brandOrange : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(showing ? L("panel.hideSiteControls") : L("panel.showSiteControls"))
+                    .transition(.opacity)
+                }
+            }
             if hoveredHeaderKey == p.key {
                 // Occasional actions live behind "…" rather than a header .contextMenu: a
                 // context menu's recognizer swallows the header's .draggable gesture, which
                 // silently broke drag-to-reorder (cursor flashed to a hand, then nothing).
                 Menu {
-                    // Focus mode hides the site's own controls; this brings them back for one
-                    // panel, for when the user needs one (a model picker, DeepThink…).
-                    if focusMode && FocusMode.supports(host: p.url.host ?? "") {
-                        let showing = siteControlPanelsRaw.split(separator: ",").contains { $0 == p.key }
-                        Button(showing ? L("panel.hideSiteControls") : L("panel.showSiteControls")) {
-                            FocusMode.setSiteControls(!showing, forPanel: p.key)
-                            store.applyFocus(key: p.key)
-                        }
-                        Divider()
-                    }
                     // Explicit reordering. Dragging a header works, but macOS shows the COPY (+)
                     // cursor for it — the wrong verb for "move this panel" — and nothing hints
                     // that panels are draggable at all. These say it outright.

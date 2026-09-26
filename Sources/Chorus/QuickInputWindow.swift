@@ -867,17 +867,24 @@ struct QuickInputView: View {
         }
     }
 
-    /// Leading glyph. In the normal broadcast state we echo the app logo — the
-    /// circle / square / triangle trio — instead of a generic SF Symbol, so the
-    /// quick input feels like the same product. Contextual modes (help, dictionary)
-    /// keep their meaningful SF Symbol.
-    // In broadcast mode show the Chorus brand glyph (the app-icon circle character, also the
-    // menu-bar mark); contextual modes (help, dictionary) keep their meaningful SF Symbol.
+    /// Leading glyph: who the question goes to. Everyone → the circle / square / triangle trio of
+    /// the app icon; "@name" → just that panel's character. (A lone circle for every send read as
+    /// "this goes to one AI".) Contextual modes (help, dictionary) keep their SF Symbol.
     @ViewBuilder private var leadingIcon: some View {
         if iconForCurrentInput() == "sparkles" {
-            InkCharacter(kind: .circle, fill: .clear)   // the film's quick input carries the circle character
-                .frame(width: 22, height: 26)
+            if let t = directedTarget {
+                let index = WebViewStore.shared.directedCandidates().firstIndex { $0.id == t.key } ?? 0
+                InkCharacter(kind: .forPanel(index), fill: .clear)
+                    .frame(width: 22, height: 26)
+                    .padding(.top, -3)
+            } else {
+                HStack(spacing: 1) {
+                    ForEach([InkCast.circle, .square, .triangle], id: \.rawValue) { kind in
+                        InkCharacter(kind: kind, fill: .clear).frame(width: 18, height: 22)
+                    }
+                }
                 .padding(.top, -3)
+            }
         } else {
             Image(systemName: iconForCurrentInput())
                 .font(.system(size: 19))
