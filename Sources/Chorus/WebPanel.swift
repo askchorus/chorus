@@ -813,6 +813,27 @@ enum Broadcaster {
             }
           };
 
+          // The nodes that hold assistant turns (null where one column is measured instead).
+          const answerNodes = () => {
+            const h = location.hostname;
+            if (h.includes('kimi') || h.includes('moonshot')) return document.querySelectorAll('.segment.segment-assistant, .segment-assistant');
+            if (h.includes('manus')) return null;
+            return document.querySelectorAll('.ds-markdown, .markdown, [class*="markdown"]');
+          };
+          // Which assistant turn is last, and how long it is — taken before a send and compared
+          // after, to tell "a new answer is already on the page" from "nothing happened yet".
+          const turnSignature = () => {
+            try {
+              const ns = answerNodes();
+              if (!ns) return null;
+              const last = ns[ns.length - 1] || null;
+              return { count: ns.length, last, len: last ? (last.innerText || '').length : 0 };
+            } catch (_) { return null; }
+          };
+          // Sites whose stop button STOP_SELECTORS reliably see while they stream: for these,
+          // "no stop button" really means "not generating".
+          const reliableStop = /(^|\\.)(chatgpt\\.com|claude\\.ai|gemini\\.google\\.com)$/.test(location.hostname);
+
           // Total text length of the LAST assistant turn — deliberately INCLUDING thinking and
           // tool-call blocks, so a model that pauses mid-answer (Kimi's agentic searches) still
           // reads as active. Feeds the poll's text-settle completion fallback for sites whose stop
@@ -837,7 +858,7 @@ enum Broadcaster {
             } catch (_) { return -1; }
           };
 
-          return { isGemini, STOP_SELECTORS, deepQueryAll, isReallyVisible, isStreaming, activityLen,
+          return { isGemini, STOP_SELECTORS, deepQueryAll, isReallyVisible, isStreaming, activityLen, turnSignature, reliableStop,
                    followBottom, scrollToEnd, scrollLatestAnswerTop, scrollOnComplete,
                    geminiRepaint, geminiForceRepaint, paintNudge, finishPaint };
         })();
@@ -1282,6 +1303,8 @@ enum Broadcaster {
           const sendDeadline = Date.now() + ((IMAGES_B64.length || WAIT_UPLOAD) ? 25000 : 8000);
           let lastBtn = null;
           let clicked = false;
+          // What the last answer looked like before this send (see the completion poll).
+          const turnsBefore = window.__chorusLib.turnSignature();
 
           // Re-resolve the composer on EVERY use: Angular/React re-render it (Gemini especially),
           // detaching the node captured at the start — a detached node reads as empty and swallows
@@ -1483,7 +1506,7 @@ enum Broadcaster {
           (() => {
             // Streaming detection + repaint helpers come from the shared lib (single source of
             // truth; the Gemini deep-walk is cached + throttled there).
-            const { isStreaming, paintNudge, finishPaint, activityLen } = window.__chorusLib;
+            const { isStreaming, paintNudge, finishPaint, activityLen, turnSignature, reliableStop } = window.__chorusLib;
 
             // Only ONE completion poll per page at a time. A new broadcast cancels the prior
             // poll — otherwise every send spun up its own 5-minute interval and they stacked,
@@ -1492,6 +1515,18 @@ enum Broadcaster {
 
             let wasStreaming = false;
             let idleTicks = 0;
+            // An answer can stream start to finish before this poll's first look (DeepSeek did a
+            // one-line prompt in ~1s): no stop button is ever seen and no growth either, and the
+            // batch then waited ~90s for the safety net. If the first look finds a NEW answer turn
+            // with text and nothing generating, it's already done — confirm over two quiet ticks
+            // where the stop button is trustworthy, else start the text-settle clock at once.
+            let firstLook = true, fastDone = false, fastLen = -1, fastTicks = 0;
+            const freshTurn = () => {
+              const sig = turnSignature();
+              if (!sig || !turnsBefore || sig.len <= 0) return null;
+              if (sig.count > turnsBefore.count) return sig;
+              return sig.last !== turnsBefore.last && sig.len !== turnsBefore.len ? sig : null;
+            };
             // Text-settle fallback state (only used when the stop button never matches).
             let lastLen = -1, grewOnce = false, settleTicks = 0;
             const SETTLE_TICKS = 15;   // 15 * 800ms = 12s quiet — long enough to ride out tool-call pauses
@@ -1541,6 +1576,31 @@ enum Broadcaster {
                   } catch (_) {}
                 }
               } else {
+                if (firstLook) {
+                  firstLook = false;
+                  const sig = freshTurn();
+                  if (sig) {
+                    clog('answer already on the page at first look (len=' + sig.len + ')');
+                    if (reliableStop) { fastDone = true; fastLen = sig.len; }
+                    else { grewOnce = true; lastLen = activityLen(); }   // text-settle from here
+                  }
+                } else if (fastDone) {
+                  const sig = isStreaming(true) ? null : turnSignature();   // forced: Gemini's scan is throttled
+                  if (sig && sig.len === fastLen) {
+                    if (++fastTicks >= 2) {
+                      clearInterval(interval); window.__chorusPoll = null;
+                      finishPaint();
+                      clog('completion: finished before the first look');
+                      try {
+                        window.webkit?.messageHandlers?.chorusCompletion?.postMessage({ host: location.hostname });
+                      } catch (_) {}
+                      return;
+                    }
+                  } else {
+                    fastLen = sig ? sig.len : -1; fastTicks = 0;
+                    if (!sig) fastDone = false;   // it IS generating after all — the normal path takes over
+                  }
+                }
                 // Stop button never matched STOP_SELECTORS (Kimi / Grok / 豆包 / 千问 / customs) —
                 // infer completion from the answer text going quiet. Only reachable while
                 // wasStreaming is false, so the reliable stop-button path above is untouched.
