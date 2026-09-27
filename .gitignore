@@ -16,3 +16,6 @@ scripts/Chorus.iconset/
 xcuserdata/
 releases/*.dmg
 releases/*.delta
+
+# wrangler (Cloudflare CLI) local cache — holds the account id and login name
+.wrangler/
