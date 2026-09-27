@@ -257,6 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(action(L("menubar.open"), #selector(mbOpenMain)))
         menu.addItem(action(L("menu.settings"), #selector(mbOpenSettings)))
         menu.addItem(.separator())
+        menu.addItem(action(L("menu.feedback"), #selector(mbFeedback)))
         menu.addItem(action(L("menu.checkUpdates"), #selector(mbCheckUpdates)))
         menu.addItem(action(L("menubar.quit"), #selector(mbQuit)))
 
@@ -335,6 +336,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func mbCheckUpdates() { UpdateManager.shared.checkForUpdates() }
 
+    @objc private func mbFeedback() { Feedback.compose() }
+
     @objc private func mbQuit() { NSApp.terminate(nil) }
 }
 
@@ -368,6 +371,11 @@ struct ChorusApp: App {
             CommandGroup(after: .appInfo) {
                 Button(L("menu.checkUpdates")) { UpdateManager.shared.checkForUpdates() }
                 Button(L("menu.guide")) { NotificationCenter.default.post(name: .chorusShowGuide, object: nil) }
+            }
+            // Help → the feedback email, in place of the "Chorus Help" item (there's no help book,
+            // so it could only say help isn't available).
+            CommandGroup(replacing: .help) {
+                Button(L("menu.feedback")) { Feedback.compose() }
             }
             // ⌘H: a REAL app-hide (NSApp.hide) suspends WebKit at the APPLICATION level — pages
             // freeze even inside the canHide=false keeper window (watchdog logged Δ0 for the whole
