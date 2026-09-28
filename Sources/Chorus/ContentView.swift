@@ -563,6 +563,7 @@ final class WebViewStore: ObservableObject {
         webView.mouseUp(with: up)
     }
 
+#if DEBUG
     /// DEBUG: mark one panel as "answering" for a few seconds, then as answered — drives the
     /// header character's singing / ^ ^ states and the menu-bar glyph without sending anything.
     /// Distributed notification, `debugHooksEnabled` only (see AppDelegate).
@@ -644,6 +645,7 @@ final class WebViewStore: ObservableObject {
             }
         }
     }
+#endif
 
     /// Called when a single host finishes streaming (via WKScriptMessageHandler bridge).
     /// Removes the host from every pending batch; when a batch's set becomes empty,
@@ -1515,9 +1517,11 @@ struct ContentView: View {
                 CompletionNotifier.shared.requestAuthorizationIfNeeded()
             }
         }
+        #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .chorusDebugFillComposer)) { note in
             if let text = note.object as? String { prompt = text }   // debug probe (see AppDelegate)
         }
+        #endif
         .onReceive(NotificationCenter.default.publisher(for: .chorusShowGuide)) { _ in
             showWelcome = true   // 菜单 → 使用指引
         }

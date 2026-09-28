@@ -30,7 +30,8 @@ NOTE_EN="${3:-}"   # its English version, for the page's Recent updates (falls b
 PLIST="$ROOT/scripts/Info.plist"
 RELEASES="$ROOT/releases"
 SPARKLE_BIN="$ROOT/.build/artifacts/sparkle/Sparkle/bin"
-SITE_CHORUS_DIR="/Users/smiletalker/claudecode/个人网页/public/chorus"
+# The landing site's /chorus/ folder: its own checkout next to this one, or CHORUS_SITE_DIR.
+SITE_CHORUS_DIR="${CHORUS_SITE_DIR:-$(dirname "$ROOT")/个人网页/public/chorus}"
 DOWNLOAD_PREFIX="https://zhouyixiao.com/chorus/"
 
 [ -x "$SPARKLE_BIN/generate_appcast" ] || { echo "ERROR: Sparkle tools missing — run 'swift package resolve' first"; exit 1; }

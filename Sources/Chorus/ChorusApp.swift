@@ -65,7 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Debug probes, reachable from outside the app ONLY while the `debugHooksEnabled`
         // default is on (it is off for everyone unless set by hand). Lets a site's automation be
-        // exercised without sending real messages.
+        // exercised without sending real messages. Debug builds only: a release build doesn't
+        // contain them at all, so nothing outside the app can drive a shipped copy.
+#if DEBUG
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.smiletalker.chorus.debug.powerHold"),
             object: nil, queue: .main) { _ in
@@ -123,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 WebViewStore.shared.debugClearGeminiAttachments()
             }
         }
+#endif
 
         // Keeper triggers for the two window-level paths that hide pages WITHOUT hiding the app:
         // minimize (yellow button) and close (red button, app stays in the menu bar). Restore is
@@ -344,8 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 extension Notification.Name {
     /// Posted by the 使用指引 menu item; ContentView re-presents the welcome sheet.
     static let chorusShowGuide = Notification.Name("chorusShowGuide")
+#if DEBUG
     /// Debug probe: put text in the main composer (nothing is sent).
     static let chorusDebugFillComposer = Notification.Name("chorusDebugFillComposer")
+#endif
 }
 
 @main
