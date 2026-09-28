@@ -60,7 +60,7 @@ let L10nTable: [String: [String: String]] = [
     "summary.button": ["zh": "汇总", "en": "Compare"],
     "layout.help": ["zh": "同时显示几个 AI", "en": "How many AIs to show"],
     "layout.showN": ["zh": "同时显示 %d 个 AI", "en": "Show %d AIs at once"],
-    "summary.title": ["zh": "各家回答汇总", "en": "Answers compared"],
+    "summary.title": ["zh": "各家回答汇总", "en": "Comparison"],
     "summary.working": ["zh": "正在综合各家回答…", "en": "Comparing the answers…"],
     "summary.workingHint": [
         "zh": "收集各家回答并交给模型综合，通常需要十几秒",
