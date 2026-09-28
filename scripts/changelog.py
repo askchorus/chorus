@@ -6,8 +6,10 @@
 
 A version with a note records that release in releases.json (newest first; an entry with the
 same version is replaced). Either way the newest three entries are rendered into index.html
-between the chorus:log sentinels, in both languages. An entry without an English note shows its
-Chinese note on the English page too — pass one. release.sh calls this with its 2nd/3rd args.
+between the chorus:log sentinels, in Chinese, English and Japanese. An entry without an English
+note shows its Chinese note on the English page too — pass one. A Japanese note ("note_ja", added
+to releases.json by hand) is optional: without one the Japanese page shows the English note.
+release.sh calls this with its 2nd/3rd args.
 
 Rendering at release time (rather than fetching releases.json in the browser) keeps the page a
 single self-contained file — no runtime request that can fail and silently drop the section.
@@ -27,12 +29,18 @@ def row(e):
     date = e.get("date") or ""
     try:
         day = datetime.date.fromisoformat(date)
-        when = '<time datetime="%s"><span class="zh">%02d月%02d日</span><span class="en">%s %d</span></time>' % (
-            date, day.month, day.day, MONTHS[day.month - 1], day.day)
+        when = ('<time datetime="%s"><span class="zh">%02d月%02d日</span><span class="en">%s %d</span>'
+                '<span class="ja">%d月%d日</span></time>') % (
+            date, day.month, day.day, MONTHS[day.month - 1], day.day, day.month, day.day)
     except ValueError:
         when = "<time></time>"
-    zh, en = esc(e.get("note", "")), esc(e.get("note_en", ""))
-    note = '<span class="zh">%s</span><span class="en">%s</span>' % (zh, en) if en else "<span>%s</span>" % zh
+    zh, en, ja = esc(e.get("note", "")), esc(e.get("note_en", "")), esc(e.get("note_ja", ""))
+    if en and ja:
+        note = '<span class="zh">%s</span><span class="en">%s</span><span class="ja">%s</span>' % (zh, en, ja)
+    elif en:   # no Japanese note: the Japanese page shows the English one
+        note = '<span class="zh">%s</span><span class="en ja">%s</span>' % (zh, en)
+    else:
+        note = "<span>%s</span>" % zh
     return '<div class="log-row"><b>%s</b>%s%s</div>' % (esc(e.get("version", "")), when, note)
 
 
@@ -69,7 +77,8 @@ def main(argv):
         return 0
     rows = [row(e) for e in data[:3]]
     block = ('  <div class="sec log" id="log">\n'
-             '    <h2><span class="zh">最近更新</span><span class="en">Recent updates</span></h2>\n'
+             '    <h2><span class="zh">最近更新</span><span class="en">Recent updates</span>'
+             '<span class="ja">最近のアップデート</span></h2>\n'
              '    <div id="log-rows">\n' + "\n".join(rows) + '\n    </div>\n  </div>\n')
     i = doc.index("\n", doc.index(START)) + 1   # keep the marker line itself
     j = doc.index(END)
