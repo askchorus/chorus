@@ -1147,8 +1147,7 @@ struct ContentView: View {
     @State private var clearDataConfirmKey: String? = nil
     // "Summarize answers": the synthesis sheet state.
     @State private var showSummary = false
-    @State private var summaryText = ""
-    @State private var summaryStreaming = false
+    @StateObject private var summary = SummaryModel()
     @State private var summaryTask: Task<Void, Never>? = nil
 
     /// Gather every visible AI's latest answer (web panels via DOM scrape, API panels natively),
@@ -1187,18 +1186,15 @@ struct ContentView: View {
         // Open the sheet IMMEDIATELY in its working state. Extraction queues on each panel's JS
         // thread and can take seconds when a page is busy — opening the sheet only afterwards
         // left a dead, no-feedback gap between the click and anything appearing.
-        summaryText = ""
-        summaryStreaming = true
-        // Present on the NEXT runloop, not in the same transaction as the state reset: macOS
-        // builds a first-presented sheet's content from the PRE-transaction snapshot (streaming=
-        // false, empty text → the blank branch) and nothing re-triggers evaluation until the first
-        // streamed token seconds later. Deferring one turn makes the sheet see the committed
-        // working state, so the spinner shows from the first frame on the FIRST click too.
-        DispatchQueue.main.async { showSummary = true }
+        // The sheet observes `summary` itself (see SummaryModel), so it shows the working state
+        // from its first frame and every streamed change after that, first opening included.
+        summary.text = ""
+        summary.streaming = true
+        showSummary = true
         gatherAnswers(freshOnly: true) { blocks in
             guard blocks.count >= 2 else {
-                summaryText = Lf("summary.needTwo", blocks.count)
-                summaryStreaming = false
+                summary.text = Lf("summary.needTwo", blocks.count)
+                summary.streaming = false
                 return
             }
             runSummary(provider: provider, blocks: blocks.map { (name: $0.name, text: $0.text) })
@@ -1219,8 +1215,9 @@ struct ContentView: View {
                                 answers: blocks.map { ShareAnswer(name: $0.name, color: $0.color, text: $0.text) })
             // Present on the NEXT runloop: presenting in the same transaction as the data write
             // makes the FIRST-ever presentation build from the pre-transaction snapshot (nil →
-            // "no answers"), with nothing arriving later to trigger a rebuild. Same bug and same
-            // fix as the summary sheet.
+            // "no answers"), with nothing arriving later to trigger a rebuild. Enough here, since
+            // the card's data is complete before it opens; the comparison sheet, which keeps
+            // changing after it opens, observes a SummaryModel instead.
             DispatchQueue.main.async { showShareCard = true }
         }
     }
@@ -1257,18 +1254,19 @@ struct ContentView: View {
 
         \(joined)
         """
-        summaryText = ""
-        summaryStreaming = true
+        let summary = summary
+        summary.text = ""
+        summary.streaming = true
         showSummary = true
         summaryTask = Task {
             do {
                 try await APIClient.stream(provider: provider, messages: [ChatMessage(role: .user, text: prompt)]) { delta in
-                    Task { @MainActor in summaryText += delta }
+                    Task { @MainActor in summary.text += delta }
                 }
             } catch {
-                await MainActor.run { summaryText += "\n\n[" + L("common.error") + "] " + APIClient.friendly(error) }
+                await MainActor.run { summary.text += "\n\n[" + L("common.error") + "] " + APIClient.friendly(error) }
             }
-            await MainActor.run { summaryStreaming = false }
+            await MainActor.run { summary.streaming = false }
         }
     }
 
@@ -1496,7 +1494,7 @@ struct ContentView: View {
             Text(L("api.clearConfirm.message"))
         }
         .sheet(isPresented: $showSummary, onDismiss: { summaryTask?.cancel() }) {
-            SummarySheet(text: summaryText, streaming: summaryStreaming) {
+            SummarySheet(model: summary) {
                 summaryTask?.cancel()
                 showSummary = false
             }

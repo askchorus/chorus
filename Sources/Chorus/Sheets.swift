@@ -3,14 +3,26 @@ import AppKit
 import UniformTypeIdentifiers
 import Carbon.HIToolbox
 
+/// What the comparison sheet shows, as an object the sheet observes itself. Built from the
+/// parent's @State values instead, the sheet froze on its first presentation: macOS makes it
+/// from a snapshot taken before the presenting transaction (not working, no text), and the
+/// streamed changes after that never reached it — a blank sheet for the whole think, then the
+/// finished answer in one go. Deferring the presentation a runloop stopped being enough. An
+/// observed object is the same reference in any snapshot, and its changes arrive directly.
+@MainActor
+final class SummaryModel: ObservableObject {
+    @Published var text = ""
+    @Published var streaming = false
+}
+
 /// The "summarize all answers" result — streams in, then renders as markdown.
 struct SummarySheet: View {
-    let text: String
-    let streaming: Bool
+    @ObservedObject var model: SummaryModel
     let onClose: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let text = model.text, streaming = model.streaming
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 15, height: 15)
