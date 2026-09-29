@@ -294,11 +294,21 @@ struct MarkdownText: View {
         return out
     }
 
+    /// "## Heading" lines as bold lines: the viewer parses inline markdown only, so a heading
+    /// would otherwise show its hashes.
+    static func headingsAsBold(_ s: String) -> String {
+        s.components(separatedBy: "\n").map { line in
+            guard let r = line.range(of: #"^\s{0,3}#{1,6}\s+"#, options: .regularExpression) else { return line }
+            let title = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
+            return title.isEmpty ? line : "**\(title)**"
+        }.joined(separator: "\n")
+    }
+
     static func inline(_ s: String) -> AttributedString {
         // Neutralize tildes before parsing: the parser reads ~…~ as strikethrough, but in Chinese
         // content tildes are almost always ranges (150万~450万、2~3小时) — and because we parse
         // whole segments, one stray pair struck out entire paragraphs of a summary.
-        let safe = s.replacingOccurrences(of: "~", with: "\\~")
+        let safe = headingsAsBold(s).replacingOccurrences(of: "~", with: "\\~")
         let opts = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,
             interpretedSyntax: .inlineOnlyPreservingWhitespace,

@@ -13,6 +13,9 @@ import Carbon.HIToolbox
 final class SummaryModel: ObservableObject {
     @Published var text = ""
     @Published var streaming = false
+    /// The answers went to the model as [A], [B]… (see SummaryPrompt); this maps them back.
+    @Published var names: SummaryPrompt.Names = [:]
+    var shown: String { SummaryPrompt.reveal(text, names: names) }
 }
 
 /// The "summarize all answers" result — streams in, then renders as markdown.
@@ -22,7 +25,7 @@ struct SummarySheet: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let text = model.text, streaming = model.streaming
+        let text = model.shown, streaming = model.streaming
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 15, height: 15)

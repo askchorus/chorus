@@ -1189,6 +1189,7 @@ struct ContentView: View {
         // The sheet observes `summary` itself (see SummaryModel), so it shows the working state
         // from its first frame and every streamed change after that, first opening included.
         summary.text = ""
+        summary.names = [:]
         summary.streaming = true
         showSummary = true
         gatherAnswers(freshOnly: true) { blocks in
@@ -1225,36 +1226,15 @@ struct ContentView: View {
     private func runSummary(provider: APIProvider, blocks: [(name: String, text: String)]) {
         MemoryHeartbeat.shared.note("summary blocks=\(blocks.count) chars=\(blocks.reduce(0) { $0 + $1.text.count })")
         let q = store.lastBroadcast.trimmingCharacters(in: .whitespacesAndNewlines)
-        let joined = blocks.map { "【\($0.name)】\n\($0.text)" }.joined(separator: "\n\n———\n\n")
         // The summary is a reply to the QUESTION, so its language follows the question — not the
         // UI. An English-UI user who asked in Chinese and got Chinese answers wants a Chinese
         // summary (the quick-prompt chips follow the same rule). With no question to judge by
         // (rare), the answers decide; with nothing at all, the UI language does.
         let sample = q.isEmpty ? String(blocks.map(\.text).joined(separator: " ").prefix(2000)) : q
-        let prompt = !chipsAreChinese(for: sample)
-            ? """
-        Below are \(blocks.count) AI answers to \(q.isEmpty ? "the same question" : "the question “\(q)”"). Compare them in English and give me:
-        1. Consensus — what they all agree on
-        2. Main disagreements / contradictions
-        3. What each one uniquely contributes
-        4. A one-sentence bottom line
-
-        Format: short headings plus bullet lists (lines starting with -). **Do not use markdown tables** (the pipe | kind) — the viewer can't render them and they come out garbled. For disagreements, give each dimension its own short section with each AI's position as a bullet, not a table.
-
-        \(joined)
-        """
-            : """
-        下面是 \(blocks.count) 个 AI 对\(q.isEmpty ? "同一个问题" : "问题「\(q)」")的回答。请用中文综合对比,给我:
-        1. 共识 —— 它们都同意的点
-        2. 主要分歧 / 矛盾
-        3. 各自独特或最有价值的点
-        4. 一句话综合结论
-
-        格式要求:用小标题和要点列表(- 开头)。**不要用 markdown 表格**(竖线 | 那种),展示窗口不支持表格,会显示成乱码。分歧对比也请用"每个维度一段、各家观点用要点列出"的方式,不要排成表格。
-
-        \(joined)
-        """
+        let built = SummaryPrompt.build(question: q, answers: blocks, chinese: chipsAreChinese(for: sample))
+        let prompt = built.prompt
         let summary = summary
+        summary.names = built.names
         summary.text = ""
         summary.streaming = true
         showSummary = true

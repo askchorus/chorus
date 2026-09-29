@@ -146,7 +146,9 @@ final class InkSnapshotTests: XCTestCase {
             InkLineup(thinking: true).frame(height: 120)
         })
         try save("welcome", WelcomeSheet(onStart: {}))
-        try save("summary-working", SummarySheet(text: "", streaming: true, onClose: {}))
+        let working = SummaryModel()
+        working.streaming = true
+        try save("summary-working", SummarySheet(model: working, onClose: {}))
         try save("stats", StatsSheet(onClose: {}))
         for scheme in [ColorScheme.light, .dark] {
             try save("stats-rows-\(scheme)", StatsRows(rows: [
@@ -156,6 +158,12 @@ final class InkSnapshotTests: XCTestCase {
                 .init(id: "api_groq", name: "Groq", wins: 0, shown: 3),
             ]).frame(width: 424).background(ChorusTheme.chrome(scheme)), scheme: scheme)
         }
-        try save("summary-done", SummarySheet(text: "## 一致\n三家都建议起一个短而可爱的名字。\n\n## 分歧\n两家选了零食名，一家选了骑士名。", streaming: false, onClose: {}))
+        let done = SummaryModel()
+        done.names = ["[A]": "ChatGPT", "[B]": "Claude", "[C]": "Gemini"]
+        done.text = "## 结论\n起一个短而可爱的名字，Mochi 最合适。\n\n**分歧与判断**\n- [A] 和 [B] 选了零食名，[C] 选了骑士名。"
+        try save("summary-done", SummarySheet(model: done, onClose: {}))
+        // The finished text on its own: a snapshot can't draw inside the sheet's ScrollView.
+        try save("summary-text", MarkdownText(text: done.shown).frame(width: 560).padding()
+            .background(ChorusTheme.chrome(.light)))
     }
 }
