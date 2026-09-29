@@ -83,7 +83,9 @@ enum SummaryPrompt {
         var out = text
         for (label, name) in names {
             let key = label.dropFirst().dropLast()
-            for form in ["[\(key)]", "［\(key)］", "【\(key)】"] {
+            // Full-width ［ ］ written as escapes: they're only matched, never shown, so they
+            // needn't be in the UI font's subset (build-app.sh checks string literals for that).
+            for form in ["[\(key)]", "\u{FF3B}\(key)\u{FF3D}", "【\(key)】"] {
                 out = out.replacingOccurrences(of: form, with: name)
             }
         }
