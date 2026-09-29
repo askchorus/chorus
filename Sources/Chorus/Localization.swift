@@ -76,6 +76,11 @@ let L10nTable: [String: [String: String]] = [
     "summary.useModel": ["zh": "用 %@ 汇总", "en": "Compare with %@"],
     "summary.help": ["zh": "汇总各家回答：把所有 AI 的回答交给一个模型综合对比",
                      "en": "Compare answers: hand every AI's reply to one model for a side-by-side synthesis"],
+    "summary.stop": ["zh": "停止", "en": "Stop"],
+    "summary.thinkingLabel": ["zh": "思考过程", "en": "Thinking"],
+    "summary.running": ["zh": "对比中…", "en": "Comparing…"],
+    "summary.ready": ["zh": "对比好了", "en": "Comparison ready"],
+    "summary.readyBody": ["zh": "点这里查看各家回答的汇总", "en": "Click to see how the answers compare"],
     "share.title": ["zh": "分享卡片", "en": "Share card"],
     "share.empty": [
         "zh": "没有可分享的内容\n先广播一个问题，等各家答完再来",
@@ -106,6 +111,7 @@ let L10nTable: [String: [String: String]] = [
     "api.err.notFound": ["zh": "找不到接口/模型，检查 Base URL 和模型名", "en": "Endpoint or model not found — check the Base URL and model name"],
     "api.err.rateLimit": ["zh": "请求过多/额度不足", "en": "Rate limited or out of quota"],
     "api.err.offline": ["zh": "连不上服务器（本地模型没启动？）", "en": "Can't reach the server (is your local model running?)"],
+    "api.err.effort": ["zh": "这个模型可能不支持思考强度设置，可以在设置 → API 模型里改回“默认”", "en": "this model may not take a thinking setting; set it back to Default in Settings → API models"],
 
     // MARK: Panel load failure
     "panel.loadFailed": ["zh": "%@ 加载失败", "en": "%@ failed to load"],
@@ -241,6 +247,13 @@ let L10nTable: [String: [String: String]] = [
     "settings.api.add": ["zh": "添加", "en": "Add"],
     "settings.api.save": ["zh": "保存", "en": "Save"],
     "settings.api.edit": ["zh": "编辑 %@", "en": "Edit %@"],
+    "settings.api.effort": ["zh": "思考强度", "en": "Thinking"],
+    "settings.api.effort.default": ["zh": "默认", "en": "Default"],
+    "settings.api.effort.none": ["zh": "不思考", "en": "Off"],
+    "settings.api.effort.low": ["zh": "低", "en": "Low"],
+    "settings.api.effort.high": ["zh": "高", "en": "High"],
+    "settings.api.effort.max": ["zh": "最高", "en": "Max"],
+    "settings.api.effort.hint": ["zh": "只对先思考再回答的模型有效，比如 DeepSeek、OpenAI 的推理模型。设为“默认”时，对比汇总在 DeepSeek 上用“低”，出结果更快。", "en": "Only for models that think before answering, like DeepSeek or OpenAI's reasoning models. Left at Default, a comparison on DeepSeek thinks Low, so it comes back sooner."],
     "settings.api.cancel": ["zh": "取消", "en": "Cancel"],
     "settings.api.keyEdit": ["zh": "新密钥（留空＝不改）", "en": "New key (blank = keep current)"],
     "settings.api.remove": ["zh": "移除 %@", "en": "Remove %@"],

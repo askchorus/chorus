@@ -7,9 +7,35 @@ struct APIProvider: Identifiable, Codable, Equatable {
     let id: String
     var name: String
     var baseURL: String   // e.g. https://api.openai.com/v1  (no trailing /chat/completions)
-    var model: String     // e.g. gpt-4o, deepseek-chat, llama3.2
+    var model: String     // e.g. gpt-4o, deepseek-flash, llama3.2
+    /// How hard a reasoning model thinks before it answers. nil sends nothing — the model's own
+    /// default. Panels saved before this existed decode as nil.
+    var effort: ReasoningEffort? = nil
 
     var apiKey: String? { KeyStore.get(account: "apikey_\(id)") }
+
+    /// DeepSeek's own API: it takes `thinking` on/off and a "max" effort besides low/high.
+    var isDeepSeek: Bool { URL(string: baseURL)?.host?.hasSuffix("deepseek.com") == true }
+
+    /// The request fields for the thinking setting. A comparison with nothing set thinks "low"
+    /// on DeepSeek: its default ("high") spends 10–30 s before the first word, and lining up what
+    /// a few answers say doesn't need that much. Everywhere else, nothing set sends nothing.
+    func reasoningFields(forComparison: Bool) -> [String: Any] {
+        guard let effort = effort ?? (forComparison && isDeepSeek ? .low : nil) else { return [:] }
+        if isDeepSeek {
+            if effort == .off { return ["thinking": ["type": "disabled"]] }
+            return ["thinking": ["type": "enabled"], "reasoning_effort": effort.rawValue]
+        }
+        // Others that take it (OpenAI's reasoning models, Gemini, Groq's reasoning models…)
+        // understand none/low/high; "max" is DeepSeek's alone.
+        return ["reasoning_effort": effort == .max ? "high" : effort.rawValue]
+    }
+}
+
+/// A reasoning model's thinking effort, as the API panel's setting offers it. "Off" is `off`
+/// in code, not `none`: in a `ReasoningEffort?` a `.none` would quietly mean nil instead.
+enum ReasoningEffort: String, Codable, CaseIterable {
+    case off = "none", low, high, max
 }
 
 /// One-tap presets that prefill the add form (baseURL + a sensible default model). Local ones
@@ -26,7 +52,9 @@ enum APIProviderRegistry {
 
     static let presets: [APIPreset] = [
         APIPreset(name: "OpenAI",     baseURL: "https://api.openai.com/v1",        model: "gpt-4o",            needsKey: true),
-        APIPreset(name: "DeepSeek",   baseURL: "https://api.deepseek.com/v1",      model: "deepseek-chat",     needsKey: true),
+        // deepseek-flash: DeepSeek's current model (V4.1 Flash, 2026-09). The old
+        // deepseek-chat / deepseek-reasoner names were announced for retirement.
+        APIPreset(name: "DeepSeek",   baseURL: "https://api.deepseek.com/v1",      model: "deepseek-flash",    needsKey: true),
         APIPreset(name: "Groq",       baseURL: "https://api.groq.com/openai/v1",   model: "llama-3.3-70b-versatile", needsKey: true),
         // Gemini speaks OpenAI's protocol at this endpoint. Worth a preset of its own: when the
         // consumer web app is geo-blocked (a flagged proxy IP gets "not supported in your
@@ -82,7 +110,8 @@ enum APIProviderRegistry {
 
     /// Add a provider. Returns false if name/baseURL are unusable. Stores the key in Keychain.
     @discardableResult
-    static func add(name: String, baseURL: String, model: String, apiKey: String) -> Bool {
+    static func add(name: String, baseURL: String, model: String, apiKey: String,
+                    effort: ReasoningEffort? = nil) -> Bool {
         let trimmedName = canonicalName(name)
         var url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if url.hasSuffix("/") { url.removeLast() }
@@ -93,7 +122,7 @@ enum APIProviderRegistry {
         var id = base, n = 2
         while existing.contains(id) { id = "\(base)_\(n)"; n += 1 }
         let p = APIProvider(id: id, name: trimmedName, baseURL: url,
-                            model: model.trimmingCharacters(in: .whitespacesAndNewlines))
+                            model: model.trimmingCharacters(in: .whitespacesAndNewlines), effort: effort)
         var list = all(); list.append(p); save(list)
         KeyStore.set(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "apikey_\(id)")
         return true
@@ -102,7 +131,8 @@ enum APIProviderRegistry {
     /// Edit an existing provider in place (keeps its id, so chat history + visibility persist).
     /// The key is replaced ONLY if `apiKey` is non-empty — blank means "keep the current key".
     @discardableResult
-    static func update(id: String, name: String, baseURL: String, model: String, apiKey: String) -> Bool {
+    static func update(id: String, name: String, baseURL: String, model: String, apiKey: String,
+                       effort: ReasoningEffort? = nil) -> Bool {
         let trimmedName = canonicalName(name)
         var url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if url.hasSuffix("/") { url.removeLast() }
@@ -112,6 +142,7 @@ enum APIProviderRegistry {
         list[idx].name = trimmedName
         list[idx].baseURL = url
         list[idx].model = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        list[idx].effort = effort
         save(list)
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !key.isEmpty { KeyStore.set(key, account: "apikey_\(id)") }

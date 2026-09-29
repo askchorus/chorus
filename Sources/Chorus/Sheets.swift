@@ -15,17 +15,42 @@ final class SummaryModel: ObservableObject {
     @Published var streaming = false
     /// The answers went to the model as [A], [B]… (see SummaryPrompt); this maps them back.
     @Published var names: SummaryPrompt.Names = [:]
+    /// A reasoning model's thinking as it streams in — something to watch instead of a blank
+    /// wait; folded away under the answer once that starts.
+    @Published var thinking = ""
+    /// Finished while its window was out of sight: the composer shows "ready".
+    @Published var unseen = false
+    /// The running comparison, so Stop and a new comparison can end it.
+    var task: Task<Void, Never>? = nil
+    /// Which comparison is current: gathering the answers takes a moment, and one that was
+    /// stopped or overtaken by a newer one mustn't carry on when its answers come back.
+    var run = UUID()
+
     var shown: String { SummaryPrompt.reveal(text, names: names) }
+    var shownThinking: String { SummaryPrompt.reveal(thinking, names: names) }
+
+    /// A fresh comparison: whatever was running stops, the old result goes.
+    func reset() {
+        task?.cancel(); task = nil; run = UUID()
+        text = ""; thinking = ""; names = [:]; unseen = false; streaming = false
+    }
+
+    func stop() {
+        task?.cancel(); task = nil
+        streaming = false
+    }
 }
 
 /// The "summarize all answers" result — streams in, then renders as markdown.
 struct SummarySheet: View {
     @ObservedObject var model: SummaryModel
     let onClose: () -> Void
+    var onStop: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @State private var thinkingOpen = false
 
     var body: some View {
-        let text = model.shown, streaming = model.streaming
+        let text = model.shown, streaming = model.streaming, thinking = model.shownThinking
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 SparkleGlyph().fill(ChorusTheme.brandOrange).frame(width: 15, height: 15)
@@ -34,6 +59,7 @@ struct SummarySheet: View {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
                 Spacer()
+                if streaming, let onStop { Button(L("summary.stop"), action: onStop) }
                 Button(L("common.close"), action: onClose)
             }
             .padding()
@@ -50,31 +76,65 @@ struct SummarySheet: View {
                     Text(L("summary.workingHint"))
                         .font(.chorus(12))
                         .foregroundColor(.secondary)
+                    if !thinking.isEmpty {
+                        ThinkingTail(text: thinking)
+                            .frame(maxHeight: 150)
+                            .padding(.horizontal, 32)
+                    }
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
             } else {
                 ScrollView {
-                    Group {
-                        if streaming {
-                            Text(text).font(.system(size: 13)).lineSpacing(3)   // plain while streaming (fast)
-                        } else {
-                            MarkdownText(text: text)                            // pretty once done
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !thinking.isEmpty {
+                            DisclosureGroup(isExpanded: $thinkingOpen) {
+                                Text(thinking)
+                                    .font(.system(size: 12)).lineSpacing(2).foregroundColor(.secondary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } label: {
+                                Text(L("summary.thinkingLabel")).font(.chorus(12, .semibold)).foregroundColor(.secondary)
+                            }
                         }
+                        Group {
+                            if streaming {
+                                Text(text).font(.system(size: 13)).lineSpacing(3)   // plain while streaming (fast)
+                            } else {
+                                MarkdownText(text: text)                            // pretty once done
+                            }
+                        }
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                 }
             }
         }
-        .frame(width: 620, height: 560)
+        .frame(minWidth: 460, maxWidth: .infinity, minHeight: 360, maxHeight: .infinity)
         // The main window's own surface instead of the stark default sheet white — half the
         // "blank screen" feel was the colour itself.
         .background(ChorusTheme.chrome(colorScheme))
     }
 }
 
+
+/// A reasoning model's thinking while it streams: its latest part, kept scrolled to the end.
+private struct ThinkingTail: View {
+    let text: String
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                Text(String(text.suffix(1500)))
+                    .font(.system(size: 11.5)).lineSpacing(2).foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .id("end")
+            }
+            .onChange(of: text) { _ in proxy.scrollTo("end", anchor: .bottom) }
+        }
+    }
+}
 
 /// The win-rate list: one row per AI, best rate first.
 struct StatsRows: View {

@@ -51,6 +51,7 @@ struct SettingsView: View {
     @State private var newAPIBase: String = ""
     @State private var newAPIModel: String = ""
     @State private var newAPIKey: String = ""
+    @State private var newAPIEffort: String = ""   // a ReasoningEffort raw value; "" = default
     @State private var editingAPIId: String? = nil   // non-nil → the add form is editing this provider
 
     // Decode from the observed @AppStorage (not APIProviderRegistry.all()) so the list updates
@@ -244,12 +245,13 @@ struct SettingsView: View {
                             newAPIBase = p.baseURL
                             newAPIModel = p.model
                             newAPIKey = ""   // blank = keep the existing key
+                            newAPIEffort = p.effort?.rawValue ?? ""
                         } label: { Image(systemName: "pencil").foregroundColor(.secondary) }
                             .buttonStyle(.plain)
                             .help(Lf("settings.api.edit", p.name))
                         Button {
                             APIProviderRegistry.remove(id: p.id)
-                            if editingAPIId == p.id { editingAPIId = nil; newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = "" }
+                            if editingAPIId == p.id { editingAPIId = nil; newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""; newAPIEffort = "" }
                             apiProvidersRaw = UserDefaults.standard.string(forKey: "apiProviders") ?? ""
                         } label: { Image(systemName: "trash").foregroundColor(.secondary) }
                             .buttonStyle(.plain)
@@ -266,6 +268,7 @@ struct SettingsView: View {
                             newAPIName = preset.name
                             newAPIBase = preset.baseURL
                             newAPIModel = preset.model
+                            newAPIEffort = ""
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "plus").font(.system(size: 10, weight: .bold))
@@ -294,24 +297,39 @@ struct SettingsView: View {
                 TextField(text: $newAPIBase, prompt: Text("https://api.openai.com/v1")) { EmptyView() }
                     .labelsHidden().textFieldStyle(.roundedBorder)
                 HStack(spacing: 8) {
+                    Text(L("settings.api.effort")).font(.system(size: 12)).foregroundColor(.secondary)
+                    Picker(L("settings.api.effort"), selection: $newAPIEffort) {
+                        Text(L("settings.api.effort.default")).tag("")
+                        ForEach(ReasoningEffort.allCases, id: \.self) { e in
+                            Text(L("settings.api.effort.\(e.rawValue)")).tag(e.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+                hint("settings.api.effort.hint")
+                HStack(spacing: 8) {
                     SecureField(text: $newAPIKey,
                                 prompt: Text(editingAPIId == nil ? L("settings.api.key") : L("settings.api.keyEdit"))) { EmptyView() }
                         .labelsHidden().textFieldStyle(.roundedBorder)
                     if editingAPIId != nil {
                         Button(L("settings.api.cancel")) {
                             editingAPIId = nil
-                            newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""
+                            newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""; newAPIEffort = ""
                         }
                     }
                     Button(editingAPIId == nil ? L("settings.api.add") : L("settings.api.save")) {
                         let ok: Bool
                         if let id = editingAPIId {
-                            ok = APIProviderRegistry.update(id: id, name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey)
+                            ok = APIProviderRegistry.update(id: id, name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey,
+                                                            effort: ReasoningEffort(rawValue: newAPIEffort))
                         } else {
-                            ok = APIProviderRegistry.add(name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey)
+                            ok = APIProviderRegistry.add(name: newAPIName, baseURL: newAPIBase, model: newAPIModel, apiKey: newAPIKey,
+                                                         effort: ReasoningEffort(rawValue: newAPIEffort))
                         }
                         if ok {
-                            newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""
+                            newAPIName = ""; newAPIBase = ""; newAPIModel = ""; newAPIKey = ""; newAPIEffort = ""
                             editingAPIId = nil
                             apiProvidersRaw = UserDefaults.standard.string(forKey: "apiProviders") ?? ""
                         }

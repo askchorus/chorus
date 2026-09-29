@@ -1146,9 +1146,9 @@ struct ContentView: View {
     /// Panel key awaiting confirmation for the destructive "clear all site data" action.
     @State private var clearDataConfirmKey: String? = nil
     // "Summarize answers": the synthesis sheet state.
-    @State private var showSummary = false
-    @StateObject private var summary = SummaryModel()
-    @State private var summaryTask: Task<Void, Never>? = nil
+    /// The comparison lives in its own window (SummaryWindowController); the composer watches it
+    /// for the "comparing… / ready" chip.
+    @ObservedObject private var summary = SummaryWindowController.shared.model
 
     /// Gather every visible AI's latest answer (web panels via DOM scrape, API panels natively),
     /// then have `provider` synthesize a comparison. Streams the result into the summary sheet.
@@ -1182,17 +1182,15 @@ struct ContentView: View {
     }
 
     private func summarizeAnswers(using provider: APIProvider) {
-        summaryTask?.cancel()
-        // Open the sheet IMMEDIATELY in its working state. Extraction queues on each panel's JS
-        // thread and can take seconds when a page is busy — opening the sheet only afterwards
-        // left a dead, no-feedback gap between the click and anything appearing.
-        // The sheet observes `summary` itself (see SummaryModel), so it shows the working state
-        // from its first frame and every streamed change after that, first opening included.
-        summary.text = ""
-        summary.names = [:]
+        // Open the window IMMEDIATELY in its working state. Extraction queues on each panel's JS
+        // thread and can take seconds when a page is busy — opening it only afterwards left a
+        // dead, no-feedback gap between the click and anything appearing.
+        summary.reset()
+        let run = summary.run
         summary.streaming = true
-        showSummary = true
+        SummaryWindowController.shared.show()
         gatherAnswers(freshOnly: true) { blocks in
+            guard summary.run == run, summary.streaming else { return }   // stopped, or a newer one
             guard blocks.count >= 2 else {
                 summary.text = Lf("summary.needTwo", blocks.count)
                 summary.streaming = false
@@ -1234,19 +1232,28 @@ struct ContentView: View {
         let built = SummaryPrompt.build(question: q, answers: blocks, chinese: chipsAreChinese(for: sample))
         let prompt = built.prompt
         let summary = summary
+        let run = summary.run
         summary.names = built.names
         summary.text = ""
+        summary.thinking = ""
         summary.streaming = true
-        showSummary = true
-        summaryTask = Task {
+        summary.task = Task {
             do {
-                try await APIClient.stream(provider: provider, messages: [ChatMessage(role: .user, text: prompt)]) { delta in
+                try await APIClient.stream(provider: provider, messages: [ChatMessage(role: .user, text: prompt)],
+                                           forComparison: true,
+                                           onReasoning: { r in Task { @MainActor in summary.thinking += r } }) { delta in
                     Task { @MainActor in summary.text += delta }
                 }
             } catch {
+                if Task.isCancelled { return }   // Stop, or a newer comparison: nothing to report
                 await MainActor.run { summary.text += "\n\n[" + L("common.error") + "] " + APIClient.friendly(error) }
             }
-            await MainActor.run { summary.streaming = false }
+            if Task.isCancelled { return }
+            await MainActor.run {
+                guard summary.run == run else { return }
+                summary.streaming = false
+                SummaryWindowController.shared.finished()
+            }
         }
     }
 
@@ -1472,12 +1479,6 @@ struct ContentView: View {
             Button(L("common.cancel"), role: .cancel) { clearConfirmAPIId = nil }
         } message: {
             Text(L("api.clearConfirm.message"))
-        }
-        .sheet(isPresented: $showSummary, onDismiss: { summaryTask?.cancel() }) {
-            SummarySheet(model: summary) {
-                summaryTask?.cancel()
-                showSummary = false
-            }
         }
         .sheet(isPresented: $showShareCard) {
             ShareCardSheet(data: shareCardData) { showShareCard = false }
@@ -1900,6 +1901,7 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 10) {
                 composerMenu
                 summarizeButton
+                comparisonChip
                 layoutButton
 
                 if let t = directedTarget {
@@ -2106,6 +2108,29 @@ struct ContentView: View {
             hiddenProvidersRaw = hidden.sorted().joined(separator: ",")
             for key in newlyHiddenWeb { store.scheduleTeardownIfStillHidden(key: key) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { reflowing = false }
+        }
+    }
+
+    /// Next to Compare while a comparison runs or waits unseen: shows it's going, and opens its
+    /// window (closing that window doesn't stop the comparison).
+    @ViewBuilder private var comparisonChip: some View {
+        if summary.streaming || summary.unseen {
+            Button { SummaryWindowController.shared.show() } label: {
+                HStack(spacing: 5) {
+                    if summary.streaming {
+                        ProgressView().controlSize(.small).scaleEffect(0.55).frame(width: 12, height: 12)
+                    } else {
+                        Circle().fill(ChorusTheme.brandOrange).frame(width: 6, height: 6)
+                    }
+                    Text(L(summary.streaming ? "summary.running" : "summary.ready")).font(.chorus(11.5, .semibold))
+                }
+                .foregroundColor(summary.streaming ? .secondary : ChorusTheme.brandOrange)
+                .padding(.horizontal, 9)
+                .frame(height: 24)
+                .inkChip(orange: !summary.streaming)
+            }
+            .buttonStyle(.plain)
+            .transition(.opacity)
         }
     }
 

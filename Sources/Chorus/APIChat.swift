@@ -156,9 +156,14 @@ final class APIChatStore: ObservableObject {
 /// `/chat/completions` SSE protocol.
 enum APIClient {
     /// POST a streaming chat-completions request; `onDelta` is called (off the main actor) for
-    /// each content token. Throws on transport / HTTP errors and on cancellation.
+    /// each content token, `onReasoning` for each token of a reasoning model's thinking (the
+    /// `reasoning_content` DeepSeek and others stream before the answer). `forComparison` picks
+    /// the thinking effort a comparison uses (see `APIProvider.reasoningFields`). Throws on
+    /// transport / HTTP errors and on cancellation.
     static func stream(provider: APIProvider,
                        messages: [ChatMessage],
+                       forComparison: Bool = false,
+                       onReasoning: (@Sendable (String) -> Void)? = nil,
                        onDelta: @Sendable @escaping (String) -> Void) async throws {
         var endpoint = provider.baseURL.trimmingCharacters(in: .whitespaces)
         if endpoint.hasSuffix("/") { endpoint.removeLast() }
@@ -187,11 +192,12 @@ enum APIClient {
             }
             return ["role": role, "content": m.text]
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": provider.model,
             "messages": apiMessages,
             "stream": true,
         ]
+        body.merge(provider.reasoningFields(forComparison: forComparison)) { _, new in new }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: req)
@@ -205,16 +211,31 @@ enum APIClient {
 
         for try await line in bytes.lines {
             try Task.checkCancellation()
-            guard line.hasPrefix("data:") else { continue }
-            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if payload == "[DONE]" { break }
-            guard let data = payload.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any],
-                  let content = delta["content"] as? String, !content.isEmpty else { continue }
-            onDelta(content)
+            switch parse(line) {
+            case .done: return
+            case .skip: continue
+            case .delta(let content, let reasoning):
+                if let reasoning { onReasoning?(reasoning) }
+                if let content { onDelta(content) }
+            }
         }
+    }
+
+    enum StreamLine: Equatable { case done, skip, delta(content: String?, reasoning: String?) }
+
+    /// One line of the SSE stream: the answer's next piece, the thinking's next piece, the end,
+    /// or nothing of interest (comments, keep-alives, role-only deltas).
+    static func parse(_ line: String) -> StreamLine {
+        guard line.hasPrefix("data:") else { return .skip }
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        if payload == "[DONE]" { return .done }
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let delta = choices.first?["delta"] as? [String: Any] else { return .skip }
+        let content = (delta["content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let reasoning = (delta["reasoning_content"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return content == nil && reasoning == nil ? .skip : .delta(content: content, reasoning: reasoning)
     }
 
     enum Err: Error { case message(String); case http(Int, String) }
@@ -231,7 +252,11 @@ enum APIClient {
             case 429:      hint = L("api.err.rateLimit")
             default:       hint = "HTTP \(code)"
             }
-            return m.isEmpty ? hint : "\(hint): \(m)"
+            // A model that doesn't take the thinking setting says so in a 400; say which knob.
+            let effortHint = code == 400 && (m.localizedCaseInsensitiveContains("reasoning")
+                                             || m.localizedCaseInsensitiveContains("thinking"))
+                ? " — " + L("api.err.effort") : ""
+            return (m.isEmpty ? hint : "\(hint): \(m)") + effortHint
         case let urlErr as URLError where urlErr.code == .cannotConnectToHost:
             return L("api.err.offline")
         default:

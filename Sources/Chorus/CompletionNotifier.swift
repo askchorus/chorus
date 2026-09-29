@@ -103,6 +103,20 @@ final class CompletionNotifier: NSObject, UNUserNotificationCenterDelegate {
             clog("real notification posted — error: \(errStr)")
         }
     }
+
+    /// A comparison finished while Chorus wasn't frontmost. The user started it and went
+    /// elsewhere, so it notifies in every mode but "off".
+    func postComparisonReady() {
+        guard (UserDefaults.standard.string(forKey: "notifyMode") ?? "quickOnly") != "off" else { return }
+        let content = UNMutableNotificationContent()
+        content.title = L("summary.ready")
+        content.body = L("summary.readyBody")
+        content.sound = .default
+        let req = UNNotificationRequest(identifier: "chorus-compare-\(UUID().uuidString)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req) { error in
+            clog("comparison-ready notification posted — error: \(error?.localizedDescription ?? "nil")")
+        }
+    }
 }
 
 /// Identifies where a broadcast originated. Used by the notifier to decide whether to alert.
