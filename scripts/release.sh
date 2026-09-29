@@ -88,6 +88,7 @@ if [ -d "$(dirname "$SITE_CHORUS_DIR")" ]; then
         sed -i '' -E \
           -e "s|Chorus-[0-9]+\.[0-9]+\.[0-9]+\.dmg|Chorus-$VERSION.dmg|g" \
           -e "s|(id=\"dl-version\">)[0-9]+\.[0-9]+\.[0-9]+|\1$VERSION|" \
+          -e "s|(\"softwareVersion\": \")[0-9]+\.[0-9]+\.[0-9]+|\1$VERSION|" \
           -e "s|· [0-9.]+ MB ·|· $SIZE_H MB ·|" \
           "$LANDING"
         echo "    landing page updated → $VERSION ($SIZE_H MB)"
