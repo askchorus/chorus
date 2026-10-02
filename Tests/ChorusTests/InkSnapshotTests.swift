@@ -121,7 +121,7 @@ final class InkSnapshotTests: XCTestCase {
             .background(RoundedRectangle(cornerRadius: 18).fill(Color(red: 0.89, green: 0.87, blue: 0.84)))
         }
         let trio = AnyView(HStack(spacing: 1) {
-            ForEach([InkCast.circle, .square, .triangle], id: \.rawValue) { InkCharacter(kind: $0, fill: .clear).frame(width: 18, height: 22) }
+            ForEach([InkCast.circle, .square, .triangle], id: \.rawValue) { InkCharacter(kind: $0, fill: .clear).frame(width: InkCharacter.width($0, height: 22), height: 22) }
         }.padding(.top, -3))
         let one = AnyView(InkCharacter(kind: .square, fill: .clear).frame(width: 22, height: 26).padding(.top, -3))
         try save("quick-input-glyphs", VStack(spacing: 12) { row(trio, "这是什么书？"); row(one, "问 Gemini…") })

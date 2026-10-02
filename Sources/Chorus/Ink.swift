@@ -337,15 +337,28 @@ struct InkCharacter: View {
     /// Each character fills its own frame — side by side in panel headers they should read as the
     /// same size. (A shared box kept the icon's line-up proportions, where the circle is biggest
     /// and the triangle smallest; that belongs to InkLineup, not to single characters.)
+    /// Measured on the drawn outline, not the nominal body size: the triangle's rounded tip sits
+    /// some 35 units below its nominal apex, so a box from the nominal size drew it a sixth
+    /// shorter than the circle beside it.
     static func box(_ kind: InkCast) -> CGRect {
-        let w = kind.bodySize.width, h = kind.height
-        return CGRect(x: -w / 2 - 12, y: -h - 20, width: w + 24, height: h + 36)
+        let xs = kind.contour.map(\.x), ys = kind.contour.map(\.y)
+        let minX = xs.min() ?? 0, maxX = xs.max() ?? 0, top = ys.min() ?? -kind.height
+        return CGRect(x: minX - 12, y: top - 20, width: maxX - minX + 24, height: -top + 36)
     }
+    /// The width a character needs to stand its full height in a slot `height` tall. Wide shapes
+    /// need more: in a narrow slot the triangle (208 wide, 184 tall) was held back by its width
+    /// and stood shorter than the circle beside it. Side by side — the quick input's trio, the
+    /// panel headers — each character gets its own width.
+    static func width(_ kind: InkCast, height: CGFloat) -> CGFloat {
+        let b = box(kind)
+        return (height * b.width / b.height * optical(kind)).rounded(.up)
+    }
+
     /// Pointed and narrow shapes carry less ink than a circle at the same height; nudge them up so
     /// the set looks even.
     static func optical(_ kind: InkCast) -> CGFloat {
         switch kind {
-        case .triangle: return 1.1
+        case .triangle: return 1.04
         case .diamond: return 1.06
         case .square: return 0.97
         default: return 1

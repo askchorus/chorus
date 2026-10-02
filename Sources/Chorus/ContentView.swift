@@ -1700,7 +1700,7 @@ struct ContentView: View {
     /// The panel's character: sings while its AI answers, ^ ^ when it's done.
     private func statusCharacter(_ cast: InkCast, key: String, singing: Bool) -> some View {
         PanelStatusCharacter(kind: cast, singing: singing, answered: store.answeredLastBroadcast.contains(key))
-            .frame(width: 19, height: 22)
+            .frame(width: max(19, InkCharacter.width(cast, height: 22)), height: 22)
             .padding(.top, 1)
     }
 

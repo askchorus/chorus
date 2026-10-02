@@ -880,7 +880,7 @@ struct QuickInputView: View {
             } else {
                 HStack(spacing: 1) {
                     ForEach([InkCast.circle, .square, .triangle], id: \.rawValue) { kind in
-                        InkCharacter(kind: kind, fill: .clear).frame(width: 18, height: 22)
+                        InkCharacter(kind: kind, fill: .clear).frame(width: InkCharacter.width(kind, height: 22), height: 22)
                     }
                 }
                 .padding(.top, -3)
