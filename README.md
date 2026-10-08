@@ -16,6 +16,8 @@
 
 ![Gemini, ChatGPT and DeepSeek answering the same question side by side in Chorus](docs/screenshot.png)
 
+[Watch the 37-second demo](https://askchorus.app/chorus-promo.mp4?v=20261008)
+
 ## What it does
 
 - **Side by side** — one prompt reaches every AI at once and the answers land next to each other. No tab-hopping.
