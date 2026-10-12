@@ -14,6 +14,10 @@
   <a href="https://askchorus.app"><b>Download</b></a> · <a href="https://askchorus.app">askchorus.app</a>
 </p>
 
+<p align="center">
+  <sub>Listed in <a href="https://github.com/jaywcjlove/awesome-swift-macos-apps">Awesome Swift macOS Apps</a></sub>
+</p>
+
 ![Gemini, ChatGPT and DeepSeek answering the same question side by side in Chorus](docs/screenshot.png)
 
 [Watch the 37-second demo](https://askchorus.app/chorus-promo.mp4?v=20261008)
