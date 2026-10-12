@@ -674,6 +674,24 @@ final class WebViewStore: ObservableObject {
         notePanelCompletion(key: id)
     }
 
+    /// New Chat discards the answer and withdraws this panel from pending batches. It must
+    /// release the busy/sleep state immediately, without announcing a discarded reply as done.
+    func discardAPIConversation(id: String) {
+        apiStreamingIds.remove(id)
+        answeredLastBroadcast.remove(id)
+        for (batchID, var batch) in pendingBatches where batch.pendingKeys.contains(id) {
+            batch.pendingKeys.remove(id)
+            if batch.pendingKeys.isEmpty {
+                pendingBatches.removeValue(forKey: batchID)
+            } else {
+                batch.lastActivityAt = Date()
+                pendingBatches[batchID] = batch
+                scheduleBatchFallback(batchID: batchID)
+            }
+        }
+        SleepGuard.shared.sync(pendingBatches: pendingBatches.count)
+    }
+
     /// Remove a finished provider (web host key OR API id) from every pending batch; notify when
     /// a batch empties.
     private func notePanelCompletion(key: String) {
@@ -1241,12 +1259,12 @@ struct ContentView: View {
             do {
                 try await APIClient.stream(provider: provider, messages: [ChatMessage(role: .user, text: prompt)],
                                            forComparison: true,
-                                           onReasoning: { r in Task { @MainActor in summary.thinking += r } }) { delta in
-                    Task { @MainActor in summary.text += delta }
+                                           onReasoning: { r in await summary.append(r, for: run, isThinking: true) }) { delta in
+                    await summary.append(delta, for: run)
                 }
             } catch {
                 if Task.isCancelled { return }   // Stop, or a newer comparison: nothing to report
-                await MainActor.run { summary.text += "\n\n[" + L("common.error") + "] " + APIClient.friendly(error) }
+                await MainActor.run { summary.append("\n\n[" + L("common.error") + "] " + APIClient.friendly(error), for: run) }
             }
             if Task.isCancelled { return }
             await MainActor.run {

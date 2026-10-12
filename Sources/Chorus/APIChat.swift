@@ -25,11 +25,29 @@ final class APIChatStore: ObservableObject {
     @Published private(set) var streaming: Set<String> = []
 
     private var tasks: [String: Task<Void, Never>] = [:]
+    /// Only this reply may update a provider or finish its current request. Cancelling a Task
+    /// is cooperative: an older request can still return after a replacement has started.
+    private var activeReplies: [String: UUID] = [:]
+    typealias Stream = (APIProvider, [ChatMessage], @escaping @Sendable (String) async -> Void) async throws -> Void
+    private let stream: Stream
+    private let persistenceURL: URL?
 
     private let maxContextMessages = 30   // most-recent messages sent to the model per request
     private static let maxStoredMessages = 100   // messages persisted per provider
 
-    init() { conversations = Self.loadPersisted() }   // restore last conversations on launch
+    convenience init() {
+        self.init(storageURL: Self.storageURL) { provider, messages, onDelta in
+            try await APIClient.stream(provider: provider, messages: messages, onDelta: onDelta)
+        }
+    }
+
+    /// An isolated storage path and transport also let cancellation be exercised without
+    /// contacting an AI service or touching the user's saved conversations.
+    init(storageURL: URL?, stream: @escaping Stream) {
+        persistenceURL = storageURL
+        self.stream = stream
+        conversations = Self.loadPersisted(from: storageURL)
+    }
 
     func messages(for id: String) -> [ChatMessage] { conversations[id] ?? [] }
     func isStreaming(_ id: String) -> Bool { streaming.contains(id) }
@@ -43,9 +61,14 @@ final class APIChatStore: ObservableObject {
         tasks[provider.id]?.cancel()
 
         var msgs = conversations[provider.id] ?? []
+        if let previous = activeReplies[provider.id],
+           let index = msgs.firstIndex(where: { $0.id == previous }) {
+            msgs[index].isStreaming = false
+        }
         msgs.append(ChatMessage(role: .user, text: p, imagesBase64: imagesBase64))
         let reply = ChatMessage(role: .assistant, text: "", isStreaming: true)
         msgs.append(reply)
+        activeReplies[provider.id] = reply.id
         conversations[provider.id] = msgs
         streaming.insert(provider.id)
         WebViewStore.shared.setAPIStreaming(provider.id, true)   // so the all-done net waits on us
@@ -55,17 +78,19 @@ final class APIChatStore: ObservableObject {
         // Cap the context sent to the model (most recent turns) so long conversations don't blow
         // up token cost or exceed the context window. The full history stays on screen.
         let history = Array(msgs.dropLast().suffix(maxContextMessages))
+        let stream = stream
 
         tasks[provider.id] = Task { [weak self] in
             do {
-                try await APIClient.stream(provider: provider, messages: history) { [weak self] delta in
-                    Task { @MainActor in self?.append(provider.id, replyId, delta) }
+                try await stream(provider, history) { [weak self] delta in
+                    await self?.append(provider.id, replyId, delta)
                 }
                 self?.finish(provider.id, replyId, error: nil)
             } catch is CancellationError {
                 self?.finish(provider.id, replyId, error: nil)
             } catch {
-                self?.finish(provider.id, replyId, error: APIClient.friendly(error))
+                // URLSession may throw URLError.cancelled rather than CancellationError.
+                self?.finish(provider.id, replyId, error: Task.isCancelled ? nil : APIClient.friendly(error))
             }
         }
     }
@@ -73,7 +98,6 @@ final class APIChatStore: ObservableObject {
     /// Stop an in-flight reply (the panel's stop button).
     func stop(_ providerId: String) {
         tasks[providerId]?.cancel()
-        tasks[providerId] = nil
         finish(providerId, nil, error: nil)
     }
 
@@ -81,15 +105,18 @@ final class APIChatStore: ObservableObject {
     func newChat(_ providerId: String) {
         tasks[providerId]?.cancel()
         tasks[providerId] = nil
+        activeReplies[providerId] = nil
         conversations[providerId] = []
         streaming.remove(providerId)
+        WebViewStore.shared.discardAPIConversation(id: providerId)
         persist()
     }
 
     // MARK: - Streaming callbacks (main actor)
 
     private func append(_ providerId: String, _ messageId: UUID, _ delta: String) {
-        guard var msgs = conversations[providerId],
+        guard activeReplies[providerId] == messageId,
+              var msgs = conversations[providerId],
               let idx = msgs.firstIndex(where: { $0.id == messageId }) else { return }
         msgs[idx].text += delta
         conversations[providerId] = msgs
@@ -98,13 +125,14 @@ final class APIChatStore: ObservableObject {
     /// Mark the reply finished (success, stop, or error). `messageId == nil` → stop button: just
     /// clear the streaming flag on whatever reply is open.
     private func finish(_ providerId: String, _ messageId: UUID?, error: String?) {
+        guard let active = activeReplies[providerId],
+              messageId == nil || messageId == active else { return }
+        activeReplies[providerId] = nil
         streaming.remove(providerId)
         tasks[providerId] = nil
         WebViewStore.shared.handleAPICompletion(id: providerId)   // tell the all-done batch we're done
         guard var msgs = conversations[providerId] else { return }
-        let idx = messageId.flatMap { id in msgs.firstIndex(where: { $0.id == id }) }
-            ?? msgs.lastIndex(where: { $0.role == .assistant })
-        guard let i = idx else { return }
+        guard let i = msgs.firstIndex(where: { $0.id == active }) else { return }
         msgs[i].isStreaming = false
         if let error { msgs[i].error = error }
         conversations[providerId] = msgs
@@ -126,7 +154,7 @@ final class APIChatStore: ObservableObject {
     }
 
     private func persist() {
-        guard let url = Self.storageURL else { return }
+        guard let url = persistenceURL else { return }
         var out: [String: [StoredMessage]] = [:]
         for (id, msgs) in conversations {
             let stored = msgs
@@ -139,8 +167,8 @@ final class APIChatStore: ObservableObject {
         try? data.write(to: url, options: .atomic)
     }
 
-    private static func loadPersisted() -> [String: [ChatMessage]] {
-        guard let url = storageURL,
+    private static func loadPersisted(from url: URL?) -> [String: [ChatMessage]] {
+        guard let url,
               let data = try? Data(contentsOf: url),
               let stored = try? JSONDecoder().decode([String: [StoredMessage]].self, from: data) else { return [:] }
         var convos: [String: [ChatMessage]] = [:]
@@ -163,8 +191,8 @@ enum APIClient {
     static func stream(provider: APIProvider,
                        messages: [ChatMessage],
                        forComparison: Bool = false,
-                       onReasoning: (@Sendable (String) -> Void)? = nil,
-                       onDelta: @Sendable @escaping (String) -> Void) async throws {
+                       onReasoning: (@Sendable (String) async -> Void)? = nil,
+                       onDelta: @Sendable @escaping (String) async -> Void) async throws {
         var endpoint = provider.baseURL.trimmingCharacters(in: .whitespaces)
         if endpoint.hasSuffix("/") { endpoint.removeLast() }
         if !endpoint.hasSuffix("/chat/completions") { endpoint += "/chat/completions" }
@@ -215,8 +243,10 @@ enum APIClient {
             case .done: return
             case .skip: continue
             case .delta(let content, let reasoning):
-                if let reasoning { onReasoning?(reasoning) }
-                if let content { onDelta(content) }
+                // Apply each token before finishing the request. Fire-and-forget UI Tasks can
+                // otherwise leave the final token queued until after the reply is saved.
+                if let reasoning { await onReasoning?(reasoning) }
+                if let content { await onDelta(content) }
             }
         }
     }

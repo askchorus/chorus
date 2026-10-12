@@ -29,6 +29,12 @@ final class SummaryModel: ObservableObject {
     var shown: String { SummaryPrompt.reveal(text, names: names) }
     var shownThinking: String { SummaryPrompt.reveal(thinking, names: names) }
 
+    /// All streamed UI updates enter here with the comparison they belong to.
+    func append(_ delta: String, for run: UUID, isThinking: Bool = false) {
+        guard self.run == run, streaming else { return }
+        if isThinking { thinking += delta } else { text += delta }
+    }
+
     /// A fresh comparison: whatever was running stops, the old result goes.
     func reset() {
         task?.cancel(); task = nil; run = UUID()

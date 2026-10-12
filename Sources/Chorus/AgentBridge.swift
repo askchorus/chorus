@@ -78,7 +78,12 @@ final class AgentBridge {
                 return
             }
             let head = String(decoding: buf[..<headerEnd.lowerBound], as: UTF8.self)
-            let contentLength = Self.contentLength(in: head)
+            guard let contentLength = Self.contentLength(in: head) else {
+                MainActor.assumeIsolated {
+                    self.send(status: "400 Bad Request", json: ["error": "invalid Content-Length"], on: conn)
+                }
+                return
+            }
             let body = buf[headerEnd.upperBound...]
             guard body.count >= contentLength else {
                 MainActor.assumeIsolated { self.receive(on: conn, buffer: buf) }
@@ -183,9 +188,13 @@ final class AgentBridge {
         data.range(of: Data(needle.utf8))
     }
 
-    private static func contentLength(in head: String) -> Int {
+    /// A negative count would trap in Data.prefix below; malformed counts must not silently
+    /// become zero either. Missing Content-Length retains the existing empty-body behavior.
+    nonisolated static func contentLength(in head: String) -> Int? {
         for line in head.split(separator: "\r\n") where line.lowercased().hasPrefix("content-length:") {
-            return Int(line.split(separator: ":").last?.trimmingCharacters(in: .whitespaces) ?? "") ?? 0
+            let value = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
+            guard let count = Int(value), count >= 0 else { return nil }
+            return count
         }
         return 0
     }
