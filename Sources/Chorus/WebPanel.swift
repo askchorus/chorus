@@ -993,6 +993,9 @@ enum Broadcaster {
               sendSelectors: [
                 'button[data-testid="send-button"]',
                 'button[data-testid="composer-send-button"]',
+                // The current Chinese composer exposes only a localized label, without a test ID.
+                // Scope it to the composer so a message editor or unrelated send control cannot match.
+                'form[data-chatgpt-composer]:not([data-content-search-unit-key] *) button[aria-label="发送"]',
                 'button[aria-label*="Send" i]'
               ],
               uploadMethod: 'fileInput',   // multiple-capable <input>; paste only carries ONE image

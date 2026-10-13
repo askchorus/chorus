@@ -264,6 +264,36 @@ final class CompletionPollTests: XCTestCase {
         XCTAssertNil(t, "completed without an answer; logs: \(sink.logs)")
     }
 
+    /// The current composer has no send test ID. Its accessible label is localized,
+    /// and synthetic Enter need not invoke the site's keyboard handler.
+    func testChatGPTChineseSendButtonWithoutTestID() async throws {
+        let page = chatgptPage(answer: "instant", shell: true)
+            .replacingOccurrences(of: #"data-testid="send-button""#, with: #"type="button" aria-label="发送""#)
+            .replacingOccurrences(of: "document.querySelector('[data-testid=send-button]')",
+                                  with: "document.querySelector('form button[aria-label=发送]')")
+            .replacingOccurrences(of: "const mode =", with: "window.webkit.messageHandlers.chorusJSLog.postMessage('fake-send-click'); const mode =")
+            .replacingOccurrences(of: "<main data-app-shell-main-surface", with: """
+            <button aria-label="发送" onclick="window.webkit.messageHandlers.chorusJSLog.postMessage('wrong-send-click')">unrelated</button>
+            <main data-app-shell-main-surface
+            """)
+        let (sink, t) = try await send(page: page, host: "chatgpt.com", seconds: 10)
+        XCTAssertNotNil(t, "localized send never reached the composer; logs: \(sink.logs)")
+        XCTAssertEqual(sink.logs.filter { $0 == "fake-send-click" }.count, 1)
+        XCTAssertFalse(sink.logs.contains("wrong-send-click"))
+        XCTAssertTrue(sink.logs.contains { $0.contains("btnFound=true") })
+    }
+
+    func testChatGPTEnglishSendButtonWithoutTestID() async throws {
+        let page = chatgptPage(answer: "instant", shell: true)
+            .replacingOccurrences(of: #"data-testid="send-button""#, with: #"type="button" aria-label="Send""#)
+            .replacingOccurrences(of: "document.querySelector('[data-testid=send-button]')",
+                                  with: "document.querySelector('form button[aria-label=Send]')")
+            .replacingOccurrences(of: "const mode =", with: "window.webkit.messageHandlers.chorusJSLog.postMessage('fake-send-click'); const mode =")
+        let (sink, t) = try await send(page: page, host: "chatgpt.com", seconds: 10)
+        XCTAssertNotNil(t, "English send regressed; logs: \(sink.logs)")
+        XCTAssertEqual(sink.logs.filter { $0 == "fake-send-click" }.count, 1)
+    }
+
     // MARK: Focus mode
 
     /// Focus mode hides ChatGPT's input box, but sending through it and watching the stop button
