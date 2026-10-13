@@ -102,4 +102,4 @@ fi
 
 echo ""
 echo "✓ Release $VERSION ready."
-echo "  版本号与 appcast 已提交并打上 v$VERSION，记得: git push && git push --tags"
+echo "  版本号与 appcast 已提交并打上 v${VERSION}，记得: git push && git push --tags"
