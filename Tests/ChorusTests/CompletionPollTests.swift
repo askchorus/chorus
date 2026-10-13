@@ -325,6 +325,37 @@ final class CompletionPollTests: XCTestCase {
         if let t { XCTAssertGreaterThan(t, 2.4, "declared done while still streaming") }
     }
 
+    /// ChatGPT now wraps the card in display:contents: opacity on that wrapper has no
+    /// visual effect. Hide the real box while keeping its editor and stop control usable.
+    func testChatGPTFocusModeWithDisplayContentsComposer() async throws {
+        let notice = #"<div class="notice" style="height:48px">Usage limit <button class="upgrade">Upgrade</button></div>"#
+        let page = chatgptPage(answer: "stream", shell: true, notice: notice)
+            .replacingOccurrences(of: #"<div class="card""#, with: #"<div class="contents" style="display:contents"><div class="card""#)
+            .replacingOccurrences(of: "</form>", with: "</div></form>")
+            .replacingOccurrences(of: #"<div id="chat">"#, with: #"<div id="chat"><div data-content-search-unit-key="edit"><form data-chatgpt-composer><div class="contents" style="display:contents"><div class="editcard"><div contenteditable="true">edited</div></div></div></form></div>"#)
+            .replacingOccurrences(of: #"data-testid="send-button""#, with: #"type="button" aria-label="发送""#)
+            .replacingOccurrences(of: "document.querySelector('[data-testid=send-button]')", with: "document.querySelector('form button[aria-label=发送]')")
+        var styles: [String: String] = [:]
+        let check = """
+        JSON.stringify({ card: getComputedStyle(document.querySelector('.card')).opacity,
+                         position: getComputedStyle(document.querySelector('.card')).position,
+                         editor: getComputedStyle(document.querySelector('.card [contenteditable]')).pointerEvents,
+                         measurable: String(document.querySelector('.card [contenteditable]').getBoundingClientRect().width > 0),
+                         notice: getComputedStyle(document.querySelector('.notice')).opacity,
+                         upgrade: getComputedStyle(document.querySelector('.upgrade')).pointerEvents,
+                         edit: getComputedStyle(document.querySelector('.editcard')).opacity,
+                         editClicks: getComputedStyle(document.querySelector('.editcard')).pointerEvents })
+        """
+        let (sink, t) = try await send(page: page, host: "chatgpt.com", seconds: 10,
+                                       focus: true, focusCheck: check) { v in
+            styles = (try? JSONSerialization.jsonObject(with: Data(((v as? String) ?? "{}").utf8))) as? [String: String] ?? [:]
+        }
+        XCTAssertEqual(styles, ["card": "0", "position": "absolute", "editor": "none", "measurable": "true",
+                                "notice": "1", "upgrade": "auto", "edit": "1", "editClicks": "auto"])
+        XCTAssertNotNil(t, "hidden editor failed to send/complete; logs: \(sink.logs)")
+        XCTAssertTrue(sink.diagnostics.contains("streaming-started"))
+    }
+
     /// Signed out, ChatGPT's top bar holds the Log in button, so focus mode leaves it (and the
     /// room made for it) alone.
     func testFocusModeKeepsChatGPTTopBarWhileSignedOut() async throws {

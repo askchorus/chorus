@@ -60,10 +60,16 @@ enum FocusMode {
         body:not(:has([data-testid="login-button"])) nav[data-app-navigation-rail] { display: none !important; }
         body:not(:has([data-testid="login-button"])) [data-app-shell-thread-edge-divider] { margin-top: 0 !important; }
         body:not(:has([data-testid="login-button"])) main[data-app-shell-main-surface] { border-left-width: 0 !important; }
-        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea) { opacity: 0 !important; }
+        /* display:contents wrappers do not paint opacity or form a positioning box.
+           Target their real card too; keep notices and message editors outside this rule. */
         form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea),
-        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea) * { pointer-events: none !important; }
-        [data-thread-scroll-footer] form[data-chatgpt-composer] > :has([contenteditable="true"], textarea) {
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > .contents > :has([contenteditable="true"], textarea) { opacity: 0 !important; }
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea),
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > :has([contenteditable="true"], textarea) *,
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > .contents > :has([contenteditable="true"], textarea),
+        form[data-chatgpt-composer]:not([data-content-search-unit-key] *) > .contents > :has([contenteditable="true"], textarea) * { pointer-events: none !important; }
+        [data-thread-scroll-footer] form[data-chatgpt-composer] > :has([contenteditable="true"], textarea),
+        [data-thread-scroll-footer] form[data-chatgpt-composer] > .contents > :has([contenteditable="true"], textarea) {
           position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important; }
         [data-thread-scroll-footer]:has(form[data-chatgpt-composer]) { padding-bottom: 0 !important; }
         [data-markdown-copy="exclude"].text-center.text-xs { display: none !important; }
