@@ -54,6 +54,7 @@ enum ProviderRegistry {
         Preset(name: "豆包",        nameEN: "Doubao",     url: "https://www.doubao.com/chat/", cnOnly: true),
         Preset(name: "腾讯元宝",     nameEN: "Yuanbao",    url: "https://yuanbao.tencent.com/", cnOnly: true),
         Preset(name: "Le Chat",    nameEN: "Le Chat",    url: "https://chat.mistral.ai/",     cnOnly: false),
+        Preset(name: "Muse",       nameEN: "Muse",       url: "https://muse.ai/",             cnOnly: false),
         Preset(name: "Manus",      nameEN: "Manus",      url: "https://manus.im/",            cnOnly: false),
         Preset(name: "Genspark",   nameEN: "Genspark",   url: "https://www.genspark.ai/",     cnOnly: false),
         Preset(name: "MiniMax",    nameEN: "MiniMax",    url: "https://chat.minimaxi.com/",   cnOnly: false),
